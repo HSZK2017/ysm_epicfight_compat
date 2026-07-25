@@ -1,0 +1,16 @@
+{
+  "jars": [
+    {
+      "identifier": {
+        "group": "com.github.luben",
+        "artifact": "zstd-jni"
+      },
+      "version": {
+        "range": "[1.5.6-3]",
+        "artifactVersion": "1.5.6-3"
+      },
+      "path": "META-INF/jarjar/zstd-jni-1.5.6-3.jar",
+      "isObfuscated": false
+    }
+  ]
+}

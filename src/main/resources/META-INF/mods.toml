@@ -1,0 +1,41 @@
+modLoader="javafml"
+loaderVersion="[47,)"
+license="MIT"
+[[mods]]
+modId="ysm_epicfight_compat"
+version="1.0.0"
+displayName="YSM Epic Fight Compat"
+description = '''
+Bridges Yes Steve Model custom player models into the Epic Fight combat animation system.
+
+Converts YSM Bedrock-format models into Epic Fight SkinnedMesh at runtime,
+enabling your custom YSM avatar to use Epic Fight combat animations seamlessly.
+
+Gameplay:
+- Combat mode: Epic Fight renders your YSM model using combat animations
+- Idle mode: YSM handles rendering with its own animation system as normal
+'''
+[[dependencies.ysm_epicfight_compat]]
+modId="forge"
+mandatory=true
+versionRange="[47,)"
+ordering="NONE"
+side="BOTH"
+[[dependencies.ysm_epicfight_compat]]
+modId="minecraft"
+mandatory=true
+versionRange="[1.20.1,1.21)"
+ordering="NONE"
+side="BOTH"
+[[dependencies.ysm_epicfight_compat]]
+modId="epicfight"
+mandatory=true
+versionRange="[20.14,)"
+ordering="AFTER"
+side="BOTH"
+[[dependencies.ysm_epicfight_compat]]
+modId="yes_steve_model"
+mandatory=true
+versionRange="[2.6,)"
+ordering="AFTER"
+side="BOTH"
