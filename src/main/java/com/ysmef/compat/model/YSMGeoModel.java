@@ -318,7 +318,11 @@ public class YSMGeoModel {
         if (mirror) {
             normal.mul(-1.0f, 1.0f, 1.0f);
         }
-        return new Quad(positions, uvs, normal);
+        Vector3f[] copiedPositions = new Vector3f[4];
+        for (int i = 0; i < 4; i++) {
+            copiedPositions[i] = new Vector3f(positions[i]);
+        }
+        return new Quad(copiedPositions, uvs, normal);
     }
 
     private static double[] rect(double u, double v, double w, double h) {
