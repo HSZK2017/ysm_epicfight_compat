@@ -46,6 +46,9 @@ public class YSMMeshLibrary {
     /** textureRL string -> png bytes (registered into the texture manager on demand) */
     private static final Map<String, byte[]> TEXTURE_DATA = new LinkedHashMap<>();
 
+    /** textureRL string -> [width, height, format] (format: -1=raw RGBA, 2=PNG, 3=JPEG, 4=WEBP, 5=AVIF) */
+    private static final Map<String, int[]> TEXTURE_INFO = new LinkedHashMap<>();
+
     /** modelId + '#' + textureName -> textureRL */
     private static final Map<String, ResourceLocation> TEXTURE_LOCATIONS = new LinkedHashMap<>();
 
@@ -141,6 +144,10 @@ public class YSMMeshLibrary {
             ResourceLocation rl = textureLocation(modelId, entry.getKey());
             TEXTURE_LOCATIONS.put(modelId + "#" + entry.getKey(), rl);
             TEXTURE_DATA.put(rl.toString(), entry.getValue());
+            int[] info = pkg.textureInfo.get(entry.getKey());
+            if (info != null) {
+                TEXTURE_INFO.put(rl.toString(), info);
+            }
         }
         ResourceLocation defaultRL = null;
         if (!defaultName.isEmpty()) {
@@ -211,13 +218,69 @@ public class YSMMeshLibrary {
             return;
         }
         try {
-            NativeImage image = NativeImage.read(data);
+            NativeImage image = decodeTexture(rl, data);
+            if (image == null) {
+                UPLOADED_TEXTURES.put(rl.toString(), Boolean.TRUE);
+                return;
+            }
             Minecraft.getInstance().getTextureManager().register(rl, new DynamicTexture(image));
             UPLOADED_TEXTURES.put(rl.toString(), Boolean.TRUE);
-        } catch (IOException e) {
+        } catch (Exception e) {
             YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to upload texture {}", rl, e);
             UPLOADED_TEXTURES.put(rl.toString(), Boolean.TRUE);
         }
+    }
+
+    /**
+     * Decode texture bytes into a NativeImage, supporting PNG/JPEG encoded data
+     * as well as raw RGBA pixels (legacy .ysm binary textures).
+     */
+    private static NativeImage decodeTexture(ResourceLocation rl, byte[] data) throws IOException {
+        if (data.length >= 4 && (data[0] & 0xFF) == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47) {
+            return NativeImage.read(data);
+        }
+        if (data.length >= 2 && (data[0] & 0xFF) == 0xFF && (data[1] & 0xFF) == 0xD8) {
+            return NativeImage.read(data);
+        }
+
+        int[] info = TEXTURE_INFO.get(rl.toString());
+        if (info != null && info[2] == -1) {
+            return readRawRgba(data, info[0], info[1]);
+        }
+
+        if (data.length % 4 == 0) {
+            int pixels = data.length / 4;
+            int side = (int) Math.round(Math.sqrt(pixels));
+            if ((long) side * side == pixels) {
+                return readRawRgba(data, side, side);
+            }
+        }
+        YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: unsupported texture format for {}", rl);
+        return null;
+    }
+
+    /**
+     * Interpret the bytes as raw RGBA pixels (YSM legacy texture format) and
+     * build a NativeImage (Minecraft packs pixels as ABGR).
+     */
+    private static NativeImage readRawRgba(byte[] data, int width, int height) throws IOException {
+        if (width <= 0 || height <= 0 || (long) width * height * 4 > data.length) {
+            int side = (int) Math.round(Math.sqrt(data.length / 4.0));
+            width = side;
+            height = side;
+        }
+        NativeImage image = new NativeImage(NativeImage.Format.RGBA, width, height, true);
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int i = (y * width + x) * 4;
+                int r = data[i] & 0xFF;
+                int g = data[i + 1] & 0xFF;
+                int b = data[i + 2] & 0xFF;
+                int a = data[i + 3] & 0xFF;
+                image.setPixelRGBA(x, y, (a << 24) | (b << 16) | (g << 8) | r);
+            }
+        }
+        return image;
     }
 
     public static boolean isGenerated() {

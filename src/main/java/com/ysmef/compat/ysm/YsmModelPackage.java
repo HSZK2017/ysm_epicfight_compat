@@ -33,15 +33,17 @@ public final class YsmModelPackage {
     public final String modelId;
     public final YSMGeoModel geometry;
     public final Map<String, byte[]> textures;
+    public final Map<String, int[]> textureInfo;
     public final float widthScale;
     public final float heightScale;
     public final String defaultTexture;
 
     private YsmModelPackage(String modelId, YSMGeoModel geometry, Map<String, byte[]> textures,
-                            float widthScale, float heightScale, String defaultTexture) {
+                            Map<String, int[]> textureInfo, float widthScale, float heightScale, String defaultTexture) {
         this.modelId = modelId;
         this.geometry = geometry;
         this.textures = textures;
+        this.textureInfo = textureInfo;
         this.widthScale = widthScale;
         this.heightScale = heightScale;
         this.defaultTexture = defaultTexture;
@@ -123,7 +125,7 @@ public final class YsmModelPackage {
             }
 
             if (geometry != null) {
-                return new YsmModelPackage(modelId, geometry, textures, widthScale, heightScale, defaultTexture);
+                return new YsmModelPackage(modelId, geometry, textures, java.util.Collections.emptyMap(), widthScale, heightScale, defaultTexture);
             }
         }
         return null;
@@ -138,7 +140,7 @@ public final class YsmModelPackage {
             byte[] decrypted = YsmFileCrypto.decryptYsmFile(Files.readAllBytes(ysmFile));
             YsmBinaryReader.BinaryModel binary = YsmBinaryReader.read(decrypted);
             YSMGeoModel geometry = YSMGeoModel.fromBinary(binary);
-            return new YsmModelPackage(modelId, geometry, binary.textures,
+            return new YsmModelPackage(modelId, geometry, binary.textures, binary.textureInfo,
                     binary.widthScale, binary.heightScale, binary.defaultTexture);
         }
         return null;

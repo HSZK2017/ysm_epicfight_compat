@@ -56,8 +56,8 @@ public final class YSMMeshSelector {
             logMeshUsedOnce(player, modelRef, texture);
         } catch (Throwable t) {
             YSMEpicFightCompat.LOGGER.warn(
-                    "YSM-EF Compat: failed to load generated mesh for '{}', falling back to Epic Fight biped: {}",
-                    modelRef.modelId(), t.toString());
+                    "YSM-EF Compat: failed to load generated mesh for '{}', falling back to Epic Fight biped",
+                    modelRef.modelId(), t);
             return null;
         }
 

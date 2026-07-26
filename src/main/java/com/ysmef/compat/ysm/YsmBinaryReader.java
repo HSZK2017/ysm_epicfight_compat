@@ -28,6 +28,7 @@ public class YsmBinaryReader {
     public static class BinaryModel {
         public final List<BinaryBone> mainBones = new ArrayList<>();
         public final Map<String, byte[]> textures = new LinkedHashMap<>();
+        public final Map<String, int[]> textureInfo = new LinkedHashMap<>();
         public float widthScale = 0.7f;
         public float heightScale = 0.7f;
         public String defaultTexture = "";
@@ -96,9 +97,10 @@ public class YsmBinaryReader {
                 if (unknownFormatFlag != 0x01) throw new IllegalStateException("Expected 0x01");
             }
             byte[] texData = r.readByteArray();
-            r.readVarInt();
-            r.readVarInt();
+            int texWidth = r.readVarInt();
+            int texHeight = r.readVarInt();
             model.textures.put(name, texData);
+            model.textureInfo.put(name, new int[]{texWidth, texHeight, -1});
         }
 
         int modelTableSize = r.readVarInt();
@@ -161,8 +163,8 @@ public class YsmBinaryReader {
         for (int i = 0; i < customTextureCount; ++i) {
             String name = r.readString();
             byte[] texData = r.readByteArray();
-            r.readVarInt();
-            r.readVarInt();
+            int texWidth = r.readVarInt();
+            int texHeight = r.readVarInt();
             int subTextureSize = r.readVarInt();
             for (int j = 0; j < subTextureSize; ++j) {
                 r.readVarInt();
@@ -171,6 +173,7 @@ public class YsmBinaryReader {
                 r.readVarInt();
             }
             model.textures.put(name, texData);
+            model.textureInfo.put(name, new int[]{texWidth, texHeight, -1});
         }
 
         if (format > 9) {
@@ -186,9 +189,10 @@ public class YsmBinaryReader {
         for (int i = 0; i < extraTextureCount; ++i) {
             String name = r.readString();
             byte[] texData = r.readByteArray();
-            r.readVarInt();
-            r.readVarInt();
+            int texWidth = r.readVarInt();
+            int texHeight = r.readVarInt();
             model.textures.put(name, texData);
+            model.textureInfo.put(name, new int[]{texWidth, texHeight, -1});
         }
 
         int modelTableSize = r.readVarInt();
@@ -261,9 +265,9 @@ public class YsmBinaryReader {
             String name = r.readString();
             r.readString();
             byte[] texData = r.readByteArray();
-            r.readVarInt();
-            r.readVarInt();
-            r.readVarInt();
+            int texWidth = r.readVarInt();
+            int texHeight = r.readVarInt();
+            int imageFormat = r.readVarInt();
             r.readVarInt();
             int subTextureSize = r.readVarInt();
             for (int j = 0; j < subTextureSize; j++) {
@@ -276,6 +280,7 @@ public class YsmBinaryReader {
                 r.readVarInt();
             }
             model.textures.put(name, texData);
+            model.textureInfo.put(name, new int[]{texWidth, texHeight, imageFormat});
         }
 
         int modelTotalCount = r.readVarInt();

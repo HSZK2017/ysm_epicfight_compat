@@ -44,8 +44,14 @@ public class EFMeshJsonWriter {
             "hat", "jacket", "leftSleeve", "rightSleeve", "leftPants", "rightPants"
     };
 
-    private record VertexKey(float px, float py, float pz, float nx, float ny, float nz,
-                             float u, float v, int jointId) {}
+    private record VertexKey(int px, int py, int pz, int nx, int ny, int nz, int u, int v, int jointId) {}
+
+    private static VertexKey keyOf(Vector3f pos, Vector3f normal, float u, float v, int jointId) {
+        return new VertexKey(
+                Math.round(pos.x() * 1000f), Math.round(pos.y() * 1000f), Math.round(pos.z() * 1000f),
+                Math.round(normal.x() * 100f), Math.round(normal.y() * 100f), Math.round(normal.z() * 100f),
+                Math.round(u * 4096f), Math.round(v * 4096f), jointId);
+    }
 
     /**
      * Convert a YSM model package into an Epic Fight mesh JSON file.
@@ -172,8 +178,7 @@ public class EFMeshJsonWriter {
                     float py = pos.y() * scaleH;
                     float pz = pos.z() * scaleW;
 
-                    VertexKey key = new VertexKey(px, py, pz,
-                            normal.x(), normal.y(), normal.z(), quad.uvs[i][0], quad.uvs[i][1], jointId);
+                    VertexKey key = keyOf(new Vector3f(px, py, pz), normal, quad.uvs[i][0], quad.uvs[i][1], jointId);
                     Integer index = dedup.get(key);
                     if (index == null) {
                         index = positions.size() / 3;
