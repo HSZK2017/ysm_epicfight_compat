@@ -56,54 +56,8 @@ public class YSMPlayerRenderer extends PHumanoidRenderer<AbstractClientPlayer, A
     @Override
     public AssetAccessor<HumanoidMesh> getMeshProvider(AbstractClientPlayerPatch<AbstractClientPlayer> entitypatch) {
         validateArmatureOnce(entitypatch.getArmature());
-        AbstractClientPlayer player = entitypatch.getOriginal();
-        YSMModelAccess.YSMModelRef modelRef = YSMModelAccess.getCurrentModel(player);
-        if (modelRef != null) {
-            Meshes.MeshAccessor<YSMMesh> accessor = YSMMeshLibrary.findMesh(modelRef.modelId());
-            if (accessor != null) {
-                try {
-                    YSMMesh mesh = accessor.get();
-                    ResourceLocation texture = YSMMeshLibrary.findTexture(modelRef.modelId(), modelRef.textureName());
-                    if (texture != null) {
-                        YSMMeshLibrary.ensureTextureUploaded(texture);
-                        mesh.setTextureOverride(texture);
-                    }
-                    logMeshUsedOnce(player, modelRef, texture);
-                    @SuppressWarnings("unchecked")
-                    AssetAccessor<HumanoidMesh> result = (AssetAccessor<HumanoidMesh>) (AssetAccessor<?>) accessor;
-                    return result;
-                } catch (Throwable t) {
-                    com.ysmef.compat.YSMEpicFightCompat.LOGGER.warn(
-                            "YSM-EF Compat: failed to load generated mesh for '{}', falling back to Epic Fight biped: {}",
-                            modelRef.modelId(), t.toString());
-                }
-            } else {
-                logMeshMissingOnce(player, modelRef);
-            }
-        }
-        return super.getMeshProvider(entitypatch);
-    }
-
-    private static final java.util.Set<String> LOGGED_MESH_USE = java.util.concurrent.ConcurrentHashMap.newKeySet();
-    private static final java.util.Set<String> LOGGED_MESH_MISSING = java.util.concurrent.ConcurrentHashMap.newKeySet();
-
-    private static void logMeshUsedOnce(AbstractClientPlayer player, YSMModelAccess.YSMModelRef modelRef, ResourceLocation texture) {
-        String key = player.getGameProfile().getName() + "|" + modelRef.modelId() + "|" + modelRef.textureName();
-        if (LOGGED_MESH_USE.add(key)) {
-            com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
-                    "YSM-EF Compat: rendering player '{}' with converted YSM base mesh (model='{}', texture='{}' -> {})",
-                    player.getGameProfile().getName(), modelRef.modelId(), modelRef.textureName(), texture);
-        }
-    }
-
-    private static void logMeshMissingOnce(AbstractClientPlayer player, YSMModelAccess.YSMModelRef modelRef) {
-        String key = player.getGameProfile().getName() + "|" + modelRef.modelId();
-        if (LOGGED_MESH_MISSING.add(key)) {
-            com.ysmef.compat.YSMEpicFightCompat.LOGGER.warn(
-                    "YSM-EF Compat: no converted base mesh for model '{}' (player '{}', texture '{}'). Falling back to Epic Fight biped. Available: {}",
-                    modelRef.modelId(), player.getGameProfile().getName(), modelRef.textureName(),
-                    com.ysmef.compat.model.YSMMeshLibrary.availableModelIds());
-        }
+        AssetAccessor<HumanoidMesh> mesh = YSMMeshSelector.selectMesh(entitypatch.getOriginal());
+        return mesh != null ? mesh : super.getMeshProvider(entitypatch);
     }
 
     /**

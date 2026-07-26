@@ -158,6 +158,8 @@ Writing Output: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\reo
   com/ysmef/compat/event/YSMCompatClientEvents.class
   com/ysmef/compat/event/YSMReloadTrigger.class
   com/ysmef/compat/event/YSMRenderHook.class
+  com/ysmef/compat/mixin/
+  com/ysmef/compat/mixin/PPlayerRendererMixin.class
   com/ysmef/compat/model/
   com/ysmef/compat/model/EFMeshJsonWriter$BodyPart.class
   com/ysmef/compat/model/EFMeshJsonWriter$VertexKey.class
@@ -169,6 +171,7 @@ Writing Output: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\reo
   com/ysmef/compat/model/YSMMesh.class
   com/ysmef/compat/model/YSMMeshLibrary.class
   com/ysmef/compat/renderer/
+  com/ysmef/compat/renderer/YSMMeshSelector.class
   com/ysmef/compat/renderer/YSMModelAccess$CacheEntry.class
   com/ysmef/compat/renderer/YSMModelAccess$YSMModelRef.class
   com/ysmef/compat/renderer/YSMModelAccess.class
@@ -189,3 +192,4 @@ Writing Output: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\reo
   com/ysmef/compat/ysm/YsmModelPackage.class
   pack.mcmeta
   ysm_epicfight_compat.mixins.json
+  ysm_epicfight_compat.refmap.json
