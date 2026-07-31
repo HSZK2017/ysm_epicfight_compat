@@ -8,6 +8,7 @@ import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.resources.ResourceLocation;
 import yesman.epicfight.api.client.model.Meshes;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -225,8 +226,8 @@ public class YSMMeshLibrary {
             }
             Minecraft.getInstance().getTextureManager().register(rl, new DynamicTexture(image));
             UPLOADED_TEXTURES.put(rl.toString(), Boolean.TRUE);
-        } catch (Exception e) {
-            YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to upload texture {}", rl, e);
+        } catch (Throwable t) {
+            YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to upload texture {}", rl, t);
             UPLOADED_TEXTURES.put(rl.toString(), Boolean.TRUE);
         }
     }
@@ -234,13 +235,17 @@ public class YSMMeshLibrary {
     /**
      * Decode texture bytes into a NativeImage, supporting PNG/JPEG encoded data
      * as well as raw RGBA pixels (legacy .ysm binary textures).
+     *
+     * Uses the InputStream-based read: NativeImage.read(byte[]) copies the whole
+     * array onto the 64KB LWJGL MemoryStack, which overflows for large textures
+     * ("Out of stack space"), while the InputStream overload buffers off-heap.
      */
     private static NativeImage decodeTexture(ResourceLocation rl, byte[] data) throws IOException {
         if (data.length >= 4 && (data[0] & 0xFF) == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47) {
-            return NativeImage.read(data);
+            return NativeImage.read(new ByteArrayInputStream(data));
         }
         if (data.length >= 2 && (data[0] & 0xFF) == 0xFF && (data[1] & 0xFF) == 0xD8) {
-            return NativeImage.read(data);
+            return NativeImage.read(new ByteArrayInputStream(data));
         }
 
         int[] info = TEXTURE_INFO.get(rl.toString());

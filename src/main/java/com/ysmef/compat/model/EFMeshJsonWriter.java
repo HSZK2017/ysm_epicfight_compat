@@ -168,6 +168,7 @@ public class EFMeshJsonWriter {
 
             for (YSMGeoModel.Quad quad : bone.quads) {
                 quadCount[0]++;
+                int[] cornerIndices = new int[4];
                 for (int i = 0; i < 4; i++) {
                     Vector3f pos = new Vector3f(quad.positions[i]);
                     pos.mulPosition(boneTransform);
@@ -197,6 +198,15 @@ public class EFMeshJsonWriter {
                         vindices.add(0);
                         dedup.put(key, index);
                     }
+                    cornerIndices[i] = index;
+                }
+                // Epic Fight parts store pre-triangulated corner triplets
+                // (see biped.json: six corners per quad); every three consecutive
+                // VertexBuilders become one triangle at draw time. Fan each quad
+                // as (0,1,2) + (2,3,0), preserving the quad's winding.
+                int[] fan = {cornerIndices[0], cornerIndices[1], cornerIndices[2],
+                        cornerIndices[2], cornerIndices[3], cornerIndices[0]};
+                for (int index : fan) {
                     partList.add(index);
                     partList.add(index);
                     partList.add(index);
