@@ -37,6 +37,8 @@ public class YSMMeshLibrary {
     private static final Path PACK_ROOT = Paths.get("config", "ysm_epicfight_compat", "resourcepack");
     private static final Path MESH_DIR = PACK_ROOT.resolve("assets")
             .resolve(YSMEpicFightCompat.MODID).resolve("animmodels").resolve("entity");
+    private static final Path RUNTIME_DIR = PACK_ROOT.resolve("assets")
+            .resolve(YSMEpicFightCompat.MODID).resolve("ysm_runtime").resolve("entity");
     private static final Path PACK_META = PACK_ROOT.resolve("pack.mcmeta");
 
     private static final String MESH_NAMESPACE = YSMEpicFightCompat.MODID;
@@ -63,6 +65,19 @@ public class YSMMeshLibrary {
      */
     public static Path getPackRoot() {
         return PACK_ROOT;
+    }
+
+    /**
+     * The runtime script JSON (bone table + molang animations) generated for the
+     * given mesh id, evaluated by YSMRuntimeModel at render time.
+     */
+    public static Path getRuntimeFile(String meshId) {
+        return RUNTIME_DIR.resolve(meshId + ".json");
+    }
+
+    /** modelId -> meshId (sanitized), for runtime lookup. */
+    public static String meshIdOf(String modelId) {
+        return sanitize(modelId);
     }
 
     /**
@@ -113,7 +128,8 @@ public class YSMMeshLibrary {
 
                 String meshId = sanitize(modelId);
                 Path outFile = MESH_DIR.resolve(meshId + ".json");
-                int quads = EFMeshJsonWriter.write(pkg, outFile, textureRL);
+                Path runtimeFile = RUNTIME_DIR.resolve(meshId + ".json");
+                int quads = EFMeshJsonWriter.write(pkg, outFile, runtimeFile, textureRL);
                 if (quads < 0) {
                     YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: skipping model '{}' (no geometry after conversion)", modelId);
                     continue;

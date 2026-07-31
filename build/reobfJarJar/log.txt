@@ -137,11 +137,11 @@ Adding Libraries to Inheritance
 Reading Input: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\libs\YSM_EpicFight_Compat-1.20.1-1.0.0-all.jar
 Adding input to inheritance map
 Processing entries
+Conflicting propagated mapping for net/minecraft/world/entity/LivingEntity/lambda$addAdditionalSaveData$3(Lnet/minecraft/nbt/CompoundTag;Lnet/minecraft/nbt/Tag;)V from net/minecraft/world/entity/player/Player/lambda$addAdditionalSaveData$3(Lnet/minecraft/nbt/CompoundTag;Lnet/minecraft/nbt/Tag;)V: lambda$addAdditionalSaveData$3 -> m_219754_
 Conflicting propagated mapping for yesman/epicfight/api/client/model/Meshes/reload(Lnet/minecraft/server/packs/resources/PreparableReloadListener$PreparationBarrier;Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;Lnet/minecraft/util/profiling/ProfilerFiller;Ljava/util/concurrent/Executor;Ljava/util/concurrent/Executor;)Ljava/util/concurrent/CompletableFuture; from net/minecraft/server/packs/resources/PreparableReloadListener/reload(Lnet/minecraft/server/packs/resources/PreparableReloadListener$PreparationBarrier;Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;Lnet/minecraft/util/profiling/ProfilerFiller;Ljava/util/concurrent/Executor;Ljava/util/concurrent/Executor;)Ljava/util/concurrent/CompletableFuture;: reload -> m_5540_
 Conflicting propagated mapping for yesman/epicfight/client/renderer/EpicFightRenderTypes/lambda$static$6(Lnet/minecraft/resources/ResourceLocation;)Lnet/minecraft/client/renderer/RenderType; from net/minecraft/client/renderer/RenderType/lambda$static$6(Lnet/minecraft/resources/ResourceLocation;)Lnet/minecraft/client/renderer/RenderType;: lambda$static$6 -> m_285695_
 Conflicting propagated mapping for yesman/epicfight/client/renderer/EpicFightRenderTypes/debugQuads()Lnet/minecraft/client/renderer/RenderType; from net/minecraft/client/renderer/RenderType/debugQuads()Lnet/minecraft/client/renderer/RenderType;: debugQuads -> m_269166_
 Conflicting propagated mapping for yesman/epicfight/client/renderer/EpicFightRenderTypes/lambda$static$5(Lnet/minecraft/resources/ResourceLocation;)Lnet/minecraft/client/renderer/RenderType; from net/minecraft/client/renderer/RenderType/lambda$static$5(Lnet/minecraft/resources/ResourceLocation;)Lnet/minecraft/client/renderer/RenderType;: lambda$static$5 -> m_285687_
-Conflicting propagated mapping for net/minecraft/world/entity/LivingEntity/lambda$addAdditionalSaveData$3(Lnet/minecraft/nbt/CompoundTag;Lnet/minecraft/nbt/Tag;)V from net/minecraft/world/entity/player/Player/lambda$addAdditionalSaveData$3(Lnet/minecraft/nbt/CompoundTag;Lnet/minecraft/nbt/Tag;)V: lambda$addAdditionalSaveData$3 -> m_219754_
 Adding extras
 Sorting
 Writing Output: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\reobfJarJar\output.jar
@@ -164,7 +164,6 @@ Writing Output: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\reo
   com/ysmef/compat/mixin/
   com/ysmef/compat/mixin/PPlayerRendererMixin.class
   com/ysmef/compat/model/
-  com/ysmef/compat/model/EFMeshJsonWriter$BodyPart.class
   com/ysmef/compat/model/EFMeshJsonWriter$VertexKey.class
   com/ysmef/compat/model/EFMeshJsonWriter.class
   com/ysmef/compat/model/YSMGeoModel$Bone.class
@@ -173,6 +172,17 @@ Writing Output: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\reo
   com/ysmef/compat/model/YSMJointMapper.class
   com/ysmef/compat/model/YSMMesh.class
   com/ysmef/compat/model/YSMMeshLibrary.class
+  com/ysmef/compat/model/runtime/
+  com/ysmef/compat/model/runtime/YSMPlayerAnimator$ScriptAnimKeyLerp.class
+  com/ysmef/compat/model/runtime/YSMPlayerAnimator$ScriptAnimLoop.class
+  com/ysmef/compat/model/runtime/YSMPlayerAnimator.class
+  com/ysmef/compat/model/runtime/YSMRuntimeBridge.class
+  com/ysmef/compat/model/runtime/YSMRuntimeModel$BoneRt.class
+  com/ysmef/compat/model/runtime/YSMRuntimeModel$CompiledAnim.class
+  com/ysmef/compat/model/runtime/YSMRuntimeModel$CompiledChannel.class
+  com/ysmef/compat/model/runtime/YSMRuntimeModel$CompiledChannels.class
+  com/ysmef/compat/model/runtime/YSMRuntimeModel$CompiledTimeline.class
+  com/ysmef/compat/model/runtime/YSMRuntimeModel.class
   com/ysmef/compat/renderer/
   com/ysmef/compat/renderer/YSMMeshSelector.class
   com/ysmef/compat/renderer/YSMModelAccess$CacheEntry.class
@@ -193,6 +203,22 @@ Writing Output: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\reo
   com/ysmef/compat/ysm/YsmBinaryReader.class
   com/ysmef/compat/ysm/YsmFileCrypto.class
   com/ysmef/compat/ysm/YsmModelPackage.class
+  com/ysmef/compat/ysm/script/
+  com/ysmef/compat/ysm/script/Molang$CoalesceExpr.class
+  com/ysmef/compat/ysm/script/Molang$Env.class
+  com/ysmef/compat/ysm/script/Molang$Expr.class
+  com/ysmef/compat/ysm/script/Molang$Lexer.class
+  com/ysmef/compat/ysm/script/Molang$Parser.class
+  com/ysmef/compat/ysm/script/Molang$Token.class
+  com/ysmef/compat/ysm/script/Molang$VarExpr.class
+  com/ysmef/compat/ysm/script/Molang.class
+  com/ysmef/compat/ysm/script/ScriptAnim$BoneChannels.class
+  com/ysmef/compat/ysm/script/ScriptAnim$Channel.class
+  com/ysmef/compat/ysm/script/ScriptAnim$Key.class
+  com/ysmef/compat/ysm/script/ScriptAnim$Timeline.class
+  com/ysmef/compat/ysm/script/ScriptAnim$Value.class
+  com/ysmef/compat/ysm/script/ScriptAnim.class
+  com/ysmef/compat/ysm/script/ScriptJson.class
   pack.mcmeta
   ysm_epicfight_compat.mixins.json
   ysm_epicfight_compat.refmap.json

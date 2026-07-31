@@ -128,6 +128,15 @@ public final class YSMJointMapper {
     }
 
     /**
+     * Whether the bone's own name maps directly to an EF joint (without walking up
+     * to ancestors). Directly mapped bones are driven by Epic Fight's animations;
+     * other bones follow YSM's evaluated bone transforms on top.
+     */
+    public static boolean isDirectlyMapped(YSMGeoModel.Bone bone) {
+        return STANDARD_MAPPING.containsKey(normalize(bone.name));
+    }
+
+    /**
      * The EF joint id -> EF joint name, for sanity checks.
      */
     public static String jointNameOf(int jointId) {
@@ -139,7 +148,18 @@ public final class YSMJointMapper {
         return "Root";
     }
 
+    /**
+     * Normalizes a bone name for mapping lookup: lower case, underscores/spaces
+     * removed, and trailing digits stripped so alternate-form subtrees of a model
+     * (e.g. "LeftArm2" of a fox variant) map to the same EF joint as the primary
+     * form ("LeftArm").
+     */
     private static String normalize(String boneName) {
-        return boneName.toLowerCase().replace("_", "").replace(" ", "");
+        String normalized = boneName.toLowerCase().replace("_", "").replace(" ", "");
+        int end = normalized.length();
+        while (end > 0 && Character.isDigit(normalized.charAt(end - 1))) {
+            end--;
+        }
+        return normalized.substring(0, end);
     }
 }

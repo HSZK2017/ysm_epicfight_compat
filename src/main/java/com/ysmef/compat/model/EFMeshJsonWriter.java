@@ -12,8 +12,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -23,8 +23,18 @@ import java.util.Map;
  * The output follows the exact format consumed by Epic Fight's JsonAssetLoader
  * (see assets/epicfight/animmodels/entity/biped.json in the Epic Fight jar):
  * - vertex arrays (positions/normals/uvs/vcounts/vindices/weights)
- * - named parts with index triplets (position, uv, normal)
+ * - named parts with pre-triangulated index triplets (position, uv, normal);
+ *   Epic Fight groups every three consecutive VertexBuilders into one triangle,
+ *   so each quad is fanned as (0,1,2) + (2,3,0), six triplets per quad
  * - render_properties with the mesh texture
+ *
+ * Every YSM bone that has geometry becomes its own Epic Fight part ("y/<boneName>").
+ * YSM models change shape at runtime through molang-driven bone animations (variant
+ * subtrees scaled to zero, secondary bones like tails/ears/magic circles animated by
+ * parallel scripts), so per-bone parts let the runtime hide and transform bones
+ * individually, replicating YSM's model-changing behavior (see YSMRuntimeModel).
+ * The twelve vanilla humanoid parts are also emitted (empty) for Epic Fight's
+ * humanoid mesh/layers compatibility.
  *
  * Positions and normals are written in Epic Fight's Blender-style coordinate
  * convention (the loader applies a -90deg X rotation: (x, y, z)_mc -> (x, -z, y)),
@@ -35,14 +45,13 @@ import java.util.Map;
  */
 public class EFMeshJsonWriter {
 
-    private enum BodyPart {
-        HEAD, TORSO, LEFT_ARM, RIGHT_ARM, LEFT_LEG, RIGHT_LEG
-    }
-
     private static final String[] HUMANOID_PARTS = {
             "head", "torso", "leftArm", "rightArm", "leftLeg", "rightLeg",
             "hat", "jacket", "leftSleeve", "rightSleeve", "leftPants", "rightPants"
     };
+
+    /** Prefix of the Epic Fight part generated for a YSM bone. */
+    public static final String BONE_PART_PREFIX = "y/";
 
     private record VertexKey(int px, int py, int pz, int nx, int ny, int nz, int u, int v, int jointId) {}
 
@@ -56,12 +65,13 @@ public class EFMeshJsonWriter {
     /**
      * Convert a YSM model package into an Epic Fight mesh JSON file.
      *
-     * @param pkg        the parsed YSM model package
-     * @param outFile    the target JSON file
-     * @param textureRL  the resource location of the model's default texture
+     * @param pkg         the parsed YSM model package
+     * @param outFile     the target mesh JSON file
+     * @param runtimeFile the target runtime script JSON file (bone table + animations)
+     * @param textureRL   the resource location of the model's default texture
      * @return the number of quads converted, or -1 if the model has no geometry
      */
-    public static int write(YsmModelPackage pkg, Path outFile, String textureRL) throws IOException {
+    public static int write(YsmModelPackage pkg, Path outFile, Path runtimeFile, String textureRL) throws IOException {
         YSMGeoModel geoModel = pkg.geometry;
         if (geoModel == null) {
             return -1;
@@ -77,10 +87,7 @@ public class EFMeshJsonWriter {
         List<Integer> vindices = new ArrayList<>();
 
         Map<VertexKey, Integer> dedup = new HashMap<>();
-        Map<BodyPart, List<Integer>> partIndices = new EnumMap<>(BodyPart.class);
-        for (BodyPart part : BodyPart.values()) {
-            partIndices.put(part, new ArrayList<>());
-        }
+        Map<String, List<Integer>> partIndices = new LinkedHashMap<>();
 
         int[] quadCount = {0};
         for (YSMGeoModel.Bone rootBone : geoModel.topLevelBones) {
@@ -116,25 +123,10 @@ public class EFMeshJsonWriter {
 
         JsonObject parts = new JsonObject();
         for (String partName : HUMANOID_PARTS) {
-            BodyPart bodyPart = switch (partName) {
-                case "head" -> BodyPart.HEAD;
-                case "torso" -> BodyPart.TORSO;
-                case "leftArm" -> BodyPart.LEFT_ARM;
-                case "rightArm" -> BodyPart.RIGHT_ARM;
-                case "leftLeg" -> BodyPart.LEFT_LEG;
-                case "rightLeg" -> BodyPart.RIGHT_LEG;
-                default -> null;
-            };
-            List<Integer> indices = bodyPart != null ? partIndices.get(bodyPart) : List.of();
-            JsonObject partObj = new JsonObject();
-            partObj.addProperty("stride", 3);
-            partObj.addProperty("count", indices.size() / 3);
-            JsonArray partArray = new JsonArray();
-            for (Integer index : indices) {
-                partArray.add(index);
-            }
-            partObj.add("array", partArray);
-            parts.add(partName, partObj);
+            parts.add(partName, partArray(List.of()));
+        }
+        for (Map.Entry<String, List<Integer>> entry : partIndices.entrySet()) {
+            parts.add(entry.getKey(), partArray(entry.getValue()));
         }
         vertices.add("parts", parts);
 
@@ -142,7 +134,44 @@ public class EFMeshJsonWriter {
 
         Files.createDirectories(outFile.getParent());
         Files.writeString(outFile, new GsonBuilder().create().toJson(root), StandardCharsets.UTF_8);
+
+        writeRuntimeJson(pkg, geoModel, runtimeFile);
         return quadCount[0];
+    }
+
+    /**
+     * Writes the runtime script JSON consumed by YSMRuntimeModel: the bone table
+     * (hierarchy, bind transforms, EF joint binding) plus the molang animations that
+     * drive YSM's model-changing behavior.
+     */
+    private static void writeRuntimeJson(YsmModelPackage pkg, YSMGeoModel geoModel, Path runtimeFile) throws IOException {
+        JsonObject root = new JsonObject();
+
+        JsonArray bones = new JsonArray();
+        for (YSMGeoModel.Bone bone : geoModel.bonesByName.values()) {
+            JsonObject obj = new JsonObject();
+            obj.addProperty("name", bone.name);
+            obj.addProperty("parent", bone.parent != null ? bone.parent.name : "");
+            JsonArray pivot = new JsonArray();
+            pivot.add(bone.pivotX);
+            pivot.add(bone.pivotY);
+            pivot.add(bone.pivotZ);
+            obj.add("pivot", pivot);
+            JsonArray rot = new JsonArray();
+            rot.add(bone.rotX);
+            rot.add(bone.rotY);
+            rot.add(bone.rotZ);
+            obj.add("rot", rot);
+            obj.addProperty("joint", YSMJointMapper.resolveJointId(bone));
+            obj.addProperty("mapped", YSMJointMapper.isDirectlyMapped(bone));
+            bones.add(obj);
+        }
+        root.add("bones", bones);
+
+        root.add("animations", com.ysmef.compat.ysm.script.ScriptJson.animationsToJson(pkg.scriptAnims));
+
+        Files.createDirectories(runtimeFile.getParent());
+        Files.writeString(runtimeFile, new GsonBuilder().create().toJson(root), StandardCharsets.UTF_8);
     }
 
     /**
@@ -153,7 +182,7 @@ public class EFMeshJsonWriter {
                                  Map<VertexKey, Integer> dedup,
                                  List<Float> positions, List<Float> normals, List<Float> uvs,
                                  List<Integer> vcounts, List<Integer> vindices,
-                                 Map<BodyPart, List<Integer>> partIndices, int[] quadCount) {
+                                 Map<String, List<Integer>> partIndices, int[] quadCount) {
         Matrix4f boneTransform = new Matrix4f(parentTransform);
         boneTransform.translate(bone.pivotX, bone.pivotY, bone.pivotZ);
         boneTransform.rotateZ(bone.rotZ);
@@ -163,8 +192,7 @@ public class EFMeshJsonWriter {
 
         if (!bone.quads.isEmpty()) {
             int jointId = YSMJointMapper.resolveJointId(bone);
-            BodyPart bodyPart = bodyPartOf(jointId);
-            List<Integer> partList = partIndices.get(bodyPart);
+            List<Integer> partList = partIndices.computeIfAbsent(partNameOf(bone), k -> new ArrayList<>());
 
             for (YSMGeoModel.Quad quad : bone.quads) {
                 quadCount[0]++;
@@ -220,15 +248,21 @@ public class EFMeshJsonWriter {
         }
     }
 
-    private static BodyPart bodyPartOf(int jointId) {
-        return switch (YSMJointMapper.jointNameOf(jointId)) {
-            case "Head" -> BodyPart.HEAD;
-            case "Arm_L", "Hand_L", "Tool_L", "Elbow_L", "Shoulder_L" -> BodyPart.LEFT_ARM;
-            case "Arm_R", "Hand_R", "Tool_R", "Elbow_R", "Shoulder_R" -> BodyPart.RIGHT_ARM;
-            case "Thigh_L", "Leg_L", "Knee_L" -> BodyPart.LEFT_LEG;
-            case "Thigh_R", "Leg_R", "Knee_R" -> BodyPart.RIGHT_LEG;
-            default -> BodyPart.TORSO;
-        };
+    /** The Epic Fight part name carrying the geometry of the given YSM bone. */
+    public static String partNameOf(YSMGeoModel.Bone bone) {
+        return BONE_PART_PREFIX + bone.name;
+    }
+
+    private static JsonObject partArray(List<Integer> indices) {
+        JsonObject partObj = new JsonObject();
+        partObj.addProperty("stride", 3);
+        partObj.addProperty("count", indices.size() / 3);
+        JsonArray partArray = new JsonArray();
+        for (Integer index : indices) {
+            partArray.add(index);
+        }
+        partObj.add("array", partArray);
+        return partObj;
     }
 
     private static JsonObject floatArray(List<Float> values, int stride) {

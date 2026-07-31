@@ -34,16 +34,24 @@ public final class YsmModelPackage {
     public final YSMGeoModel geometry;
     public final Map<String, byte[]> textures;
     public final Map<String, int[]> textureInfo;
+    public final Map<String, com.ysmef.compat.ysm.script.ScriptAnim> scriptAnims;
     public final float widthScale;
     public final float heightScale;
     public final String defaultTexture;
 
     private YsmModelPackage(String modelId, YSMGeoModel geometry, Map<String, byte[]> textures,
                             Map<String, int[]> textureInfo, float widthScale, float heightScale, String defaultTexture) {
+        this(modelId, geometry, textures, textureInfo, java.util.Collections.emptyMap(), widthScale, heightScale, defaultTexture);
+    }
+
+    private YsmModelPackage(String modelId, YSMGeoModel geometry, Map<String, byte[]> textures,
+                            Map<String, int[]> textureInfo, Map<String, com.ysmef.compat.ysm.script.ScriptAnim> scriptAnims,
+                            float widthScale, float heightScale, String defaultTexture) {
         this.modelId = modelId;
         this.geometry = geometry;
         this.textures = textures;
         this.textureInfo = textureInfo;
+        this.scriptAnims = scriptAnims;
         this.widthScale = widthScale;
         this.heightScale = heightScale;
         this.defaultTexture = defaultTexture;
@@ -87,6 +95,7 @@ public final class YsmModelPackage {
 
             YSMGeoModel geometry = null;
             Map<String, byte[]> textures = new LinkedHashMap<>();
+            Map<String, com.ysmef.compat.ysm.script.ScriptAnim> scriptAnims = new LinkedHashMap<>();
             if (json.has("files")) {
                 JsonObject files = json.getAsJsonObject("files");
                 if (files.has("player")) {
@@ -97,6 +106,15 @@ public final class YsmModelPackage {
                             Path geoPath = modelDir.resolve(modelObj.get("main").getAsString());
                             if (Files.isRegularFile(geoPath)) {
                                 geometry = YSMGeoModel.parse(Files.readString(geoPath, StandardCharsets.UTF_8));
+                            }
+                        }
+                    }
+                    if (player.has("animation")) {
+                        JsonObject animObj = player.getAsJsonObject("animation");
+                        for (Map.Entry<String, JsonElement> entry : animObj.entrySet()) {
+                            Path animPath = modelDir.resolve(entry.getValue().getAsString());
+                            if (Files.isRegularFile(animPath)) {
+                                loadScriptAnims(animPath, scriptAnims);
                             }
                         }
                     }
@@ -125,10 +143,32 @@ public final class YsmModelPackage {
             }
 
             if (geometry != null) {
-                return new YsmModelPackage(modelId, geometry, textures, java.util.Collections.emptyMap(), widthScale, heightScale, defaultTexture);
+                return new YsmModelPackage(modelId, geometry, textures, java.util.Collections.emptyMap(), scriptAnims,
+                        widthScale, heightScale, defaultTexture);
             }
         }
         return null;
+    }
+
+    /**
+     * Reads one Bedrock .animation.json file and merges the animations relevant to
+     * the Epic Fight compat runtime (see ScriptJson.isRuntimeRelevant).
+     */
+    private static void loadScriptAnims(Path animPath, Map<String, com.ysmef.compat.ysm.script.ScriptAnim> out) {
+        try {
+            JsonObject root = JsonParser.parseString(Files.readString(animPath, StandardCharsets.UTF_8)).getAsJsonObject();
+            JsonObject anims = root.has("animations") ? root.getAsJsonObject("animations") : null;
+            if (anims == null) {
+                return;
+            }
+            for (Map.Entry<String, JsonElement> entry : anims.entrySet()) {
+                if (com.ysmef.compat.ysm.script.ScriptJson.isRuntimeRelevant(entry.getKey())) {
+                    out.put(entry.getKey(), com.ysmef.compat.ysm.script.ScriptJson.fromBedrock(
+                            entry.getKey(), entry.getValue().getAsJsonObject()));
+                }
+            }
+        } catch (Exception ignored) {
+        }
     }
 
     private static YsmModelPackage loadBinary(String modelId) throws IOException {
@@ -140,7 +180,7 @@ public final class YsmModelPackage {
             byte[] decrypted = YsmFileCrypto.decryptYsmFile(Files.readAllBytes(ysmFile));
             YsmBinaryReader.BinaryModel binary = YsmBinaryReader.read(decrypted);
             YSMGeoModel geometry = YSMGeoModel.fromBinary(binary);
-            return new YsmModelPackage(modelId, geometry, binary.textures, binary.textureInfo,
+            return new YsmModelPackage(modelId, geometry, binary.textures, binary.textureInfo, binary.animations,
                     binary.widthScale, binary.heightScale, binary.defaultTexture);
         }
         return null;

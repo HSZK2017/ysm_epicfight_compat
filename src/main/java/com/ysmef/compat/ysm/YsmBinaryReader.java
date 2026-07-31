@@ -29,6 +29,7 @@ public class YsmBinaryReader {
         public final List<BinaryBone> mainBones = new ArrayList<>();
         public final Map<String, byte[]> textures = new LinkedHashMap<>();
         public final Map<String, int[]> textureInfo = new LinkedHashMap<>();
+        public final Map<String, com.ysmef.compat.ysm.script.ScriptAnim> animations = new LinkedHashMap<>();
         public float widthScale = 0.7f;
         public float heightScale = 0.7f;
         public String defaultTexture = "";
@@ -86,7 +87,7 @@ public class YsmBinaryReader {
             r.readVarInt();
             int unknownPadding = r.readVarInt();
             if (unknownPadding != 1) throw new IllegalStateException("Expected 1");
-            skipAnimations(r, format);
+            readAnimations(r, format, model.animations);
         }
 
         int customTextureCount = r.readVarInt();
@@ -147,7 +148,7 @@ public class YsmBinaryReader {
             r.readVarInt();
             int unknownPadding = r.readVarInt();
             if (unknownPadding != 1) throw new IllegalStateException("Expected 1");
-            skipAnimations(r, format);
+            readAnimations(r, format, model.animations);
         }
 
         if (format > 9) {
@@ -255,7 +256,7 @@ public class YsmBinaryReader {
         for (int i = 0; i < animationCount; ++i) {
             r.readVarInt();
             r.readString();
-            skipAnimations(r, format);
+            readAnimations(r, format, model.animations);
         }
 
         skipAnimationControllers(r, format);
@@ -607,6 +608,110 @@ public class YsmBinaryReader {
                 }
             }
         }
+    }
+
+    /**
+     * Parses the binary animation section (modern format, see YSMParserV3's
+     * ParseAnimations) instead of skipping it, collecting the animations the
+     * Epic Fight compat runtime needs (parallel loops, locomotion states,
+     * hold/use condition overlays).
+     */
+    private static void readAnimations(Reader r, int format, Map<String, com.ysmef.compat.ysm.script.ScriptAnim> out) {
+        int animationCount = r.readVarInt();
+        for (int animIndex = 0; animIndex < animationCount; ++animIndex) {
+            com.ysmef.compat.ysm.script.ScriptAnim anim = new com.ysmef.compat.ysm.script.ScriptAnim();
+            anim.name = r.readString();
+            anim.length = r.readFloat();
+            int loopMode = r.readVarInt();
+            anim.loop = switch (loopMode) {
+                case 1 -> com.ysmef.compat.ysm.script.ScriptAnim.LOOP_REPEAT;
+                case 3 -> com.ysmef.compat.ysm.script.ScriptAnim.LOOP_HOLD;
+                default -> com.ysmef.compat.ysm.script.ScriptAnim.LOOP_ONCE;
+            };
+            if (format > 9) {
+                r.readVarInt();
+                r.readVarInt();
+                int blendWeightMolangCount = r.readVarInt();
+                for (int i = 0; i < blendWeightMolangCount; i++) {
+                    byte datatype = r.readByte();
+                    if (datatype == 0x01) {
+                        r.readFloat();
+                    } else if (datatype == 0x02) {
+                        r.readString();
+                    }
+                }
+                r.readVarInt();
+            }
+            int boneCount = r.readVarInt();
+            for (int i = 0; i < boneCount; ++i) {
+                String boneName = r.readString();
+                com.ysmef.compat.ysm.script.ScriptAnim.BoneChannels channels =
+                        new com.ysmef.compat.ysm.script.ScriptAnim.BoneChannels();
+                channels.rotation = readScriptChannel(r);
+                channels.position = readScriptChannel(r);
+                channels.scale = readScriptChannel(r);
+                if (!channels.isEmpty()) {
+                    anim.bones.put(boneName, channels);
+                }
+            }
+            int timelineEventGroupsCount = r.readVarInt();
+            for (int i = 0; i < timelineEventGroupsCount; ++i) {
+                int timelineEventsCount = r.readVarInt();
+                String[] code = new String[timelineEventsCount];
+                for (int j = 0; j < timelineEventsCount; ++j) {
+                    code[j] = r.readString();
+                }
+                float time = r.readFloat() / 20.0f;
+                if (timelineEventsCount > 0) {
+                    anim.timelines.add(new com.ysmef.compat.ysm.script.ScriptAnim.Timeline(time, code));
+                }
+            }
+            if (format > 9) {
+                int soundEffectsCount = r.readVarInt();
+                for (int i = 0; i < soundEffectsCount; i++) {
+                    r.readString();
+                    r.readFloat();
+                }
+            }
+            if (com.ysmef.compat.ysm.script.ScriptJson.isRuntimeRelevant(anim.name)) {
+                out.put(anim.name, anim);
+            }
+        }
+    }
+
+    private static com.ysmef.compat.ysm.script.ScriptAnim.Channel readScriptChannel(Reader r) {
+        int keyframeCount = r.readVarInt();
+        if (keyframeCount == 0) {
+            return null;
+        }
+        com.ysmef.compat.ysm.script.ScriptAnim.Channel channel = new com.ysmef.compat.ysm.script.ScriptAnim.Channel();
+        for (int i = 0; i < keyframeCount; i++) {
+            com.ysmef.compat.ysm.script.ScriptAnim.Key key = new com.ysmef.compat.ysm.script.ScriptAnim.Key();
+            key.time = r.readFloat() / 20.0f;
+            key.lerp = r.readVarInt();
+            key.post = readScriptValue(r);
+            boolean hasPreData = r.readVarInt() > 0;
+            if (hasPreData) {
+                key.pre = readScriptValue(r);
+            }
+            if (key.post != null) {
+                channel.keys.add(key);
+            }
+        }
+        return channel.keys.isEmpty() ? null : channel;
+    }
+
+    private static com.ysmef.compat.ysm.script.ScriptAnim.Value readScriptValue(Reader r) {
+        com.ysmef.compat.ysm.script.ScriptAnim.Value value = new com.ysmef.compat.ysm.script.ScriptAnim.Value();
+        for (int j = 0; j < 3; j++) {
+            byte datatype = r.readByte();
+            if (datatype == 0x01) {
+                value.num[j] = r.readFloat();
+            } else if (datatype == 0x02) {
+                value.expr[j] = r.readString();
+            }
+        }
+        return value;
     }
 
     private static void skipChannel(Reader r) {

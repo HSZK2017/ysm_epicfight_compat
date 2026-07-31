@@ -3,6 +3,7 @@ package com.ysmef.compat.renderer;
 import com.ysmef.compat.YSMEpicFightCompat;
 import com.ysmef.compat.model.YSMMesh;
 import com.ysmef.compat.model.YSMMeshLibrary;
+import com.ysmef.compat.model.runtime.YSMRuntimeBridge;
 import net.minecraft.client.player.AbstractClientPlayer;
 import net.minecraft.resources.ResourceLocation;
 import yesman.epicfight.api.asset.AssetAccessor;
@@ -48,6 +49,8 @@ public final class YSMMeshSelector {
 
         try {
             YSMMesh mesh = accessor.get();
+            mesh.setRuntimeModelId(modelRef.modelId());
+            YSMRuntimeBridge.setCurrentPlayer(player);
             ResourceLocation texture = YSMMeshLibrary.findTexture(modelRef.modelId(), modelRef.textureName());
             if (texture != null) {
                 YSMMeshLibrary.ensureTextureUploaded(texture);
