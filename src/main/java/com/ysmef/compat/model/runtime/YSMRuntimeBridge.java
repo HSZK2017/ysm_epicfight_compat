@@ -1,10 +1,15 @@
 package com.ysmef.compat.model.runtime;
 
+import com.ysmef.compat.model.EFMeshJsonWriter;
 import com.ysmef.compat.model.YSMMesh;
+import com.ysmef.compat.renderer.YSMBattleMode;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.player.Player;
+import yesman.epicfight.api.client.model.MeshPart;
 import yesman.epicfight.api.model.Armature;
 import yesman.epicfight.api.utils.math.OpenMatrix4f;
+
+import java.util.Map;
 
 /**
  * Per-frame bridge between the Epic Fight render pipeline and the YSM script
@@ -31,6 +36,10 @@ public final class YSMRuntimeBridge {
      * Evaluate the YSM scripts for the player currently being rendered and apply
      * the results (per-part hidden flags and transforms) to the mesh. No-op when
      * there is no current player or no runtime data for the mesh's model.
+     *
+     * In Epic Fight battle mode no script animation runs: the mesh is drawn with
+     * the model's default form only (animation-driven variant geometry hidden,
+     * no transforms), so Epic Fight's combat animations are the sole deformation.
      */
     public static void apply(YSMMesh mesh, Armature armature, OpenMatrix4f[] poses) {
         mesh.clearRuntimeTransforms();
@@ -43,10 +52,30 @@ public final class YSMRuntimeBridge {
             return;
         }
         YSMRuntimeModel model = YSMRuntimeModel.get(modelId);
+        if (YSMBattleMode.isBattleMode(player)) {
+            if (model != null) {
+                model.applyDefaultVisibility(mesh);
+            } else {
+                unhideAllBoneParts(mesh);
+            }
+            return;
+        }
         if (model == null) {
             return;
         }
         float partialTick = Minecraft.getInstance().getFrameTime();
         model.animatorFor(player).apply(mesh, player, poses, partialTick);
+    }
+
+    /**
+     * Restore full visibility of every per-bone part, undoing any hidden flags
+     * the script evaluator set in previous frames.
+     */
+    private static void unhideAllBoneParts(YSMMesh mesh) {
+        for (Map.Entry<String, MeshPart> entry : mesh.getPartEntrySetSafe()) {
+            if (entry.getKey().startsWith(EFMeshJsonWriter.BONE_PART_PREFIX)) {
+                entry.getValue().setHidden(false);
+            }
+        }
     }
 }

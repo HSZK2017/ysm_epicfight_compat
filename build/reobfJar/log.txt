@@ -160,6 +160,12 @@ Writing Output: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\reo
   com/ysmef/compat/event/YSMRenderHook.class
   com/ysmef/compat/mixin/
   com/ysmef/compat/mixin/PPlayerRendererMixin.class
+  com/ysmef/compat/mixin/YsmArmRenderMixin.class
+  com/ysmef/compat/mixin/YsmBackgroundHandMixin.class
+  com/ysmef/compat/mixin/YsmFishingHookRenderMixin.class
+  com/ysmef/compat/mixin/YsmProjectileRenderMixin.class
+  com/ysmef/compat/mixin/YsmVehiclePreviewMixin.class
+  com/ysmef/compat/mixin/YsmVehicleRenderMixin.class
   com/ysmef/compat/model/
   com/ysmef/compat/model/EFMeshJsonWriter$VertexKey.class
   com/ysmef/compat/model/EFMeshJsonWriter.class
@@ -174,6 +180,7 @@ Writing Output: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\reo
   com/ysmef/compat/model/runtime/YSMPlayerAnimator$ScriptAnimLoop.class
   com/ysmef/compat/model/runtime/YSMPlayerAnimator.class
   com/ysmef/compat/model/runtime/YSMRuntimeBridge.class
+  com/ysmef/compat/model/runtime/YSMRuntimeModel$1.class
   com/ysmef/compat/model/runtime/YSMRuntimeModel$BoneRt.class
   com/ysmef/compat/model/runtime/YSMRuntimeModel$CompiledAnim.class
   com/ysmef/compat/model/runtime/YSMRuntimeModel$CompiledChannel.class
@@ -181,11 +188,14 @@ Writing Output: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\reo
   com/ysmef/compat/model/runtime/YSMRuntimeModel$CompiledTimeline.class
   com/ysmef/compat/model/runtime/YSMRuntimeModel.class
   com/ysmef/compat/renderer/
+  com/ysmef/compat/renderer/YSMBattleMode.class
   com/ysmef/compat/renderer/YSMMeshSelector.class
   com/ysmef/compat/renderer/YSMModelAccess$CacheEntry.class
   com/ysmef/compat/renderer/YSMModelAccess$YSMModelRef.class
   com/ysmef/compat/renderer/YSMModelAccess.class
   com/ysmef/compat/renderer/YSMPlayerRenderer.class
+  com/ysmef/compat/renderer/layer/
+  com/ysmef/compat/renderer/layer/YsmConditionalArmorLayer.class
   com/ysmef/compat/ysm/
   com/ysmef/compat/ysm/ChaCha20Base.class
   com/ysmef/compat/ysm/CityHash$Number128.class

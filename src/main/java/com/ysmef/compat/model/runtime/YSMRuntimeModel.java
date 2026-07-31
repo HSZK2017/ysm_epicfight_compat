@@ -6,12 +6,14 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.ysmef.compat.YSMEpicFightCompat;
 import com.ysmef.compat.model.EFMeshJsonWriter;
+import com.ysmef.compat.model.YSMMesh;
 import com.ysmef.compat.model.YSMMeshLibrary;
 import com.ysmef.compat.ysm.script.Molang;
 import com.ysmef.compat.ysm.script.ScriptAnim;
 import com.ysmef.compat.ysm.script.ScriptJson;
 import net.minecraft.world.entity.player.Player;
 import org.joml.Matrix4f;
+import yesman.epicfight.api.client.model.MeshPart;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -81,6 +83,149 @@ public final class YSMRuntimeModel {
                 model.animators.clear();
             }
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Default visibility (battle mode)
+    // ------------------------------------------------------------------
+
+    private static final double HIDE_SCALE_EPSILON = 0.01;
+
+    /**
+     * Per-bone visibility of the model's default form, computed once from the
+     * parallel scripts (pre_parallel* / parallel*) with a frozen, all-default
+     * molang environment (no variables set, every query/function returning 0).
+     * YSM collapses animation-driven variant geometry (weapons, expressions,
+     * attachments) to scale 0 in those scripts, so evaluating them statically
+     * yields exactly the main model without any animation-related variants.
+     */
+    private volatile boolean[] defaultHidden;
+
+    /**
+     * Apply the default-form visibility to every per-bone part of the mesh.
+     * Used in Epic Fight battle mode, where no script animation may run.
+     */
+    public void applyDefaultVisibility(YSMMesh mesh) {
+        boolean[] hidden = defaultHidden();
+        for (Map.Entry<String, MeshPart> entry : mesh.getPartEntrySetSafe()) {
+            String partName = entry.getKey();
+            if (!partName.startsWith(EFMeshJsonWriter.BONE_PART_PREFIX)) {
+                continue;
+            }
+            String boneName = partName.substring(EFMeshJsonWriter.BONE_PART_PREFIX.length());
+            Integer boneIdx = boneIndex.get(boneName);
+            entry.getValue().setHidden(boneIdx != null && boneIdx < hidden.length && hidden[boneIdx]);
+        }
+    }
+
+    private boolean[] defaultHidden() {
+        boolean[] result = defaultHidden;
+        if (result == null) {
+            synchronized (this) {
+                result = defaultHidden;
+                if (result == null) {
+                    result = computeDefaultHidden();
+                    defaultHidden = result;
+                }
+            }
+        }
+        return result;
+    }
+
+    private boolean[] computeDefaultHidden() {
+        int n = bones.length;
+        Molang.Env env = newDefaultEnv();
+        // evaluate each parallel anim's t=0 scale channels; later anims override
+        // earlier ones per bone, mirroring the animator's shared scratch arrays
+        float[][] scales = new float[n][];
+        for (CompiledAnim anim : parallels) {
+            for (CompiledTimeline timeline : anim.timelines) {
+                if (timeline.time <= 0) {
+                    for (Molang.Expr expr : timeline.code) {
+                        expr.eval(env);
+                    }
+                }
+            }
+            for (Map.Entry<Integer, CompiledChannels> entry : anim.bones.entrySet()) {
+                CompiledChannel channel = entry.getValue().scale;
+                if (channel != null) {
+                    scales[entry.getKey()] = evalChannelAtZero(channel, env);
+                }
+            }
+        }
+        boolean[] hidden = new boolean[n];
+        boolean[] done = new boolean[n];
+        float[] eff = new float[n];
+        for (int i = 0; i < n; i++) {
+            hidden[i] = effectiveScale(i, scales, done, eff) < HIDE_SCALE_EPSILON;
+        }
+        return hidden;
+    }
+
+    private float effectiveScale(int boneIdx, float[][] scales, boolean[] done, float[] eff) {
+        if (done[boneIdx]) {
+            return eff[boneIdx];
+        }
+        float own = 1.0f;
+        if (scales[boneIdx] != null) {
+            own = Math.min(scales[boneIdx][0], Math.min(scales[boneIdx][1], scales[boneIdx][2]));
+        }
+        float parent = bones[boneIdx].parent >= 0
+                ? effectiveScale(bones[boneIdx].parent, scales, done, eff)
+                : 1.0f;
+        eff[boneIdx] = parent * own;
+        done[boneIdx] = true;
+        return eff[boneIdx];
+    }
+
+    private static float[] evalChannelAtZero(CompiledChannel channel, Molang.Env env) {
+        int idx = 0;
+        for (int i = 0; i < channel.times.length; i++) {
+            if (channel.times[i] <= 0) {
+                idx = i;
+            }
+        }
+        Molang.Expr[] axes = channel.post[idx];
+        return new float[]{
+                (float) axes[0].eval(env),
+                (float) axes[1].eval(env),
+                (float) axes[2].eval(env)};
+    }
+
+    private static Molang.Env newDefaultEnv() {
+        return new Molang.Env() {
+            private final Map<String, Double> vars = new HashMap<>();
+
+            @Override
+            public double getVar(String path) {
+                return vars.getOrDefault(path, 0.0);
+            }
+
+            @Override
+            public boolean hasVar(String path) {
+                return vars.containsKey(path);
+            }
+
+            @Override
+            public void setVar(String path, double value) {
+                vars.put(path, value);
+            }
+
+            @Override
+            public double getQuery(String path) {
+                return 0.0;
+            }
+
+            @Override
+            public double callFunction(String name, double[] args) {
+                return 0.0;
+            }
+
+            @Override
+            public double callStringFunction(String name, String[] args) {
+                return 0.0;
+            }
+        };
     }
 
     // ------------------------------------------------------------------

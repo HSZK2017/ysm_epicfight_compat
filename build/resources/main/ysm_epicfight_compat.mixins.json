@@ -5,7 +5,13 @@
   "compatibilityLevel": "JAVA_17",
   "refmap": "ysm_epicfight_compat.refmap.json",
   "client": [
-    "PPlayerRendererMixin"
+    "PPlayerRendererMixin",
+    "YsmArmRenderMixin",
+    "YsmBackgroundHandMixin",
+    "YsmProjectileRenderMixin",
+    "YsmFishingHookRenderMixin",
+    "YsmVehicleRenderMixin",
+    "YsmVehiclePreviewMixin"
   ],
   "injectors": {
     "defaultRequire": 1

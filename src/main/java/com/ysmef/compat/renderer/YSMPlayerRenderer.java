@@ -2,6 +2,7 @@ package com.ysmef.compat.renderer;
 
 import com.ysmef.compat.model.YSMMesh;
 import com.ysmef.compat.model.YSMMeshLibrary;
+import com.ysmef.compat.renderer.layer.YsmConditionalArmorLayer;
 import net.minecraft.client.model.PlayerModel;
 import net.minecraft.client.player.AbstractClientPlayer;
 import net.minecraft.client.renderer.entity.EntityRendererProvider;
@@ -9,6 +10,7 @@ import net.minecraft.client.renderer.entity.LivingEntityRenderer;
 import net.minecraft.client.renderer.entity.layers.ArrowLayer;
 import net.minecraft.client.renderer.entity.layers.BeeStingerLayer;
 import net.minecraft.client.renderer.entity.layers.CapeLayer;
+import net.minecraft.client.renderer.entity.layers.HumanoidArmorLayer;
 import net.minecraft.client.renderer.entity.layers.PlayerItemInHandLayer;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.EntityType;
@@ -51,6 +53,10 @@ public class YSMPlayerRenderer extends PHumanoidRenderer<AbstractClientPlayer, A
         this.addPatchedLayer(BeeStingerLayer.class, new PatchedBeeStingerLayer<>());
         this.addPatchedLayer(CapeLayer.class, new PatchedCapeLayer());
         this.addPatchedLayer(PlayerItemInHandLayer.class, new PatchedItemInHandLayer<>());
+        // Replace Epic Fight's vanilla-shaped armor with a conditional layer that
+        // stays hidden while a YSM mesh is in use (armor models do not fit it).
+        this.addPatchedLayerAlways(HumanoidArmorLayer.class,
+                new YsmConditionalArmorLayer<>(Meshes.BIPED, context.getModelManager()));
     }
 
     @Override
