@@ -1,165 +1,168 @@
 # YSM Epic Fight Compat
 
-**兼容 Yes Steve Model 与 Epic Fight 渲染管线的 Forge 1.20.1 模组**
+**兼容 Yes Steve Model (YSM) 2.6.5 与 Epic Fight 20.14.17 渲染管线的 Forge 1.20.1 模组**
 
-在史诗战斗模式下，将玩家当前选用的 YSM 自定义角色模型转换为史诗战斗的骨骼网格格式，使 YSM 模型以完整轮廓呈现，并由史诗战斗的蒙皮骨骼带动攻击、行走等全部战斗动画。
+在史诗战斗模式下，将玩家当前选用的 YSM 自定义角色模型转换为史诗战斗的骨骼网格格式，使 YSM 模型以完整轮廓呈现，并由史诗战斗的蒙皮骨骼驱动攻击、行走等全部战斗动画。
 
 ---
 
 ## 架构概览
 
 ```
-进入游戏 / F3+T
-     │
-     ▼
-扫描本地 YSM 模型文件（builtin/custom/auth）
-     │
-     ├── 目录包 (ysm.json + models/main.json) ──→ YSMFolderDeserializer 对等解析
-     └── 二进制包 (*.ysm) ──→ XChaCha20 解密 → YsmZstd 清洗 → zstd-jni 解压
-                                    │
-                                    ▼
-                         YSMBinaryDeserializer 序列忠实旁读
-                                    │
-                                    ▼
-                        ┌── 内置动画 < 跳过 > ──┐
-                        │  几何+贴图+属性  < 提取 >
-                                    │
-                                    ▼
-                    生成 Epic Fight animmodels 网格 JSON
-                    （Blender 坐标系、静态 biped 关节映射、
-                      蒙皮权重、宽高缩放、顶点焊接）
-                                    │
-                                    ▼
-                    写入资源包 → MeshAccessor 注册
-                    贴图 → 动态 TextureManager 注册
-                                    │
-                                    ▼
-        ┌────────────────战斗渲染 ────────────────┐
-        │  YSMRenderHook (HIGHEST) 接管渲染      │
-        │  Mixin 劫持 PPlayerRenderer.getMesh()   │
-        │  根据玩家当前模型 id + 贴图名匹配网格   │
-        └──────────────────────────────────────────┘
+本地 YSM 模型文件 (builtin/custom/auth)
+    │
+    ├── 目录包 (ysm.json + models/main.json)   → YSMGeoModel.parse (Bedrock 几何)
+    └── 二进制包 (*.ysm)                        → YsmFileCrypto 解密 → zstd 解压
+                                                     │
+                                                     ▼
+                                           YsmBinaryReader.read
+                                                     │
+                                                     ▼
+                                          YSMGeoModel.fromBinary
+                                                     │
+                                                     ▼
+                                          EFMeshJsonWriter.write
+                                          ├── 主网格 JSON (animmodels/entity/<id>.json)
+                                          │   · Blender 坐标系、预三角化角点流 (每四边形 6 角点)
+                                          │   · 骨骼级部件 ("y/<boneName>")
+                                          │   · 顶点焊接、关节映射、宽高缩放
+                                          └── 运行时 JSON (ysm_runtime/entity/<id>.json)
+                                              · 骨骼表 (层级、绑定矩阵、关节绑定)
+                                              · Molang 动画 (parallel/state/condition)
+                                                     │
+                                                     ▼
+                                          YSMMeshLibrary.generateAll
+                                          · MeshAccessor 注册
+                                          · 贴图 → TextureManager
 ```
 
 ---
 
-## 资源与参考
+## 模块说明
 
-### YSM 源码（OpenYSM / LgeacyYSM / 发布 jar）
+### 模型解析 (`com.ysmef.compat.ysm`)
 
-| 文件/模块 | 用途 |
+| 类 | 职责 |
 |---|---|
-| `OpenYSM/ServerModelManager.java` | 确定运行时模型文件夹布局（`builtin/custom/auth`） |
-| `OpenYSM/YSMFolderDeserializer.java` | 模型目录包解析规范的**权威来源**——`ysm.json` 清单、`files.player.model.main` 几何路径、`files.player.texture` 贴图列表、`properties` 缩放/默认贴图 |
-| `OpenYSM/YSMBinaryDeserializer.java` | 二进制格式的**完整布局**——`format` 字段（≤4→LegacyV1, 4~15→LegacyV15, ≥16→Modern），几何段 (`parseModels`)、贴图表 (`parseTextureFiles`)、动画/控制器/声音跳过长度 |
-| `OpenYSM/YSMBinarySerializer.java` | 确认几何面数据已烘焙 cube 旋转（`bakeFaceToRaw` 中 `cubeBakeMat`），二进制读出的位置/法线/UV 直接可用 |
-| `OpenYSM/YsmCrypt.java` | .ysm 解密入口 `decryptYsmFile`——Linux/Mac 头部、LE crypto 版本(3)、尾部 key+iv、`modifiedChaChaDecrypt` + `MT19937Xor` + 魔改 zstd |
-| `OpenYSM/geckolib3/geo/render/built/GeoBone.java` | 运行时骨骼 `pivotX/Y/Z`（`-x,y,z` 原始 bedrock 单位）、`rotX/Y/Z`（`-r,-r,+r` 弧度） |
-| `OpenYSM/geckolib3/util/RenderUtils.java` | 骨骼绑定链数学：`prepMatrixForBone = T(pivot)·Rz·Ry·Rx·T(-pivot)`，与 JSON 文件夹解析器保持一致 |
-| `LgeacyYSM/geckolib3/geo/render/GeoBuilder.java` | Cube 原点 `-(x+sx)/16`、旋转 `(-x,-y,+z)`、镜像/膨胀处理 |
-| `LgeacyYSM/geckolib3/geo/render/built/GeoCube.java` | GeoQuad 顶点顺序与 UV 分配（box / per-face UV、mirror/非 mirror UV 方向） |
-| `发布 jar (ysm-2.6.5).class` | 验证运行时能力附加键 `yes_steve_model:model_id`（ModelInfoCapability **仅服务端挂载**）、`yes_steve_model:animatable`（客户端 PlayerCapability，不可序列化） |
+| `YsmModelPackage` | 统一入口——按 modelId 加载目录包或二进制包，返回几何 + 贴图 + 属性 + 脚本动画 (`ScriptAnim`) |
+| `YsmBinaryReader` | 二进制格式反序列化：`format` 版本链 (legacy V1/V15、modern 16+)，几何段、贴图表、动画/控制器/声音跳过；字节序 LE，VarInt LEB128 |
+| `YsmFileCrypto` | `.ysm` 解密管线：XChaCha20 解密 → MT19937 白化 → 魔改 zstd 块头洗牌 → 标准 zstd 流式解压 |
+| `ScriptJson` / `ScriptAnim` / `Molang` | YSM 脚本动画的解析与编译：Bedrock 动画 JSON → Molang 表达式编译 (`v./q./query./ctrl./math.` 查询/变量) → `YSMRuntimeModel` 加载时编译 |
 
-### YSMParser（C++）
+### 几何转换 (`com.ysmef.compat.model`)
 
-| 文件 | 用途 |
+| 类 | 职责 |
 |---|---|
-| `YSMParserV3.cpp` | 独立实现作为**加密和解密的交叉验证参考**——XChaCha20 滚动状态、CityHash seed、MT19937 白化种子、魔改 zstd 块头洗牌全部一一核对通过 |
-| `CryptoAlgorithms.cpp` | `ModifiedChaChaDecrypt` / `MT19937Xor_Decrypt` / `DecompressZstd` 的 C++ 对等实现，确认 Java 移植的算法精度 |
+| `YSMGeoModel` | Bedrock 几何解析——cube 8 顶点、6 面 (box UV / per-face UV)、镜像、膨胀、cube 枢轴旋转；骨骼层级、绑定变换链。`fromBinary` 处理预烘焙的二进制面数据 |
+| `EFMeshJsonWriter` | 生成 EF animmodels JSON + 运行时 JSON。骨骼级部件 (`y/<boneName>`)、**预三角化** (每四边形扇形 6 角点: `(0,1,2)+(2,3,0)`) 匹配 EF 的 `glDrawArrays(TRIANGLES)` 与 CPU `getTriangulated` 约定；Blender 坐标系、顶点焊接、关节映射、宽高缩放 |
+| `YSMJointMapper` | YSM 骨骼名 → EF biped 关节 ID 映射 (Root=0..Elbow_L=19)；运行时 armature 验证 |
+| `YSMMesh` | EF `HumanoidMesh` 子类——贴图替换、运行时模型 ID、骨骼部件绑定变换供应商 (用于脚本注入) |
 
-### Epic Fight
+### 运行时脚本系统 (`com.ysmef.compat.model.runtime`)
 
-| 文件 | 用途 |
+| 类 | 职责 |
 |---|---|
-| `epic-fight-20.14.17 反编译/javap` | 1.20.1 运行时 API 签名——`PPlayerRenderer.getMeshProvider`（`remap=false` 等位注入基础）、`PatchedLivingEntityRenderer.render` 流程、`EpicFightRenderTypes.replaceTexture/getTriangulated`、`Armature/Joint` 关节模型 |
-| `assets/animmodels/entity/biped.json` | EF 网格 JSON 格式规范——12 个标准 humanoid 部件名、`vertices.{positions,normals,uvs,vcounts,vindices,weights,parts}`、`render_properties` 贴图路径 |
-| `animations/biped/living/idle.json` | 离线模拟使用的实际动画数据，验证 YSM 转换网格在 EF 动画驱动下的变形范围与 EF 自身网格一致 |
-| `RenderUtils / Armature / JointTransform` | 蒙皮数学验证——`pose × bindWorld⁻¹`（差值蒙皮），`initOriginTransform` 绑定世界矩阵的逆 |
+| `YSMRuntimeModel` | 编译的骨骼表 + Molang 动画 (parallel/state/condition)，按 modelId 缓存，懒加载。支持**默认形态可见性**：静态求值 `pre_parallel`/`parallel` 的 scale 通道 (冻结 Molang 环境、t=0)，以层级传播 `effMinScale` 识别变体骨骼 (缩放→0) 并缓存；战斗模式仅套用此隐藏集 |
+| `YSMPlayerAnimator` | 每玩家每帧的脚本求值：平行动画 (variant 可见性 + 副骨骼闲时动作) → 状态动画 (idle/walk/run...) → 条件覆盖 (hold/use/vehicle)。mapped bones 只留 scale 通道 (EF 拥有主姿态)；unmapped bones 完整变换；`effMinScale < 0.01` → 隐藏；identity delta → 跳过变换注入 |
+| `YSMRuntimeBridge` | 渲染帧桥接：ThreadLocal 记录当前渲染的玩家 → `YSMMesh.draw` 时调用 `apply`：战斗模式 → `applyDefaultVisibility()` (变体隐藏 + 变换清空)；非战斗模式 → 完整脚本求值 |
 
-### EpicFight_TouhouLittleMaid（参考兼容范例）
+### 渲染集成 (`com.ysmef.compat.renderer`)
 
-| 文件 | 用途 |
+| 类 | 职责 |
 |---|---|
-| `EFTLM_Meshes.java` | `Meshes.MeshAccessor.create` + `loadSkinnedMesh` 注册模式——运行时自定义网格 → EF 网格注册表的标准方法 |
-| `PatchedMaidRenderer.java` | 补丁渲染器的超类选择——`PHumanoidRenderer<E,T,M,R,AM>` 的模式参考 |
-| `Model/Mesh/MaidMesh.java` | 自定义 `SkinnedMesh` 的子类构造器签名——`(Map, Map, SkinnedMesh parent, RenderProperties)`，与 `loadSkinnedMesh` 的 `MeshContructor` 接口一致 |
+| `YSMPlayerRenderer` | 补丁玩家渲染器 (`PHumanoidRenderer<...>`)。替换 mesh + 条件盔甲层 + 手/箭/蜂/斗篷层；`prepareModel` 同步 visible/hidden 部件 |
+| `YSMMeshSelector` | 网格选择——`YSMModelAccess` 读当前模型 → `YSMMeshLibrary` 查找网格/贴图 → 设置运行时模型 ID + 当前玩家 |
+| `YSMModelAccess` | 通过 server NBT 读 YSM capability `yes_steve_model:model_id` + `select_texture` (20 tick 缓存)，覆盖单人/自建服务器；远程纯客户端回退 EF biped |
+| `YSMBattleMode` | 战斗模式判定——`PlayerPatch.isEpicFightMode()` |
+
+### 战斗模式管控
+
+| 机制 | 实现 |
+|---|---|
+| **主网格仅主模型** | `YSMRuntimeBridge.apply` 战斗模式分支 → `YSMRuntimeModel.applyDefaultVisibility()`：静态求值 parallel 动画 scale 通道 (冻结 Molang 环境)，骨骼层级传播 `effMinScale`，缩放→0 的变体骨骼隐藏 (武器/表情/附件)；清空运行时变换；不加载状态/条件动画、不做 Molang 求值 |
+| **阻止 YSM 第三人称渲染** | `YSMRenderHook` (RenderLivingEvent.Pre HIGHEST)：EF 接管时取消事件 → YSM 的 RenderPlayerEvent.Pre 处理器 (NORMAL, 未 receiveCanceled) 收不到 → YSM CustomPlayerRenderer 不执行 |
+| **阻止 YSM 第一人称手臂** | `YsmArmRenderMixin`：注入 YSM `ReplacePlayerHandRenderEvent.onRenderArm` (混淆名)，战斗模式 ← `ci.cancel()` → 跳过 YSM 手臂渲染 → 原版手臂渲染 |
+| **阻止 YSM 背景手** | `YsmBackgroundHandMixin`：注入 YSM `RenderFirstPlayerBackground.onRenderHand` (混淆名)，同上 |
+| **阻止 YSM 弹射物/载具变体** | `YsmProjectileRenderMixin` (投射物)、`YsmFishingHookRenderMixin` (鱼钩) → 注入 YSM 自定义渲染器 (混淆名) 的 entry 方法，战斗模式 owner → `setReturnValue(true)` 跳过自定义渲染；`YsmVehicleRenderMixin` (载具)、`YsmVehiclePreviewMixin` (预览) → 按乘客判定战斗模式 |
+| **阻止盔甲渲染** | `YsmConditionalArmorLayer`：通过 `addPatchedLayerAlways` 覆盖 EF 默认 `WearableItemLayer`，玩家使用 YSM 网格时 `renderLayer` 返回 → 盔甲模型 (不对齐 YSM 网格) 不绘制；非 YSM 玩家盔甲不受影响 |
+
+### 贴图处理
+
+| 机制 | 细节 |
+|---|---|
+| **PNG/JPEG 解码** | 使用 `NativeImage.read(ByteArrayInputStream)` (堆缓冲)，**避免 `NativeImage.read(byte[])`**——后者将整个字节数组 `malloc` 到 64KB LWJGL MemoryStack，大型贴图 (>64KB) 直接 OOM |
+| **原始 RGBA** | Legacy 二进制贴图 → `setPixelRGBA` 逐行写入 (MC ABGR 像素打包) |
+| **注册** | `TextureManager.register` 为 `ysm_epicfight_compat:textures/<model>/<tex>.png`，名称非法字符替换为 hash 后缀 |
+
+### 事件与 Mixin
+
+| 类 | 目标 |
+|---|---|
+| `PPlayerRendererMixin` | EF `PPlayerRenderer.getMeshProvider` HEAD：返回 YSM 网格替代默认 biped |
+| `YSMRenderHook` | `RenderLivingEvent.Pre` HIGHEST：EF 接管时取消事件 + 调用 `renderEngine.renderEntityArmatureModel` |
+| `YSMCompatClientEvents` | `PatchedRenderersEvent.Add` (LOWEST 注册)、`AddPackFindersEvent` (生成资源包)、`FMLClientSetupEvent` (模型扫描生成)、`RegisterClientReloadListenersEvent` (F3+T 刷新) |
+| `YSMReloadTrigger` | YSM 模型重载命令检测 |
+
+### YSM 混淆名映射 (2.6.5 release jar)
+
+YSM release jar 的 932 个类被混淆；9 个 Mixin 安全类 (含 mixins.json 中引用的) 保留原名。本模组打了 6 个混入 YSM 类/方法的 Mixin，目标类与混淆方法名如下 (可通过扫描 jar 中类的方法描述符重新定位)：
+
+| 实名 | 混淆类 (com.elfmcys.yesstevemodel.*) | 混淆方法名 |
+|---|---|---|
+| `ReplacePlayerHandRenderEvent#onRenderArm(RenderArmEvent)V` | `ooOOOoOO000oo0o00o00o000` | `Oo0Oo0o00O00Oo0OOoOOoooo(RenderArmEvent)V` |
+| `RenderFirstPlayerBackground#onRenderHand(RenderHandEvent)V` | `O000O0O00ooo000O0oOOoo00` | 同上 (不同描述符) |
+| `CustomProjectileRenderer#renderProjectile(Projectile,FF,...)Z` | `O0oOooooo00Ooooo0OoOOOO0` | 同上 |
+| `CustomFishingHookRenderer#tryRenderCustomHook(FishingHook,FF,...)Z` | `oO0Ooooooo0O0OOOO00OoOo0` | 同上 |
+| `CustomVehicleRenderer#renderVehicle(Entity,FF,...)Z` | `OOoO0O0OooOO0o00oOoOOoO0` | 同上 |
+| `ModelPreviewRenderer#renderVehicleModel(Entity,L...;F)V` | `OoO00Oo00Ooo0OoOoo00o000` | 同上 |
+
+所有混淆方法共享同一名称 `Oo0Oo0o00O00Oo0OOoOOoooo`，Mixin `@Inject` 以完整描述符区分。
 
 ---
 
-## 实现方法
+## 参考资源
 
-### 1. 模型扫描与解码
+### YSM 源码与格式
 
-**目录模型** (`ysm.json` + `models/main.json`): 解析 `ysm.json` 清单 → 取出 `files.player.model.main`（几何 JSON 路径）→ `YSMGeoModel.parse` 解析 Bedrock 几何。此解析器逐行对等 `YSMFolderDeserializer.bakeFaceToRaw`：cube 原点 `-(x+sx)/16`、cube 枢轴旋转 `rotZ(cr_z)·rotY(-cr_y)·rotX(-cr_x)`、镜像/膨胀分支、box UV / per-face UV。
+| 目录 | 文件 | 用途 |
+|---|---|---|
+| `参考/OpenYSM` | `ServerModelManager.java`, `YSMFolderDeserializer.java`, `YSMBinaryDeserializer.java`, `YsmCrypt.java` | YSM 文件夹/二进制格式反序列化的**权威来源**——几何布局、纹理表、动画/控制器跳过、加密/解压算法 |
+| `参考/OpenYSM` | `geckolib3/geo/render/built/GeoBone.java`, `RenderUtils.java` | 骨骼绑定链：`T(pivot)·Rz·Ry·Rx·T(-pivot)`，枢轴/旋转坐标约定 |
+| `参考/LgeacyYSM` | `geckolib3/geo/render/GeoBuilder.java`, `GeoCube.java`, `GeoQuad.java` | Cube 8 顶点构造、面 UV 分配、镜像/膨胀分支 |
+| `参考/YSMParser` | `YSMParserV3.cpp`, `CryptoAlgorithms.cpp` | 加密/解密的**C++ 交叉验证参考**——XChaCha20、CityHash、MT19937、魔改 zstd 块头洗牌 |
 
-**二进制模型** (`*.ysm`):
-1. 解密——`YsmFileCrypto.decryptYsmFile` 移植自 `OpenYSM/YsmCrypt`：读取 ASCII 头部末尾的 `crypto`（LE）、尾部 key+iv → `modifiedChaChaDecrypt`（XChaCha20 滚动状态）× `MT19937Xor` × 跳过 (2+n) → `washZstd`（YSM 魔改块头洗牌成标准 zstd）→ `ZstdInputStream` 流式解压（避免不携带 content-size 帧的 `decompressedSize` 报错）
-2. 读取——`YsmBinaryReader.read` 支撑完整 `format` 版本链（≤4→LegacyV1, 4~15→LegacyV15, ≥16→Modern），逐一匹配 `YSMBinaryDeserializer` 的各段字节偏移，跳过动画/控制器/声音/语言，仅提取几何、贴图、属性；字节序严格 `LITTLE_ENDIAN`（YSM C++ 侧约定）
+### Epic Fight
 
-### 2. 几何转换
-
-**Cube 构建** (`YSMGeoModel.buildCube`): 复制 `GeoCube.createFromPojoCube` 的 8 个顶点、6 个面、box UV / per-face UV、镜像（cubeMirror | boneMirror）、膨胀、cube 枢轴旋转。**关键修复**——`makeQuad` 中每面持有独立的顶点副本（原实现共享 `Vector3f` 引用导致 cube 旋转时对角点被原地应用 2~3 次，装饰骨骼产生数十块的散射偏差）
-
-**骨骼绑定链** (`EFMeshJsonWriter.walkBone`): 沿骨骼层级 `T(pivot)·Rz(ry)·Ry(ry)·Rx(rx)·T(-pivot)` 累积绑定世界矩阵，对等 `RenderUtils.prepMatrixForBone`
-
-**EF 坐标系转换**: EF 网格 JSON 按 Blender 空间存储，其加载器施加 `BLENDER_TO_MINECRAFT_COORD = rotX(-90°)` → `(x,y,z)_b → (x,z,-y)_mc`。转换器将 MC 绑定空间写为 `(px, -pz, py)`
-
-**关节映射** (`YSMJointMapper`): 静态 biped 关节 id 表（Root=0 ~ Elbow_L=19，与 `biped.json` armature 中 `"joints"` 有序列表对齐）；骨骼名标准化（lowercase + 去分隔符）→ EF 关节名；运行期验证一次（`validateArmatureOnce`）
-
-**宽高缩放**: YSM 模型渲染时 `poseStack.scale(width, height, width)`，EF 不会独立应用此缩放，因此将 scale 直接烘焙进顶点位置
-
-**顶点焊接** (`EFMeshJsonWriter.VertexKey`): 基于量化键值——位置 ×1000、法线 ×100、UV ×4096、关节 id ——合并近似相同的顶点以减少 VBO 规模
-
-**12 部件分组**: 按 EF biped 关节→身体部位`{head, torso, leftArm, rightArm, leftLeg, rightLeg}`+6 个空覆盖层（hat/jacket/sleeves/pants），保证 `HumanoidMesh` / `PPlayerRenderer.prepareModel` 不访问 null 部件
-
-### 3. 贴图处理
-
-**文件夹模型**: 贴图为 PNG 文件 → `NativeImage.read` → `DynamicTexture` → `TextureManager.register`
-
-**二进制模型（Legacy 格式）**: 贴图格式为**原始 RGBA**（`imageFormat=-1`、`[宽, 高]` 由纹理表字段提供）→ 按 MC 的 ABGR 像素打包逐行写入 `NativeImage`（`setPixelRGBA`）
-
-所有贴图以 `ysm_epicfight_compat:textures/<模型id>/<贴图名>.png` 注册，名称中非 ASCII 字符落在 hash 后缀以避免 ResourceLocation 非法字符
-
-### 4. 网格注册
-
-1. 通过 `AddPackFindersEvent` 注册 `config/ysm_epicfight_compat/resourcepack` 为常驻资源包
-2. `Meshes.MeshAccessor.create`（public static）以 `entity/<meshId>` 登记每个网格，与 `EFTLM_Meshes` 的注册模式完全一致
-3. 网格 JSON → `JsonAssetLoader` → `loadSkinnedMesh(YSMMesh::new)` 完成加载
-
-### 5. 渲染依赖
-
-**Renderer 注册**: `PatchedRenderersEvent.Add`（`EventPriority.LOWEST`）将 `YSMPlayerRenderer` 加入 EF 渲染表，`initLayerLast` 补充未被显式补丁的 vanilla 层（护甲/鞘翅）
-
-**Mixin 劫持** (`PPlayerRendererMixin`): 字节码级注入 `PPlayerRenderer.getMeshProvider` 头部——补救 `YSMMeshSelector` 返回 YSM 网格，不依赖渲染器的最终注册归属，即使在 EF 战斗环节通过内层管道使用原始 PPlayerRenderer 也能生效
-
-**渲染接管** (`YSMRenderHook`): `RenderLivingEvent.Pre` 的 `EventPriority.HIGHEST` 先于 YSM & EF 的 `NORMAL` 处理器——读 `EpicFightCapabilities.getEntityPatch→overrideRender` 判断 EF 接管权，调用 `renderEngine.renderEntityArmatureModel` + 取消原版路径；GUI/背包分支独立处理 `LocalPlayerPatch.setModelYRotInGui`
-
-**贴图替换** (`YSMMesh.draw`): EF 管线绘制时重新绑定 render type 的贴图——`EpicFightRenderTypes.replaceTexture(ysmTex, vanillaRenderType)` 保留原版透明度/轮廓/剔除状态，仅贴图对象为 YSM 纹理
-
-### 6. 运行时能力读取
-
-**问题**: `ModelInfoCapability`（`yes_steve_model:model_id`）在 `CapabilityEvent.onAttachCapabilities` 中附加仅服务端（`!isClientSide`），客户端 ForgeCaps 始终为空
-
-**解决** (`YSMModelAccess.readFromIntegratedServer`): 使用 `ServerLifecycleHooks.getCurrentServer()` → `ServerPlayer` → `saveWithoutId` 读取服务端持久化的 modelId / selectTexture → `/ysm model reload` 时通过 `CommandEvent` 检测并重新生成网格
+| 文件/目录 | 用途 |
+|---|---|
+| `参考/epicfight` | EF API 参考 (NeoForge 版，部分接口与 Forge 1.20.1 有差异) |
+| `20.14.17 runtime jar` | 反编译/javap 验证运行时 API——`PatchedLivingEntityRenderer`、`WearableItemLayer`、`EpicFightRenderTypes`、`PHumanoidRenderer`、`ClientConfig` |
+| `assets/animmodels/entity/biped.json` | EF 网格 JSON 格式规范——12 标准部件、6 角点/四边形预三角化格式、`render_properties` 贴图路径 |
+| `参考/EpicFight_TouhouLittleMaid` | 参考兼容范例——`MeshAccessor.create` 注册模式、`PHumanoidRenderer` 补丁渲染器模式 |
 
 ---
 
 ## 构建
 
-`build\libs\YSM_EpicFight_Compat-1.20.1-1.0.0-all.jar`——内嵌 `zstd-jni`（jar-in-jar）
+```bash
+./gradlew jarJar
+```
+
+产物：`build/libs/YSM_EpicFight_Compat-1.20.1-1.0.0-all.jar` (内嵌 `zstd-jni 1.5.6-3`，jar-in-jar)
 
 依赖：
-- Epic Fight 20.14.17+ (Modrinth maven)
-- Yes Steve Model 2.6.5 (libs 文件夹本地 jar)
-- Mixin 0.8.5
+- Epic Fight 20.14.17+ (`maven.modrinth`)
+- Yes Steve Model 2.6.5 (`libs/ysm-2.6.5.jar`, 本地 flatDir)
+- Mixin 0.8.5, MixinExtras (YSM 依赖传递)
+- JOML 1.10.5, Gson 2.10.1
 - zstd-jni 1.5.6-3 (jarJar 嵌套)
-- JOML 1.10.5, Gson 2.10
 
 ---
 
-## 限制
+## 已知限制
 
-1. **大网格 OOM**: 顶点 >40k 的模型在游戏内构造 ComputeShaderSetup 时偶发 LWJGL MemoryStack 溢出（已加入堆栈打印，后续可对大网格强制走软件蒙皮路径）
-2. **非 PNG 贴图**: BMP/Webp/AVIF 格式的贴图不支持解码（日志告警并跳过）
-3. **远程纯客户端**: 无法访问整合/专用服务器的 `ModelInfoCapability`，回退 EF 默认 biped
-4. **YSM 绑定姿势差异**: 转换网格在 YSM 绑定姿势烘焙——部件枢轴/旋转不同导致的轻微肢体变形是经典蒙皮复用的固有现象，与 EF 自身模型在战斗动画中的行为一致
+1. **大型贴图 OOM**: `< 1.0.0` 版使用 `NativeImage.read(byte[])` 将贴图字节压上 64KB LWJGL MemoryStack，>64KB 的 PNG 直接溢出 (手动 trace 定位至 `NativeImage.java:116` 的 `memorystack.malloc(data.length)`)；**已在 1.0.0 修复**——切换至 `NativeImage.read(InputStream)` (堆分配)
+2. **战斗模式默认可见性**: 使用冻结默认环境 (变量未设、查询=0) 静态求值 parallel 动画的 scale 通道来决定变体骨骼可见性。实际变种可能因条件 Molang (`v.xxx`, `q.xxx`) 在某些模型上默认可见 (应为隐藏)，在运行时会被覆盖，但静态求值不可见；此为并行/变体分级设计，恰符合 YSM 的首帧行为
+3. **远程纯客户端**: 无法访问整合/专用服务器的 `ModelInfoCapability`，回退 EF 默认 biped (不影响服务器端其他玩家视角)
+4. **YSM 混淆类**: 6 个 Mixin 依赖 YSM 2.6.5 的混淆名；升级 YSM 版本需通过描述符扫描重新定位目标类 (注释中已写方法)
+5. **非 PNG/JPEG 贴图**: 其他格式 (WebP/AVIF/BMP) 不支持解码，跳过并告警
