@@ -2,6 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/YSM_EpicFight_Compat.iml" filepath="$PROJECT_DIR$/.idea/modules/YSM_EpicFight_Compat.iml" />
       <module fileurl="file://$PROJECT_DIR$/.idea/modules/YSM_EpicFight_Compat.main.iml" filepath="$PROJECT_DIR$/.idea/modules/YSM_EpicFight_Compat.main.iml" />
       <module fileurl="file://$PROJECT_DIR$/.idea/modules/YSM_EpicFight_Compat.test.iml" filepath="$PROJECT_DIR$/.idea/modules/YSM_EpicFight_Compat.test.iml" />
     </modules>
