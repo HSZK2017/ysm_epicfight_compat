@@ -126,7 +126,7 @@ YSM release jar 的 932 个类被混淆；9 个 Mixin 安全类 (含 mixins.json
 
 | 目录 | 文件 | 用途 |
 |---|---|---|
-| `参考/OpenYSM` | `ServerModelManager.java`, `YSMFolderDeserializer.java`, `YSMBinaryDeserializer.java`, `YsmCrypt.java` | YSM 文件夹/二进制格式反序列化的**权威来源**——几何布局、纹理表、动画/控制器跳过、加密/解压算法 |
+| `参考/OpenYSM` | `ServerModelManager.java`, `YSMFolderDeserializer.java`, `YSMBinaryDeserializer.java`, `YsmCrypt.java` | YSM 文件夹/二进制格式反序列化——几何布局、纹理表、动画/控制器跳过、加密/解压算法 |
 | `参考/OpenYSM` | `geckolib3/geo/render/built/GeoBone.java`, `RenderUtils.java` | 骨骼绑定链：`T(pivot)·Rz·Ry·Rx·T(-pivot)`，枢轴/旋转坐标约定 |
 | `参考/LgeacyYSM` | `geckolib3/geo/render/GeoBuilder.java`, `GeoCube.java`, `GeoQuad.java` | Cube 8 顶点构造、面 UV 分配、镜像/膨胀分支 |
 | `参考/YSMParser` | `YSMParserV3.cpp`, `CryptoAlgorithms.cpp` | 加密/解密的**C++ 交叉验证参考**——XChaCha20、CityHash、MT19937、魔改 zstd 块头洗牌 |
