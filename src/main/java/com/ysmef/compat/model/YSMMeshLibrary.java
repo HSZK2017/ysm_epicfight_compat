@@ -68,6 +68,30 @@ public class YSMMeshLibrary {
     }
 
     /**
+     * Directory inside the generated pack where Epic Fight animmodels mesh JSONs
+     * live (assets/<modid>/animmodels/entity).
+     */
+    public static Path getMeshDir() {
+        return MESH_DIR;
+    }
+
+    /**
+     * Register raw texture bytes (PNG/JPEG or raw RGBA with accompanying info)
+     * under our own resource location, ready for on-demand upload to the texture
+     * manager (see ensureTextureUploaded).
+     *
+     * @param relativePath path inside our textures/ space (without .png)
+     * @param data         encoded image bytes
+     * @return the resource location the bytes were registered under
+     */
+    public static ResourceLocation registerTextureBytes(String relativePath, byte[] data) {
+        ResourceLocation rl = ResourceLocation.fromNamespaceAndPath(MESH_NAMESPACE,
+                "textures/" + relativePath + ".png");
+        TEXTURE_DATA.put(rl.toString(), data);
+        return rl;
+    }
+
+    /**
      * The runtime script JSON (bone table + molang animations) generated for the
      * given mesh id, evaluated by YSMRuntimeModel at render time.
      */

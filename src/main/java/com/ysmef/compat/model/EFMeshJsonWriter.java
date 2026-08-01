@@ -76,10 +76,38 @@ public class EFMeshJsonWriter {
         if (geoModel == null) {
             return -1;
         }
+        int quads = writeMeshJson(geoModel, pkg.widthScale, pkg.heightScale, outFile, textureRL);
+        if (quads < 0) {
+            return -1;
+        }
+        writeRuntimeJson(pkg, geoModel, runtimeFile);
+        return quads;
+    }
 
-        float scaleW = pkg.widthScale;
-        float scaleH = pkg.heightScale;
+    /**
+     * Convert a TLM (Touhou Little Maid) bedrock maid model into an Epic Fight
+     * mesh JSON file. TLM models carry no molang runtime data, so no runtime
+     * script JSON is produced.
+     *
+     * @param geoModel the parsed TLM model (see TlmGeoModelParser / YSMGeoModel)
+     * @param scale    uniform render scale (MaidModelInfo#render_entity_scale)
+     * @param outFile  the target mesh JSON file
+     * @param textureRL the resource location of the model's texture
+     * @return the number of quads converted, or -1 if the model has no geometry
+     */
+    public static int writeTlmMesh(YSMGeoModel geoModel, float scale, Path outFile, String textureRL) throws IOException {
+        if (geoModel == null) {
+            return -1;
+        }
+        return writeMeshJson(geoModel, scale, scale, outFile, textureRL);
+    }
 
+    /**
+     * Shared mesh-writing core: walks the bone hierarchy (bone pivots/rotations
+     * and quads are pre-converted to the conventions of the source model) and
+     * emits the Epic Fight animmodels JSON.
+     */
+    private static int writeMeshJson(YSMGeoModel geoModel, float scaleW, float scaleH, Path outFile, String textureRL) throws IOException {
         List<Float> positions = new ArrayList<>();
         List<Float> normals = new ArrayList<>();
         List<Float> uvs = new ArrayList<>();
@@ -134,8 +162,6 @@ public class EFMeshJsonWriter {
 
         Files.createDirectories(outFile.getParent());
         Files.writeString(outFile, new GsonBuilder().create().toJson(root), StandardCharsets.UTF_8);
-
-        writeRuntimeJson(pkg, geoModel, runtimeFile);
         return quadCount[0];
     }
 

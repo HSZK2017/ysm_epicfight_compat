@@ -62,12 +62,26 @@ public final class YSMMeshSelector {
             logMeshMissingOnce(entity, modelId, textureName, displayName);
             return null;
         }
+        ResourceLocation texture = YSMMeshLibrary.findTexture(modelId, textureName);
+        return selectResolvedMesh(entity, accessor, modelId, texture, textureName, displayName);
+    }
 
+    /**
+     * Shared core: apply the runtime model id, current entity and texture
+     * override to a resolved mesh accessor and return it for the Epic Fight
+     * render pipeline.
+     */
+    public static AssetAccessor<HumanoidMesh> selectResolvedMesh(LivingEntity entity,
+                                                                 Meshes.MeshAccessor<YSMMesh> accessor,
+                                                                 String modelId, ResourceLocation texture,
+                                                                 String textureName, String displayName) {
+        if (entity == null || accessor == null) {
+            return null;
+        }
         try {
             YSMMesh mesh = accessor.get();
             mesh.setRuntimeModelId(modelId);
             YSMRuntimeBridge.setCurrentEntity(entity);
-            ResourceLocation texture = YSMMeshLibrary.findTexture(modelId, textureName);
             if (texture != null) {
                 YSMMeshLibrary.ensureTextureUploaded(texture);
                 mesh.setTextureOverride(texture);

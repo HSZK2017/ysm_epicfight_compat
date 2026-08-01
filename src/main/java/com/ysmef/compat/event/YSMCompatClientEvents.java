@@ -1,9 +1,11 @@
 package com.ysmef.compat.event;
 
 import com.ysmef.compat.YSMEpicFightCompat;
+import com.ysmef.compat.model.TlmModelLibrary;
 import com.ysmef.compat.model.YSMMeshLibrary;
 import com.ysmef.compat.renderer.YSMModelAccess;
 import com.ysmef.compat.renderer.YSMPlayerRenderer;
+import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.packs.PackType;
 import net.minecraft.server.packs.PathPackResources;
@@ -79,7 +81,8 @@ public class YSMCompatClientEvents {
     }
 
     /**
-     * Generate the Epic Fight base meshes for all locally available YSM models.
+     * Generate the Epic Fight base meshes for all locally available YSM models
+     * and all TLM model pack maid models.
      */
     @SubscribeEvent
     public static void onClientSetup(FMLClientSetupEvent event) {
@@ -88,6 +91,12 @@ public class YSMCompatClientEvents {
                 YSMMeshLibrary.generateAll();
             } catch (Throwable t) {
                 YSMEpicFightCompat.LOGGER.error("YSM-EF Compat: base mesh generation failed", t);
+            }
+            try {
+                TlmModelLibrary.resetLazyGeneration();
+                TlmModelLibrary.generateAll(Minecraft.getInstance().getResourceManager());
+            } catch (Throwable t) {
+                YSMEpicFightCompat.LOGGER.error("YSM-EF Compat: TLM mesh generation failed", t);
             }
         });
     }
@@ -103,6 +112,12 @@ public class YSMCompatClientEvents {
                 YSMMeshLibrary.generateAll();
             } catch (Throwable t) {
                 YSMEpicFightCompat.LOGGER.error("YSM-EF Compat: base mesh regeneration failed", t);
+            }
+            try {
+                TlmModelLibrary.resetLazyGeneration();
+                TlmModelLibrary.generateAll(resourceManager);
+            } catch (Throwable t) {
+                YSMEpicFightCompat.LOGGER.error("YSM-EF Compat: TLM mesh regeneration failed", t);
             }
         });
     }
