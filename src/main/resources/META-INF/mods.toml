@@ -39,3 +39,15 @@ mandatory=true
 versionRange="[2.6,)"
 ordering="AFTER"
 side="BOTH"
+[[dependencies.ysm_epicfight_compat]]
+modId="touhou_little_maid"
+mandatory=false
+versionRange="[1.5,)"
+ordering="AFTER"
+side="BOTH"
+[[dependencies.ysm_epicfight_compat]]
+modId="ef_tlm"
+mandatory=false
+versionRange="[1.1,)"
+ordering="AFTER"
+side="BOTH"

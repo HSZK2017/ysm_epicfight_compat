@@ -4,7 +4,7 @@ import com.ysmef.compat.model.EFMeshJsonWriter;
 import com.ysmef.compat.model.YSMMesh;
 import com.ysmef.compat.renderer.YSMBattleMode;
 import net.minecraft.client.Minecraft;
-import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.entity.LivingEntity;
 import yesman.epicfight.api.client.model.MeshPart;
 import yesman.epicfight.api.model.Armature;
 import yesman.epicfight.api.utils.math.OpenMatrix4f;
@@ -20,22 +20,22 @@ import java.util.Map;
  */
 public final class YSMRuntimeBridge {
 
-    private static final ThreadLocal<Player> CURRENT_PLAYER = new ThreadLocal<>();
+    private static final ThreadLocal<LivingEntity> CURRENT_ENTITY = new ThreadLocal<>();
 
     private YSMRuntimeBridge() {}
 
-    public static void setCurrentPlayer(Player player) {
-        CURRENT_PLAYER.set(player);
+    public static void setCurrentEntity(LivingEntity entity) {
+        CURRENT_ENTITY.set(entity);
     }
 
-    public static void clearCurrentPlayer() {
-        CURRENT_PLAYER.remove();
+    public static void clearCurrentEntity() {
+        CURRENT_ENTITY.remove();
     }
 
     /**
-     * Evaluate the YSM scripts for the player currently being rendered and apply
+     * Evaluate the YSM scripts for the entity currently being rendered and apply
      * the results (per-part hidden flags and transforms) to the mesh. No-op when
-     * there is no current player or no runtime data for the mesh's model.
+     * there is no current entity or no runtime data for the mesh's model.
      *
      * In Epic Fight battle mode no script animation runs: the mesh is drawn with
      * the model's default form only (animation-driven variant geometry hidden,
@@ -47,12 +47,12 @@ public final class YSMRuntimeBridge {
         if (modelId == null) {
             return;
         }
-        Player player = CURRENT_PLAYER.get();
-        if (player == null) {
+        LivingEntity entity = CURRENT_ENTITY.get();
+        if (entity == null) {
             return;
         }
         YSMRuntimeModel model = YSMRuntimeModel.get(modelId);
-        if (YSMBattleMode.isBattleMode(player)) {
+        if (YSMBattleMode.isBattleMode(entity)) {
             if (model != null) {
                 model.applyDefaultVisibility(mesh);
             } else {
@@ -64,7 +64,7 @@ public final class YSMRuntimeBridge {
             return;
         }
         float partialTick = Minecraft.getInstance().getFrameTime();
-        model.animatorFor(player).apply(mesh, player, poses, partialTick);
+        model.animatorFor(entity).apply(mesh, entity, poses, partialTick);
     }
 
     /**

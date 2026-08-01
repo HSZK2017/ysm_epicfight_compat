@@ -7,6 +7,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.CameraType;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
@@ -98,22 +99,22 @@ public final class YSMPlayerAnimator implements Molang.Env {
     }
 
     /**
-     * Evaluate the scripts for this player this frame and apply per-part hidden
+     * Evaluate the scripts for this entity this frame and apply per-part hidden
      * flags and transforms to the mesh about to be drawn.
      */
-    public void apply(YSMMesh mesh, Player player, OpenMatrix4f[] poses, float partialTick) {
-        double now = (player.tickCount + partialTick) / 20.0;
-        mainHand = player.getItemInHand(InteractionHand.MAIN_HAND);
-        offHand = player.getItemInHand(InteractionHand.OFF_HAND);
-        updatePosDelta(player);
+    public void apply(YSMMesh mesh, LivingEntity entity, OpenMatrix4f[] poses, float partialTick) {
+        double now = (entity.tickCount + partialTick) / 20.0;
+        mainHand = entity.getItemInHand(InteractionHand.MAIN_HAND);
+        offHand = entity.getItemInHand(InteractionHand.OFF_HAND);
+        updatePosDelta(entity);
 
-        String state = resolveState(player);
+        String state = resolveState(entity);
         if (!state.equals(currentState)) {
             currentState = state;
             animStart.put(state, now);
             animLastT.remove(state);
         }
-        fillQueries(player, partialTick, now);
+        fillQueries(entity, partialTick, now);
 
         activeAnims.clear();
         activeAnims.addAll(model.parallels);
@@ -121,7 +122,7 @@ public final class YSMPlayerAnimator implements Molang.Env {
         if (stateAnim != null) {
             activeAnims.add(stateAnim);
         }
-        YSMRuntimeModel.CompiledAnim overlay = resolveOverlay(player, state);
+        YSMRuntimeModel.CompiledAnim overlay = resolveOverlay(entity, state);
         if (overlay != null) {
             activeAnims.add(overlay);
         }
@@ -131,7 +132,7 @@ public final class YSMPlayerAnimator implements Molang.Env {
             evalAnim(anim, now);
         }
 
-        composeAndApply(mesh, player, poses);
+        composeAndApply(mesh, entity, poses);
     }
 
     // ------------------------------------------------------------------
@@ -297,7 +298,7 @@ public final class YSMPlayerAnimator implements Molang.Env {
     // Composition & application
     // ------------------------------------------------------------------
 
-    private void composeAndApply(YSMMesh mesh, Player player, OpenMatrix4f[] poses) {
+    private void composeAndApply(YSMMesh mesh, LivingEntity entity, OpenMatrix4f[] poses) {
         int n = model.bones.length;
         boolean[] composed = new boolean[n];
         for (int i = 0; i < n; i++) {
@@ -394,54 +395,54 @@ public final class YSMPlayerAnimator implements Molang.Env {
     // State machine (mirrors YSM's AnimationRegister predicates)
     // ------------------------------------------------------------------
 
-    private String resolveState(Player player) {
-        if (player.isDeadOrDying()) {
+    private String resolveState(LivingEntity entity) {
+        if (entity.isDeadOrDying()) {
             return "death";
         }
-        if (player.getPose() == Pose.SLEEPING) {
+        if (entity.getPose() == Pose.SLEEPING) {
             return "sleep";
         }
-        if (player.isSwimming()) {
+        if (entity.isSwimming()) {
             return "swim";
         }
-        if (player.getPose() == Pose.SWIMMING && isMoving(player)) {
+        if (entity.getPose() == Pose.SWIMMING && isMoving(entity)) {
             return "climb";
         }
-        if (player.getPose() == Pose.SWIMMING) {
+        if (entity.getPose() == Pose.SWIMMING) {
             return "climbing";
         }
-        if (player.isPassenger()) {
-            ResourceLocation vehicleId = ForgeRegistries.ENTITY_TYPES.getKey(player.getVehicle().getType());
+        if (entity.isPassenger()) {
+            ResourceLocation vehicleId = ForgeRegistries.ENTITY_TYPES.getKey(entity.getVehicle().getType());
             if (vehicleId != null) {
                 String vehicleAnim = "vehicle$" + vehicleId;
                 if (model.conditionAnims.containsKey(vehicleAnim)) {
                     currentVehicleAnim = vehicleAnim;
                 }
             }
-            if (player.getVehicle() instanceof net.minecraft.world.entity.vehicle.Boat) {
+            if (entity.getVehicle() instanceof net.minecraft.world.entity.vehicle.Boat) {
                 return "boat";
             }
             return model.states.containsKey("ride") ? "ride" : "sit";
         }
-        if (player.getAbilities().flying) {
+        if (entity instanceof Player player && player.getAbilities().flying) {
             return "fly";
         }
-        if (player.getPose() == Pose.FALL_FLYING && player.isFallFlying()) {
+        if (entity.getPose() == Pose.FALL_FLYING && entity.isFallFlying()) {
             return "elytra_fly";
         }
-        if (player.isInWater()) {
+        if (entity.isInWater()) {
             return "swim_stand";
         }
-        if (player.onGround() && player.getPose() == Pose.CROUCHING && isMoving(player)) {
+        if (entity.onGround() && entity.getPose() == Pose.CROUCHING && isMoving(entity)) {
             return "sneak";
         }
-        if (player.onGround() && player.getPose() == Pose.CROUCHING) {
+        if (entity.onGround() && entity.getPose() == Pose.CROUCHING) {
             return "sneaking";
         }
-        if (player.onGround() && player.isSprinting()) {
+        if (entity.onGround() && entity.isSprinting()) {
             return "run";
         }
-        if (player.onGround() && isMoving(player)) {
+        if (entity.onGround() && isMoving(entity)) {
             return "walk";
         }
         if (model.states.containsKey("idle")) {
@@ -452,26 +453,26 @@ public final class YSMPlayerAnimator implements Molang.Env {
 
     private String currentVehicleAnim = null;
 
-    private boolean isMoving(Player player) {
-        return Math.abs(player.walkAnimation.speed(Minecraft.getInstance().getFrameTime())) > MIN_SPEED;
+    private boolean isMoving(LivingEntity entity) {
+        return Math.abs(entity.walkAnimation.speed(Minecraft.getInstance().getFrameTime())) > MIN_SPEED;
     }
 
     /**
      * Hold/use condition overlay: played alongside the locomotion state by YSM
      * (arm/overlay layer), affecting secondary bones (magic circles, props).
      */
-    private YSMRuntimeModel.CompiledAnim resolveOverlay(Player player, String state) {
-        if (player.isUsingItem()) {
-            InteractionHand hand = player.getUsedItemHand();
+    private YSMRuntimeModel.CompiledAnim resolveOverlay(LivingEntity entity, String state) {
+        if (entity.isUsingItem()) {
+            InteractionHand hand = entity.getUsedItemHand();
             String prefix = hand == InteractionHand.MAIN_HAND ? "use_mainhand:" : "use_offhand:";
-            YSMRuntimeModel.CompiledAnim anim = findConditionAnim(prefix, player.getUseItem());
+            YSMRuntimeModel.CompiledAnim anim = findConditionAnim(prefix, entity.getUseItem());
             if (anim != null) {
                 return anim;
             }
             String generic = hand == InteractionHand.MAIN_HAND ? "use_mainhand" : "use_offhand";
             return model.states.get(generic);
         }
-        if (!player.swinging) {
+        if (!entity.swinging) {
             if (!mainHand.isEmpty()) {
                 YSMRuntimeModel.CompiledAnim anim = findConditionAnim("hold_mainhand:", mainHand);
                 if (anim != null) {
@@ -484,7 +485,7 @@ public final class YSMPlayerAnimator implements Molang.Env {
                 }
             }
         }
-        if (currentVehicleAnim != null && player.isPassenger()) {
+        if (currentVehicleAnim != null && entity.isPassenger()) {
             return model.conditionAnims.get(currentVehicleAnim);
         }
         return null;
@@ -653,27 +654,27 @@ public final class YSMPlayerAnimator implements Molang.Env {
     // Query context
     // ------------------------------------------------------------------
 
-    private void updatePosDelta(Player player) {
+    private void updatePosDelta(LivingEntity entity) {
         if (hasLastPos) {
-            posDelta[0] = player.getX() - lastPosX;
-            posDelta[1] = player.getY() - lastPosY;
-            posDelta[2] = player.getZ() - lastPosZ;
+            posDelta[0] = entity.getX() - lastPosX;
+            posDelta[1] = entity.getY() - lastPosY;
+            posDelta[2] = entity.getZ() - lastPosZ;
         } else {
             hasLastPos = true;
         }
-        lastPosX = player.getX();
-        lastPosY = player.getY();
-        lastPosZ = player.getZ();
+        lastPosX = entity.getX();
+        lastPosY = entity.getY();
+        lastPosZ = entity.getZ();
     }
 
-    private void fillQueries(Player player, float partialTick, double now) {
+    private void fillQueries(LivingEntity entity, float partialTick, double now) {
         Map<String, Double> q = queries;
         Minecraft mc = Minecraft.getInstance();
 
-        float headYaw = player.yHeadRotO + (player.yHeadRot - player.yHeadRotO) * partialTick;
-        float bodyYaw = player.yBodyRotO + (player.yBodyRot - player.yBodyRotO) * partialTick;
+        float headYaw = entity.yHeadRotO + (entity.yHeadRot - entity.yHeadRotO) * partialTick;
+        float bodyYaw = entity.yBodyRotO + (entity.yBodyRot - entity.yBodyRotO) * partialTick;
         float netHeadYaw = net.minecraft.util.Mth.wrapDegrees(headYaw - bodyYaw);
-        float headPitch = player.getViewXRot(partialTick);
+        float headPitch = entity.getViewXRot(partialTick);
 
         if (lastYawSampleTime >= 0 && now > lastYawSampleTime) {
             yawSpeedDeg = (netHeadYaw - lastHeadYawDeg) / (now - lastYawSampleTime);
@@ -681,78 +682,82 @@ public final class YSMPlayerAnimator implements Molang.Env {
         lastHeadYawDeg = netHeadYaw;
         lastYawSampleTime = now;
 
-        double dx = player.getX() - player.xo;
-        double dz = player.getZ() - player.zo;
+        double dx = entity.getX() - entity.xo;
+        double dz = entity.getZ() - entity.zo;
         double groundSpeed = 20.0 * Math.sqrt(dx * dx + dz * dz);
-        double verticalSpeed = 20.0 * (player.getY() - player.yo);
+        double verticalSpeed = 20.0 * (entity.getY() - entity.yo);
 
-        boolean onGround = player.onGround();
-        boolean crouching = player.getPose() == Pose.CROUCHING;
+        boolean onGround = entity.onGround();
+        boolean crouching = entity.getPose() == Pose.CROUCHING;
 
         q.put("query.life_time", now);
-        q.put("query.health", (double) player.getHealth());
-        q.put("query.max_health", (double) player.getMaxHealth());
-        q.put("query.hurt_time", (double) player.hurtTime);
+        q.put("query.health", (double) entity.getHealth());
+        q.put("query.max_health", (double) entity.getMaxHealth());
+        q.put("query.hurt_time", (double) entity.hurtTime);
         q.put("query.vertical_speed", verticalSpeed);
         q.put("query.ground_speed", groundSpeed);
         q.put("query.yaw_speed", yawSpeedDeg);
         q.put("query.is_sneaking", onGround && crouching ? 1.0 : 0.0);
-        q.put("query.is_swimming", player.isSwimming() ? 1.0 : 0.0);
-        q.put("query.is_sprinting", player.isSprinting() ? 1.0 : 0.0);
+        q.put("query.is_swimming", entity.isSwimming() ? 1.0 : 0.0);
+        q.put("query.is_sprinting", entity.isSprinting() ? 1.0 : 0.0);
         q.put("query.is_on_ground", onGround ? 1.0 : 0.0);
-        q.put("query.is_jumping", !player.getAbilities().flying && !player.isPassenger() && !onGround && !player.isInWater() ? 1.0 : 0.0);
-        q.put("query.is_riding", player.isPassenger() ? 1.0 : 0.0);
-        q.put("query.is_sleeping", player.isSleeping() ? 1.0 : 0.0);
-        q.put("query.is_in_water", player.isInWater() ? 1.0 : 0.0);
-        q.put("query.is_in_water_or_rain", player.isInWaterRainOrBubble() ? 1.0 : 0.0);
-        q.put("query.is_gliding", player.isFallFlying() ? 1.0 : 0.0);
-        q.put("query.is_on_fire", player.isOnFire() ? 1.0 : 0.0);
-        q.put("query.is_playing_dead", player.isDeadOrDying() ? 1.0 : 0.0);
-        q.put("query.is_spectator", player.isSpectator() ? 1.0 : 0.0);
-        q.put("query.is_using_item", player.isUsingItem() ? 1.0 : 0.0);
-        q.put("query.is_eating", player.getUseItem().getUseAnimation() == net.minecraft.world.item.UseAnim.EAT ? 1.0 : 0.0);
+        q.put("query.is_jumping", !isCreativeFlying(entity) && !entity.isPassenger() && !onGround && !entity.isInWater() ? 1.0 : 0.0);
+        q.put("query.is_riding", entity.isPassenger() ? 1.0 : 0.0);
+        q.put("query.is_sleeping", entity.isSleeping() ? 1.0 : 0.0);
+        q.put("query.is_in_water", entity.isInWater() ? 1.0 : 0.0);
+        q.put("query.is_in_water_or_rain", entity.isInWaterRainOrBubble() ? 1.0 : 0.0);
+        q.put("query.is_gliding", entity.isFallFlying() ? 1.0 : 0.0);
+        q.put("query.is_on_fire", entity.isOnFire() ? 1.0 : 0.0);
+        q.put("query.is_playing_dead", entity.isDeadOrDying() ? 1.0 : 0.0);
+        q.put("query.is_spectator", entity instanceof Player player && player.isSpectator() ? 1.0 : 0.0);
+        q.put("query.is_using_item", entity.isUsingItem() ? 1.0 : 0.0);
+        q.put("query.is_eating", entity.getUseItem().getUseAnimation() == net.minecraft.world.item.UseAnim.EAT ? 1.0 : 0.0);
         q.put("query.is_first_person", mc.options.getCameraType() == CameraType.FIRST_PERSON ? 1.0 : 0.0);
-        q.put("query.item_in_use_duration", player.getTicksUsingItem() / 20.0);
-        q.put("query.item_max_use_duration", player.getUseItem().getUseDuration() / 20.0);
-        q.put("query.item_remaining_use_duration", player.getUseItemRemainingTicks() / 20.0);
-        q.put("query.walk_distance", (double) player.moveDist);
-        q.put("query.modified_distance_moved", (double) player.walkDist);
-        q.put("query.body_x_rotation", (double) player.getXRot());
-        q.put("query.body_y_rotation", (double) net.minecraft.util.Mth.wrapDegrees(player.getYRot()));
+        q.put("query.item_in_use_duration", entity.getTicksUsingItem() / 20.0);
+        q.put("query.item_max_use_duration", entity.getUseItem().getUseDuration() / 20.0);
+        q.put("query.item_remaining_use_duration", entity.getUseItemRemainingTicks() / 20.0);
+        q.put("query.walk_distance", (double) entity.moveDist);
+        q.put("query.modified_distance_moved", (double) entity.walkDist);
+        q.put("query.body_x_rotation", (double) entity.getXRot());
+        q.put("query.body_y_rotation", (double) net.minecraft.util.Mth.wrapDegrees(entity.getYRot()));
         q.put("query.head_x_rotation", (double) netHeadYaw);
         q.put("query.head_y_rotation", (double) headPitch);
-        q.put("query.cardinal_facing_2d", (double) player.getDirection().get3DDataValue());
-        q.put("query.time_of_day", (player.level().getDayTime() % 24000L) / 24000.0);
-        q.put("query.time_stamp", (double) player.level().getDayTime());
-        q.put("query.moon_phase", (double) player.level().getMoonPhase());
-        q.put("query.player_level", (double) player.experienceLevel);
-        q.put("query.has_rider", player.isVehicle() ? 1.0 : 0.0);
+        q.put("query.cardinal_facing_2d", (double) entity.getDirection().get3DDataValue());
+        q.put("query.time_of_day", (entity.level().getDayTime() % 24000L) / 24000.0);
+        q.put("query.time_stamp", (double) entity.level().getDayTime());
+        q.put("query.moon_phase", (double) entity.level().getMoonPhase());
+        q.put("query.player_level", (double) (entity instanceof Player player ? player.experienceLevel : 0));
+        q.put("query.has_rider", entity.isVehicle() ? 1.0 : 0.0);
         q.put("query.actor_count", 0.0);
         if (mc.gameRenderer != null && mc.gameRenderer.getMainCamera() != null) {
-            q.put("query.distance_from_camera", mc.gameRenderer.getMainCamera().getPosition().distanceTo(player.position()));
+            q.put("query.distance_from_camera", mc.gameRenderer.getMainCamera().getPosition().distanceTo(entity.position()));
         }
 
         q.put("ysm.head_yaw", (double) netHeadYaw);
         q.put("ysm.head_pitch", (double) headPitch);
         q.put("ysm.has_mainhand", mainHand.isEmpty() ? 0.0 : 1.0);
         q.put("ysm.has_offhand", offHand.isEmpty() ? 0.0 : 1.0);
-        q.put("ysm.has_helmet", player.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.HEAD).isEmpty() ? 0.0 : 1.0);
-        q.put("ysm.has_chest_plate", player.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.CHEST).isEmpty() ? 0.0 : 1.0);
-        q.put("ysm.has_leggings", player.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.LEGS).isEmpty() ? 0.0 : 1.0);
-        q.put("ysm.has_boots", player.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.FEET).isEmpty() ? 0.0 : 1.0);
-        q.put("ysm.has_elytra", player.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.CHEST).is(Items.ELYTRA) ? 1.0 : 0.0);
-        q.put("ysm.is_sleep", player.getPose() == Pose.SLEEPING ? 1.0 : 0.0);
+        q.put("ysm.has_helmet", entity.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.HEAD).isEmpty() ? 0.0 : 1.0);
+        q.put("ysm.has_chest_plate", entity.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.CHEST).isEmpty() ? 0.0 : 1.0);
+        q.put("ysm.has_leggings", entity.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.LEGS).isEmpty() ? 0.0 : 1.0);
+        q.put("ysm.has_boots", entity.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.FEET).isEmpty() ? 0.0 : 1.0);
+        q.put("ysm.has_elytra", entity.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.CHEST).is(Items.ELYTRA) ? 1.0 : 0.0);
+        q.put("ysm.is_sleep", entity.getPose() == Pose.SLEEPING ? 1.0 : 0.0);
         q.put("ysm.is_sneak", onGround && crouching ? 1.0 : 0.0);
-        q.put("ysm.is_passenger", player.isPassenger() ? 1.0 : 0.0);
-        q.put("ysm.is_riptide", player.isAutoSpinAttack() ? 1.0 : 0.0);
-        q.put("ysm.armor_value", (double) player.getArmorValue());
-        q.put("ysm.hurt_time", (double) player.hurtTime);
-        q.put("ysm.food_level", (double) player.getFoodData().getFoodLevel());
+        q.put("ysm.is_passenger", entity.isPassenger() ? 1.0 : 0.0);
+        q.put("ysm.is_riptide", entity.isAutoSpinAttack() ? 1.0 : 0.0);
+        q.put("ysm.armor_value", (double) entity.getArmorValue());
+        q.put("ysm.hurt_time", (double) entity.hurtTime);
+        q.put("ysm.food_level", (double) (entity instanceof Player player ? player.getFoodData().getFoodLevel() : 20));
 
         q.put("ctrl.idle", currentState.equals("idle") || currentState.equals("new_idle_empty") ? 1.0 : 0.0);
         q.put("ctrl.run", currentState.equals("run") ? 1.0 : 0.0);
         q.put("ctrl.walk", currentState.equals("walk") ? 1.0 : 0.0);
         q.put("ctrl.playing_extra_animation", 0.0);
+    }
+
+    private static boolean isCreativeFlying(LivingEntity entity) {
+        return entity instanceof Player player && player.getAbilities().flying;
     }
 
     // loop-mode constants mirrored from ScriptAnim to keep switch sites readable

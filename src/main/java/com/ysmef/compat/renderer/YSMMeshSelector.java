@@ -6,6 +6,7 @@ import com.ysmef.compat.model.YSMMeshLibrary;
 import com.ysmef.compat.model.runtime.YSMRuntimeBridge;
 import net.minecraft.client.player.AbstractClientPlayer;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.entity.LivingEntity;
 import yesman.epicfight.api.asset.AssetAccessor;
 import yesman.epicfight.api.client.model.Meshes;
 import yesman.epicfight.client.mesh.HumanoidMesh;
@@ -14,11 +15,12 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Shared mesh-selection logic used by both the patched renderer override and the
- * mixin that hijacks Epic Fight's own PPlayerRenderer#getMeshProvider.
+ * Shared mesh-selection logic used by the patched renderer override, the mixin
+ * that hijacks Epic Fight's own PPlayerRenderer#getMeshProvider, and the
+ * EpicFight_TouhouLittleMaid maid renderer hook.
  *
- * Returns a mesh accessor for the player's current YSM model (with the texture
- * override applied), or null to let Epic Fight use its default biped mesh.
+ * Returns a mesh accessor for the entity's current YSM model (with the texture
+ * override applied), or null to let Epic Fight use its default mesh.
  */
 public final class YSMMeshSelector {
 
@@ -40,27 +42,41 @@ public final class YSMMeshSelector {
         if (modelRef == null) {
             return null;
         }
+        return selectMeshForModel(player, modelRef.modelId(), modelRef.textureName(),
+                player.getGameProfile().getName());
+    }
 
-        Meshes.MeshAccessor<YSMMesh> accessor = YSMMeshLibrary.findMesh(modelRef.modelId());
+    /**
+     * Select the converted base mesh for an explicitly given YSM model + texture
+     * (used for maids, whose current YSM model id is read from synced entity data).
+     *
+     * @return the mesh accessor, or null if no converted mesh exists for the model
+     */
+    public static AssetAccessor<HumanoidMesh> selectMeshForModel(LivingEntity entity, String modelId,
+                                                                 String textureName, String displayName) {
+        if (entity == null || modelId == null || modelId.isEmpty()) {
+            return null;
+        }
+        Meshes.MeshAccessor<YSMMesh> accessor = YSMMeshLibrary.findMesh(modelId);
         if (accessor == null) {
-            logMeshMissingOnce(player, modelRef);
+            logMeshMissingOnce(entity, modelId, textureName, displayName);
             return null;
         }
 
         try {
             YSMMesh mesh = accessor.get();
-            mesh.setRuntimeModelId(modelRef.modelId());
-            YSMRuntimeBridge.setCurrentPlayer(player);
-            ResourceLocation texture = YSMMeshLibrary.findTexture(modelRef.modelId(), modelRef.textureName());
+            mesh.setRuntimeModelId(modelId);
+            YSMRuntimeBridge.setCurrentEntity(entity);
+            ResourceLocation texture = YSMMeshLibrary.findTexture(modelId, textureName);
             if (texture != null) {
                 YSMMeshLibrary.ensureTextureUploaded(texture);
                 mesh.setTextureOverride(texture);
             }
-            logMeshUsedOnce(player, modelRef, texture);
+            logMeshUsedOnce(entity, modelId, textureName, texture, displayName);
         } catch (Throwable t) {
             YSMEpicFightCompat.LOGGER.warn(
-                    "YSM-EF Compat: failed to load generated mesh for '{}', falling back to Epic Fight biped",
-                    modelRef.modelId(), t);
+                    "YSM-EF Compat: failed to load generated mesh for '{}', falling back to Epic Fight default mesh",
+                    modelId, t);
             return null;
         }
 
@@ -69,22 +85,22 @@ public final class YSMMeshSelector {
         return result;
     }
 
-    private static void logMeshUsedOnce(AbstractClientPlayer player, YSMModelAccess.YSMModelRef modelRef, ResourceLocation texture) {
-        String key = player.getGameProfile().getName() + "|" + modelRef.modelId() + "|" + modelRef.textureName();
+    private static void logMeshUsedOnce(LivingEntity entity, String modelId, String textureName,
+                                        ResourceLocation texture, String displayName) {
+        String key = entity.getUUID() + "|" + modelId + "|" + textureName;
         if (LOGGED_MESH_USE.add(key)) {
             YSMEpicFightCompat.LOGGER.info(
-                    "YSM-EF Compat: rendering player '{}' with converted YSM base mesh (model='{}', texture='{}' -> {})",
-                    player.getGameProfile().getName(), modelRef.modelId(), modelRef.textureName(), texture);
+                    "YSM-EF Compat: rendering '{}' with converted YSM base mesh (model='{}', texture='{}' -> {})",
+                    displayName, modelId, textureName, texture);
         }
     }
 
-    private static void logMeshMissingOnce(AbstractClientPlayer player, YSMModelAccess.YSMModelRef modelRef) {
-        String key = player.getGameProfile().getName() + "|" + modelRef.modelId();
+    private static void logMeshMissingOnce(LivingEntity entity, String modelId, String textureName, String displayName) {
+        String key = entity.getUUID() + "|" + modelId;
         if (LOGGED_MESH_MISSING.add(key)) {
             YSMEpicFightCompat.LOGGER.warn(
-                    "YSM-EF Compat: no converted base mesh for model '{}' (player '{}', texture '{}'). Falling back to Epic Fight biped. Available: {}",
-                    modelRef.modelId(), player.getGameProfile().getName(), modelRef.textureName(),
-                    YSMMeshLibrary.availableModelIds());
+                    "YSM-EF Compat: no converted base mesh for model '{}' (entity '{}', texture '{}'). Falling back to Epic Fight default mesh. Available: {}",
+                    modelId, displayName, textureName, YSMMeshLibrary.availableModelIds());
         }
     }
 }

@@ -1,0 +1,13 @@
+{
+  "required": false,
+  "minVersion": "0.8",
+  "package": "com.ysmef.compat.mixin.eftlm",
+  "compatibilityLevel": "JAVA_17",
+  "refmap": "ysm_epicfight_compat.refmap.json",
+  "client": [
+    "YsmMaidRendererMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

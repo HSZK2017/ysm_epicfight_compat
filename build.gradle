@@ -64,6 +64,7 @@ minecraft {
 mixin {
     add sourceSets.main, "${mod_id}.refmap.json"
     config "${mod_id}.mixins.json"
+    config "${mod_id}.eftlm.mixins.json"
 }
 
 sourceSets.main.resources { srcDir 'src/generated/resources' }
@@ -96,6 +97,10 @@ dependencies {
     // YSM does not publish to Modrinth/CurseForge under a standard artifact format,
     // so place the YSM jar in the 'libs' folder as 'ysm-2.6.5.jar'
     implementation fg.deobf("libs:ysm:${ysm_version}")
+
+    // Touhou Little Maid + EpicFight_TouhouLittleMaid (optional maid compat)
+    implementation fg.deobf("libs:touhoulittlemaid:1.5.3")
+    implementation fg.deobf("libs:ef_tlm:1.1.1")
 
     // Zstandard decompression for YSM .ysm binary model packages (nested via Jar-in-Jar)
     implementation "com.github.luben:zstd-jni:1.5.6-3"

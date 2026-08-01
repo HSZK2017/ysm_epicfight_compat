@@ -11,6 +11,7 @@ import com.ysmef.compat.model.YSMMeshLibrary;
 import com.ysmef.compat.ysm.script.Molang;
 import com.ysmef.compat.ysm.script.ScriptAnim;
 import com.ysmef.compat.ysm.script.ScriptJson;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import org.joml.Matrix4f;
 import yesman.epicfight.api.client.model.MeshPart;
@@ -73,8 +74,8 @@ public final class YSMRuntimeModel {
         this.conditionAnims = conditionAnims;
     }
 
-    public YSMPlayerAnimator animatorFor(Player player) {
-        return animators.computeIfAbsent(player.getUUID(), id -> new YSMPlayerAnimator(this));
+    public YSMPlayerAnimator animatorFor(LivingEntity entity) {
+        return animators.computeIfAbsent(entity.getUUID(), id -> new YSMPlayerAnimator(this));
     }
 
     public static void clearAnimators() {
