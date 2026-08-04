@@ -3,6 +3,8 @@ package com.ysmef.compat.renderer;
 import com.ysmef.compat.model.YSMMesh;
 import com.ysmef.compat.model.YSMMeshLibrary;
 import com.ysmef.compat.renderer.layer.YsmConditionalArmorLayer;
+import com.ysmef.compat.renderer.layer.YsmConditionalElytraLayer;
+import com.ysmef.compat.renderer.layer.YsmConditionalHeadLayer;
 import net.minecraft.client.model.PlayerModel;
 import net.minecraft.client.player.AbstractClientPlayer;
 import net.minecraft.client.renderer.entity.EntityRendererProvider;
@@ -10,6 +12,8 @@ import net.minecraft.client.renderer.entity.LivingEntityRenderer;
 import net.minecraft.client.renderer.entity.layers.ArrowLayer;
 import net.minecraft.client.renderer.entity.layers.BeeStingerLayer;
 import net.minecraft.client.renderer.entity.layers.CapeLayer;
+import net.minecraft.client.renderer.entity.layers.CustomHeadLayer;
+import net.minecraft.client.renderer.entity.layers.ElytraLayer;
 import net.minecraft.client.renderer.entity.layers.HumanoidArmorLayer;
 import net.minecraft.client.renderer.entity.layers.PlayerItemInHandLayer;
 import net.minecraft.resources.ResourceLocation;
@@ -57,6 +61,10 @@ public class YSMPlayerRenderer extends PHumanoidRenderer<AbstractClientPlayer, A
         // stays hidden while a YSM mesh is in use (armor models do not fit it).
         this.addPatchedLayerAlways(HumanoidArmorLayer.class,
                 new YsmConditionalArmorLayer<>(Meshes.BIPED, context.getModelManager()));
+        // Same for the vanilla head (worn headgear) and elytra models: they are
+        // shaped for the vanilla biped and would overlay a YSM mesh in battle mode.
+        this.addPatchedLayerAlways(CustomHeadLayer.class, new YsmConditionalHeadLayer<>());
+        this.addPatchedLayerAlways(ElytraLayer.class, new YsmConditionalElytraLayer<>());
     }
 
     @Override

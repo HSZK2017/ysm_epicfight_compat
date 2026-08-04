@@ -92,8 +92,10 @@
 | **阻止 YSM 第三人称渲染** | `YSMRenderHook` (RenderLivingEvent.Pre HIGHEST)：EF 接管时取消事件 → YSM 的 RenderPlayerEvent.Pre 处理器 (NORMAL, 未 receiveCanceled) 收不到 → YSM CustomPlayerRenderer 不执行 |
 | **阻止 YSM 第一人称手臂** | `YsmArmRenderMixin`：注入 YSM `ReplacePlayerHandRenderEvent.onRenderArm` (混淆名)，战斗模式 ← `ci.cancel()` → 跳过 YSM 手臂渲染 → 原版手臂渲染 |
 | **阻止 YSM 背景手** | `YsmBackgroundHandMixin`：注入 YSM `RenderFirstPlayerBackground.onRenderHand` (混淆名)，同上 |
+| **解除战斗模式武器拦截** | `YsmPlayerRenderMixin`：注入 YSM `ReplacePlayerRenderEvent.onRenderPlayerPre` (混淆名)，战斗模式 `ci.cancel()` → YSM 不再 cancel RenderPlayerEvent.Pre → 原版 PlayerRenderer 继续 → `YSMRenderHook` 以原版渲染器接管 → EF `PatchedItemInHandLayer` 正常绘制武器。原路径 (YSM 渲染器发起的嵌套 RenderLivingEvent.Pre) 中 renderer 是 YSM 渲染器、其 layers 无 PlayerItemInHandLayer，武器永远不绘制 |
 | **阻止 YSM 弹射物/载具变体** | `YsmProjectileRenderMixin` (投射物)、`YsmFishingHookRenderMixin` (鱼钩) → 注入 YSM 自定义渲染器 (混淆名) 的 entry 方法，战斗模式 owner → `setReturnValue(true)` 跳过自定义渲染；`YsmVehicleRenderMixin` (载具)、`YsmVehiclePreviewMixin` (预览) → 按乘客判定战斗模式 |
 | **阻止盔甲渲染** | `YsmConditionalArmorLayer`：通过 `addPatchedLayerAlways` 覆盖 EF 默认 `WearableItemLayer`，玩家使用 YSM 网格时 `renderLayer` 返回 → 盔甲模型 (不对齐 YSM 网格) 不绘制；非 YSM 玩家盔甲不受影响 |
+| **阻止原版头/鞘翅模型** | `YsmConditionalHeadLayer` / `YsmConditionalElytraLayer`：同盔甲模式覆盖 EF 默认 `PatchedHeadLayer` / `PatchedElytraLayer`，YSM 网格玩家不绘制原版头 (带头饰时) / 鞘翅模型 |
 
 ### 渲染路径 (1.2.0 修复)
 
@@ -121,12 +123,13 @@
 
 ### YSM 混淆名映射 (2.6.5 release jar)
 
-YSM release jar 的 932 个类被混淆；9 个 Mixin 安全类 (含 mixins.json 中引用的) 保留原名。本模组打了 6 个混入 YSM 类/方法的 Mixin，目标类与混淆方法名如下 (可通过扫描 jar 中类的方法描述符重新定位)：
+YSM release jar 的 932 个类被混淆；9 个 Mixin 安全类 (含 mixins.json 中引用的) 保留原名。本模组打了 7 个混入 YSM 类/方法的 Mixin，目标类与混淆方法名如下 (可通过扫描 jar 中类的方法描述符重新定位)：
 
 | 实名 | 混淆类 (com.elfmcys.yesstevemodel.*) | 混淆方法名 |
 |---|---|---|
 | `ReplacePlayerHandRenderEvent#onRenderArm(RenderArmEvent)V` | `ooOOOoOO000oo0o00o00o000` | `Oo0Oo0o00O00Oo0OOoOOoooo(RenderArmEvent)V` |
 | `RenderFirstPlayerBackground#onRenderHand(RenderHandEvent)V` | `O000O0O00ooo000O0oOOoo00` | 同上 (不同描述符) |
+| `ReplacePlayerRenderEvent#onRenderPlayerPre(RenderPlayerEvent$Pre)V` | `O0oOOo00o0oooOo0OoO0OOo0` | `Oo0Oo0o00O00Oo0OOoOOoooo(RenderPlayerEvent$Pre)V` |
 | `CustomProjectileRenderer#renderProjectile(Projectile,FF,...)Z` | `O0oOooooo00Ooooo0OoOOOO0` | 同上 |
 | `CustomFishingHookRenderer#tryRenderCustomHook(FishingHook,FF,...)Z` | `oO0Ooooooo0O0OOOO00OoOo0` | 同上 |
 | `CustomVehicleRenderer#renderVehicle(Entity,FF,...)Z` | `OOoO0O0OooOO0o00oOoOOoO0` | 同上 |
@@ -184,6 +187,6 @@ YSM release jar 的 932 个类被混淆；9 个 Mixin 安全类 (含 mixins.json
 2. **CPU 蒙皮路径丢面 (1.2.0 绕过)**: EF 默认 `use_compute_shader=false` 时走 CPU 蒙皮路径，转换网格会丢三角面。1.2.0 起 `YSMMesh.draw` 强制计算着色器路径规避；无计算着色器支持的 GPU 仍走 CPU 路径 (可能缺面，已告警)
 3. **战斗模式默认可见性**: 使用冻结默认环境 (变量未设、查询=0) 静态求值 parallel 动画的 scale 通道来决定变体骨骼可见性。实际变种可能因条件 Molang (`v.xxx`, `q.xxx`) 在某些模型上默认可见 (应为隐藏)，在运行时会被覆盖，但静态求值不可见；此为并行/变体分级设计，恰符合 YSM 的首帧行为
 4. **远程纯客户端**: 无法访问整合/专用服务器的 `ModelInfoCapability`，回退 EF 默认 biped (不影响服务器端其他玩家视角)
-5. **YSM 混淆类**: 6 个 Mixin 依赖 YSM 2.6.5 的混淆名；升级 YSM 版本需通过描述符扫描重新定位目标类 (注释中已写方法)
+5. **YSM 混淆类**: 7 个 Mixin 依赖 YSM 2.6.5 的混淆名；升级 YSM 版本需通过描述符扫描重新定位目标类 (注释中已写方法)
 6. **非 PNG/JPEG 贴图**: 其他格式 (WebP/AVIF/BMP) 不支持解码，跳过并告警
 7. **缓存健壮性 (1.1.0 起)**: manifest 记录输出哈希，缓存恢复前逐文件校验；被半生成/复制损坏的缓存会强制重建而非永久信任；所有输出文件原子写入，资源重载不会读到半截 JSON

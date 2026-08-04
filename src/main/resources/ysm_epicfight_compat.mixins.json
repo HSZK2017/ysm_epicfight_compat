@@ -8,6 +8,7 @@
     "PPlayerRendererMixin",
     "YsmArmRenderMixin",
     "YsmBackgroundHandMixin",
+    "YsmPlayerRenderMixin",
     "YsmProjectileRenderMixin",
     "YsmFishingHookRenderMixin",
     "YsmVehicleRenderMixin",
