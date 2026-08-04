@@ -31,9 +31,17 @@
                                               · Molang 动画 (parallel/state/condition)
                                                      │
                                                      ▼
-                                          YSMMeshLibrary.generateAll
-                                          · MeshAccessor 注册
-                                          · 贴图 → TextureManager
+                                           YSMMeshLibrary.generateAll
+                                           · MeshAccessor 注册
+                                           · 贴图 → TextureManager
+                                           · 输出哈希写入 manifest (mhash/rhash/贴图 hash)
+                                                      │
+                                                      ▼
+                                           YSMMeshLibrary.ensureGeneratedBlocking (阻塞门禁)
+                                           · AddPackFindersEvent：包仓库构建前全量生成
+                                           · TLM 女仆网格同门禁生成
+                                           · 缓存恢复前 verifyOutputs 校验输出哈希
+                                           · 失败 → 强制全量重建 (不再信任坏缓存)
 ```
 
 ---
@@ -56,7 +64,8 @@
 | `YSMGeoModel` | Bedrock 几何解析——cube 8 顶点、6 面 (box UV / per-face UV)、镜像、膨胀、cube 枢轴旋转；骨骼层级、绑定变换链。`fromBinary` 处理预烘焙的二进制面数据 |
 | `EFMeshJsonWriter` | 生成 EF animmodels JSON + 运行时 JSON。骨骼级部件 (`y/<boneName>`)、**预三角化** (每四边形扇形 6 角点: `(0,1,2)+(2,3,0)`) 匹配 EF 的 `glDrawArrays(TRIANGLES)` 与 CPU `getTriangulated` 约定；Blender 坐标系、顶点焊接、关节映射、宽高缩放 |
 | `YSMJointMapper` | YSM 骨骼名 → EF biped 关节 ID 映射 (Root=0..Elbow_L=19)；运行时 armature 验证 |
-| `YSMMesh` | EF `HumanoidMesh` 子类——贴图替换、运行时模型 ID、骨骼部件绑定变换供应商 (用于脚本注入) |
+| `YSMMesh` | EF `HumanoidMesh` 子类——贴图替换、运行时模型 ID、骨骼部件绑定变换供应商 (用于脚本注入)。`draw` 强制走计算着色器路径 (见下方"渲染路径"节) |
+| `YSMMeshLibrary` | 网格/贴图注册中心 + 生成门禁。manifest 记录每个输出 (网格 JSON/运行时 JSON/贴图字节) 的 SHA-256 与大小；缓存恢复前逐文件校验，任何缺失/损坏 → 强制全量重建。所有文件写入均为原子写 (tmp + rename) |
 
 ### 运行时脚本系统 (`com.ysmef.compat.model.runtime`)
 
@@ -86,6 +95,13 @@
 | **阻止 YSM 弹射物/载具变体** | `YsmProjectileRenderMixin` (投射物)、`YsmFishingHookRenderMixin` (鱼钩) → 注入 YSM 自定义渲染器 (混淆名) 的 entry 方法，战斗模式 owner → `setReturnValue(true)` 跳过自定义渲染；`YsmVehicleRenderMixin` (载具)、`YsmVehiclePreviewMixin` (预览) → 按乘客判定战斗模式 |
 | **阻止盔甲渲染** | `YsmConditionalArmorLayer`：通过 `addPatchedLayerAlways` 覆盖 EF 默认 `WearableItemLayer`，玩家使用 YSM 网格时 `renderLayer` 返回 → 盔甲模型 (不对齐 YSM 网格) 不绘制；非 YSM 玩家盔甲不受影响 |
 
+### 渲染路径 (1.2.0 修复)
+
+| 机制 | 细节 |
+|---|---|
+| **强制计算着色器路径** | EF 的 `SkinnedMesh.draw` 仅在客户端配置 `use_compute_shader=true` 时走 GPU 计算着色器路径，默认值 (false) 走 CPU 蒙皮路径——**CPU 路径渲染转换网格会丢三角面** (经双目录翻转配置实测复现/消除)。`YSMMesh.draw` 现在无视配置，存在计算着色器 setup 时直接调用 `drawWithShader` (反射读取私有字段 `computerShaderSetup`)，无 setup (老显卡) 才回退 CPU 路径并告警 |
+| **副作用** | 计算着色器路径同样支持每帧隐藏标记与逐部件变换 (经 `VanillaComputeShaderSetup.drawWithShader` 反编译验证)，战斗模式/运行时动画均不受影响 |
+
 ### 贴图处理
 
 | 机制 | 细节 |
@@ -100,7 +116,7 @@
 |---|---|
 | `PPlayerRendererMixin` | EF `PPlayerRenderer.getMeshProvider` HEAD：返回 YSM 网格替代默认 biped |
 | `YSMRenderHook` | `RenderLivingEvent.Pre` HIGHEST：EF 接管时取消事件 + 调用 `renderEngine.renderEntityArmatureModel` |
-| `YSMCompatClientEvents` | `PatchedRenderersEvent.Add` (LOWEST 注册)、`AddPackFindersEvent` (生成资源包)、`FMLClientSetupEvent` (模型扫描生成)、`RegisterClientReloadListenersEvent` (F3+T 刷新) |
+| `YSMCompatClientEvents` | `PatchedRenderersEvent.Add` (LOWEST 注册)、`AddPackFindersEvent` (生成资源包 + **TLM 网格同门禁生成**，包仓库构建前完成)、`FMLClientSetupEvent` (兜底扫描)、`RegisterClientReloadListenersEvent` (F3+T 刷新) |
 | `YSMReloadTrigger` | YSM 模型重载命令检测 |
 
 ### YSM 混淆名映射 (2.6.5 release jar)
@@ -145,10 +161,13 @@ YSM release jar 的 932 个类被混淆；9 个 Mixin 安全类 (含 mixins.json
 ## 构建
 
 ```bash
-./gradlew jarJar
+# 本机网络证书校验会失败，需禁用后构建
+./gradlew -Dnet.minecraftforge.gradle.check.certs=false jarJar reobfJarJar
 ```
 
-产物：`build/libs/YSM_EpicFight_Compat-1.20.1-1.0.0-all.jar` (内嵌 `zstd-jni 1.5.6-3`，jar-in-jar)
+注意：`jarJar` 打出的 all.jar 必须经过 `reobfJarJar`（强制重跑用 `--rerun-tasks`），否则运行时方法名未映射会直接崩溃 (`NoSuchMethodError`/`AbstractMethodError`)。
+
+产物：`build/libs/YSM_EpicFight_Compat-1.20.1-1.2.0-all.jar` (内嵌 `zstd-jni 1.5.6-3`，jar-in-jar)
 
 依赖：
 - Epic Fight 20.14.17+ (`maven.modrinth`)
@@ -162,7 +181,9 @@ YSM release jar 的 932 个类被混淆；9 个 Mixin 安全类 (含 mixins.json
 ## 已知限制
 
 1. **大型贴图 OOM**: `< 1.0.0` 版使用 `NativeImage.read(byte[])` 将贴图字节压上 64KB LWJGL MemoryStack，>64KB 的 PNG 直接溢出 (手动 trace 定位至 `NativeImage.java:116` 的 `memorystack.malloc(data.length)`)；**已在 1.0.0 修复**——切换至 `NativeImage.read(InputStream)` (堆分配)
-2. **战斗模式默认可见性**: 使用冻结默认环境 (变量未设、查询=0) 静态求值 parallel 动画的 scale 通道来决定变体骨骼可见性。实际变种可能因条件 Molang (`v.xxx`, `q.xxx`) 在某些模型上默认可见 (应为隐藏)，在运行时会被覆盖，但静态求值不可见；此为并行/变体分级设计，恰符合 YSM 的首帧行为
-3. **远程纯客户端**: 无法访问整合/专用服务器的 `ModelInfoCapability`，回退 EF 默认 biped (不影响服务器端其他玩家视角)
-4. **YSM 混淆类**: 6 个 Mixin 依赖 YSM 2.6.5 的混淆名；升级 YSM 版本需通过描述符扫描重新定位目标类 (注释中已写方法)
-5. **非 PNG/JPEG 贴图**: 其他格式 (WebP/AVIF/BMP) 不支持解码，跳过并告警
+2. **CPU 蒙皮路径丢面 (1.2.0 绕过)**: EF 默认 `use_compute_shader=false` 时走 CPU 蒙皮路径，转换网格会丢三角面。1.2.0 起 `YSMMesh.draw` 强制计算着色器路径规避；无计算着色器支持的 GPU 仍走 CPU 路径 (可能缺面，已告警)
+3. **战斗模式默认可见性**: 使用冻结默认环境 (变量未设、查询=0) 静态求值 parallel 动画的 scale 通道来决定变体骨骼可见性。实际变种可能因条件 Molang (`v.xxx`, `q.xxx`) 在某些模型上默认可见 (应为隐藏)，在运行时会被覆盖，但静态求值不可见；此为并行/变体分级设计，恰符合 YSM 的首帧行为
+4. **远程纯客户端**: 无法访问整合/专用服务器的 `ModelInfoCapability`，回退 EF 默认 biped (不影响服务器端其他玩家视角)
+5. **YSM 混淆类**: 6 个 Mixin 依赖 YSM 2.6.5 的混淆名；升级 YSM 版本需通过描述符扫描重新定位目标类 (注释中已写方法)
+6. **非 PNG/JPEG 贴图**: 其他格式 (WebP/AVIF/BMP) 不支持解码，跳过并告警
+7. **缓存健壮性 (1.1.0 起)**: manifest 记录输出哈希，缓存恢复前逐文件校验；被半生成/复制损坏的缓存会强制重建而非永久信任；所有输出文件原子写入，资源重载不会读到半截 JSON
