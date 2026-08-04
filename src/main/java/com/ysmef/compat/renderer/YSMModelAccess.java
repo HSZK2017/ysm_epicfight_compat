@@ -1,6 +1,7 @@
 package com.ysmef.compat.renderer;
 
-import net.minecraft.nbt.CompoundTag;
+import com.ysmef.compat.network.ModelSyncClient;
+import com.ysmef.compat.network.YsmCapabilityReader;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.player.Player;
@@ -23,11 +24,14 @@ import java.util.concurrent.ConcurrentHashMap;
  * non-serializable animatable capability that cannot be read without referencing
  * obfuscated classes.
  *
- * Therefore the selection is read from the integrated server's player entities (which
- * do carry the serializable capability), covering single-player and self-hosted
- * servers. For clients connected to a remote dedicated server, the server is not
- * reachable; in that case the method falls back to the client capability NBT (which
- * normally is absent, degrading to Epic Fight's biped mesh with a one-time log).
+ * The selection is therefore resolved from three sources, in order:
+ * 1. the integrated server's player entities (which do carry the serializable
+ *    capability) - covers single-player and self-hosted servers;
+ * 2. the model-sync channel (see com.ysmef.compat.network): when the mod runs on the
+ *    server too, every player's selection is streamed to the client over the network
+ *    after a version handshake, following the OpenYSM/YSM 2.6.5 protocol - this covers
+ *    dedicated servers for both remote players and the local player;
+ * 3. the client capability NBT (normally absent, degrading to Epic Fight's biped mesh).
  *
  * The NBT snapshot is cached briefly per player to avoid serializing the full player
  * every frame. The cache is keyed per client world (the client Level instance): a new
@@ -40,10 +44,6 @@ import java.util.concurrent.ConcurrentHashMap;
 @OnlyIn(Dist.CLIENT)
 public final class YSMModelAccess {
 
-    private static final String FORGE_CAPS_KEY = "ForgeCaps";
-    private static final String YSM_CAP_KEY = "yes_steve_model:model_id";
-    private static final String MODEL_ID_TAG = "model_id";
-    private static final String TEXTURE_TAG = "select_texture";
     private static final long CACHE_TTL_TICKS = 20;
 
     private record CacheEntry(Level level, YSMModelRef model, long gameTime) {}
@@ -54,7 +54,8 @@ public final class YSMModelAccess {
 
     /**
      * Get the current YSM model selection of the player, or null if the player has no
-     * YSM model (or the selection cannot be determined, e.g. on a remote server).
+     * YSM model (or the selection cannot be determined, e.g. on a server without the
+     * model-sync channel).
      */
     public static YSMModelRef getCurrentModel(Player player) {
         if (player == null || player.level() == null) {
@@ -79,6 +80,10 @@ public final class YSMModelAccess {
         if (fromServer != null) {
             return fromServer;
         }
+        ModelSyncClient.SyncedModel synced = ModelSyncClient.getSyncedModel(player.getUUID());
+        if (synced != null) {
+            return new YSMModelRef(synced.modelId(), synced.textureName());
+        }
         return readFromCapabilityNbt(player);
     }
 
@@ -96,39 +101,16 @@ public final class YSMModelAccess {
             if (serverPlayer == null) {
                 return null;
             }
-            return parseCapabilityNbt(serverPlayer.saveWithoutId(new CompoundTag()));
+            YsmCapabilityReader.Selection selection = YsmCapabilityReader.readFromPlayer(serverPlayer);
+            return selection == null ? null : new YSMModelRef(selection.modelId(), selection.textureName());
         } catch (Exception e) {
             return null;
         }
     }
 
     private static YSMModelRef readFromCapabilityNbt(Player player) {
-        try {
-            return parseCapabilityNbt(player.saveWithoutId(new CompoundTag()));
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    private static YSMModelRef parseCapabilityNbt(CompoundTag tag) {
-        if (!tag.contains(FORGE_CAPS_KEY, CompoundTag.TAG_COMPOUND)) {
-            return null;
-        }
-        CompoundTag caps = tag.getCompound(FORGE_CAPS_KEY);
-        if (!caps.contains(YSM_CAP_KEY, CompoundTag.TAG_COMPOUND)) {
-            return null;
-        }
-        CompoundTag modelInfo = caps.getCompound(YSM_CAP_KEY);
-        if (!modelInfo.contains(MODEL_ID_TAG, CompoundTag.TAG_STRING)
-                || !modelInfo.contains(TEXTURE_TAG, CompoundTag.TAG_STRING)) {
-            return null;
-        }
-        String modelId = modelInfo.getString(MODEL_ID_TAG);
-        String texture = modelInfo.getString(TEXTURE_TAG);
-        if (modelId.isEmpty()) {
-            return null;
-        }
-        return new YSMModelRef(modelId, texture);
+        YsmCapabilityReader.Selection selection = YsmCapabilityReader.readFromPlayer(player);
+        return selection == null ? null : new YSMModelRef(selection.modelId(), selection.textureName());
     }
 
     private static void logCapabilityRead(Player player, YSMModelRef model) {
@@ -144,8 +126,13 @@ public final class YSMModelAccess {
     }
 
     /**
-     * Clear the per-player selection cache (called on resource reload and when
-     * leaving a world / disconnecting, see YSMReloadTrigger).
+     * Clear the per-player NBT selection cache (called on resource reload and
+     * when leaving a world / disconnecting, see YSMReloadTrigger).
+     *
+     * The synced selections (ModelSyncClient) are deliberately NOT cleared
+     * here: the server only re-broadcasts on change, so clearing them on F3+T
+     * would pin remote players to the Epic Fight biped until their model
+     * changes. They are cleared separately when leaving the world.
      */
     public static void clearCache() {
         CACHE.clear();

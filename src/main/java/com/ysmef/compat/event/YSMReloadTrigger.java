@@ -2,6 +2,7 @@ package com.ysmef.compat.event;
 
 import com.ysmef.compat.YSMEpicFightCompat;
 import com.ysmef.compat.model.YSMMeshLibrary;
+import com.ysmef.compat.network.ModelSyncClient;
 import com.ysmef.compat.renderer.YSMModelAccess;
 import net.minecraft.client.Minecraft;
 import net.minecraftforge.api.distmarker.Dist;
@@ -43,10 +44,14 @@ public class YSMReloadTrigger {
      * so the next world always re-reads the fresh selection from its own server player
      * (a stale entry from the previous world would otherwise pin the old model - the
      * game-time TTL alone cannot detect a new world with a lower game time).
+     *
+     * The network-synced selections are dropped as well: they belong to the old
+     * connection and are re-streamed by the server after the next handshake.
      */
     @SubscribeEvent
     public static void onDisconnect(ClientPlayerNetworkEvent.LoggingOut event) {
         YSMModelAccess.clearCache();
+        ModelSyncClient.clear();
     }
 
     @SubscribeEvent

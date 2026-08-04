@@ -1,6 +1,7 @@
 package com.ysmef.compat;
 
 import com.ysmef.compat.config.YSMCompatConfig;
+import com.ysmef.compat.network.NetworkHandler;
 import net.minecraftforge.fml.common.Mod;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -13,6 +14,7 @@ public class YSMEpicFightCompat {
 
     public YSMEpicFightCompat() {
         YSMCompatConfig.register();
+        NetworkHandler.init();
         LOGGER.info("YSM-EF Compat: Initialized successfully");
     }
 }

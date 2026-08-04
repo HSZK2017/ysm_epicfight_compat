@@ -81,7 +81,7 @@
 |---|---|
 | `YSMPlayerRenderer` | 补丁玩家渲染器 (`PHumanoidRenderer<...>`)。替换 mesh + 条件盔甲层 + 手/箭/蜂/斗篷层；`prepareModel` 同步 visible/hidden 部件 |
 | `YSMMeshSelector` | 网格选择——`YSMModelAccess` 读当前模型 → `YSMMeshLibrary` 查找网格/贴图 → 设置运行时模型 ID + 当前玩家 |
-| `YSMModelAccess` | 通过 server NBT 读 YSM capability `yes_steve_model:model_id` + `select_texture` (20 tick 缓存)，覆盖单人/自建服务器；远程纯客户端回退 EF biped |
+| `YSMModelAccess` | 模型选择解析——按顺序回退：集成服务器 NBT (单人/自建) → **模型同步通道** (见下方"多人联机同步"节，专用服务器) → 客户端 capability NBT (20 tick 缓存) |
 | `YSMBattleMode` | 战斗模式判定——`PlayerPatch.isEpicFightMode()` |
 
 ### 战斗模式管控
@@ -119,7 +119,17 @@
 | `PPlayerRendererMixin` | EF `PPlayerRenderer.getMeshProvider` HEAD：返回 YSM 网格替代默认 biped |
 | `YSMRenderHook` | `RenderLivingEvent.Pre` HIGHEST：EF 接管时取消事件 + 调用 `renderEngine.renderEntityArmatureModel` |
 | `YSMCompatClientEvents` | `PatchedRenderersEvent.Add` (LOWEST 注册)、`AddPackFindersEvent` (生成资源包 + **TLM 网格同门禁生成**，包仓库构建前完成)、`FMLClientSetupEvent` (兜底扫描)、`RegisterClientReloadListenersEvent` (F3+T 刷新) |
-| `YSMReloadTrigger` | YSM 模型重载命令检测 |
+| `YSMReloadTrigger` | YSM 模型重载命令检测 + 断开世界时清空模型选择缓存 |
+
+### 多人联机模型同步 (1.3.0)
+
+| 机制 | 细节 |
+|---|---|
+| **通信协议** | 参照 OpenYSM 2.6.5 网络协议 (`参考/OpenYSM/.../network`)：独立通道 `ysm_epicfight_compat:model_sync`，登录时接受任意版本，握手用 S2C/C2S 版本检查包 (YSM id 51/52 模式) 在 netty Connection 上记录协商版本 (AttributeKey)，握手完成前不交换模型数据 |
+| **模型广播包** | `S2CSetModelAndTexturePacket` (YSM id 4 模式)：`entityId` (VarInt) + `modelId` (UTF) + `textureId` (UTF) + `disabled` (bool)，末尾追加玩家 `uuid`——客户端以 UUID 为主键直接注册 (替代 YSM 的 entityId 实体加入回调，对重生/跨维度更稳) |
+| **服务端广播时机** | 参照 OpenYSM `CapabilityEvent`：玩家入世界 → 发版本检查握手；`PlayerEvent.StartTracking` → 向追踪者推送被追踪者模型 (onStartTracking)；服务端每 20 tick 差异扫描 (entityId/modelId/textureId 变化 → 换模/换贴图/重生) → `sendToTrackingEntityAndSelf` 广播 |
+| **服务端数据源** | `YsmCapabilityReader` 读 `ServerPlayer.saveWithoutId` 的 ForgeCaps NBT (`yes_steve_model:model_id` → `model_id`/`select_texture`/`disabled`)，与客户端 SP 路径同源，无 YSM 混淆类依赖；玩家无模型 (或 disabled) → 广播空 modelId，客户端清除该条目回退 EF biped |
+| **客户端注册** | `ModelSyncClient` (common)：UUID → (modelId, textureId) 映射；`YSMModelAccess.getCurrentModel` 在集成服务器读取失败后回退到该映射；断开世界 (LoggingOut) 清空，F3+T 重载**不清空** (服务端只按变化广播，清空会导致远程玩家被钉在 biped) |
 
 ### YSM 混淆名映射 (2.6.5 release jar)
 
@@ -170,7 +180,7 @@ YSM release jar 的 932 个类被混淆；9 个 Mixin 安全类 (含 mixins.json
 
 注意：`jarJar` 打出的 all.jar 必须经过 `reobfJarJar`（强制重跑用 `--rerun-tasks`），否则运行时方法名未映射会直接崩溃 (`NoSuchMethodError`/`AbstractMethodError`)。
 
-产物：`build/libs/YSM_EpicFight_Compat-1.20.1-1.2.0-all.jar` (内嵌 `zstd-jni 1.5.6-3`，jar-in-jar)
+产物：`build/libs/YSM_EpicFight_Compat-1.20.1-1.3.0-all.jar` (内嵌 `zstd-jni 1.5.6-3`，jar-in-jar)
 
 依赖：
 - Epic Fight 20.14.17+ (`maven.modrinth`)
@@ -186,7 +196,8 @@ YSM release jar 的 932 个类被混淆；9 个 Mixin 安全类 (含 mixins.json
 1. **大型贴图 OOM**: `< 1.0.0` 版使用 `NativeImage.read(byte[])` 将贴图字节压上 64KB LWJGL MemoryStack，>64KB 的 PNG 直接溢出 (手动 trace 定位至 `NativeImage.java:116` 的 `memorystack.malloc(data.length)`)；**已在 1.0.0 修复**——切换至 `NativeImage.read(InputStream)` (堆分配)
 2. **CPU 蒙皮路径丢面 (1.2.0 绕过)**: EF 默认 `use_compute_shader=false` 时走 CPU 蒙皮路径，转换网格会丢三角面。1.2.0 起 `YSMMesh.draw` 强制计算着色器路径规避；无计算着色器支持的 GPU 仍走 CPU 路径 (可能缺面，已告警)
 3. **战斗模式默认可见性**: 使用冻结默认环境 (变量未设、查询=0) 静态求值 parallel 动画的 scale 通道来决定变体骨骼可见性。实际变种可能因条件 Molang (`v.xxx`, `q.xxx`) 在某些模型上默认可见 (应为隐藏)，在运行时会被覆盖，但静态求值不可见；此为并行/变体分级设计，恰符合 YSM 的首帧行为
-4. **远程纯客户端**: 无法访问整合/专用服务器的 `ModelInfoCapability`，回退 EF 默认 biped (不影响服务器端其他玩家视角)
-5. **YSM 混淆类**: 7 个 Mixin 依赖 YSM 2.6.5 的混淆名；升级 YSM 版本需通过描述符扫描重新定位目标类 (注释中已写方法)
-6. **非 PNG/JPEG 贴图**: 其他格式 (WebP/AVIF/BMP) 不支持解码，跳过并告警
-7. **缓存健壮性 (1.1.0 起)**: manifest 记录输出哈希，缓存恢复前逐文件校验；被半生成/复制损坏的缓存会强制重建而非永久信任；所有输出文件原子写入，资源重载不会读到半截 JSON
+4. **多人联机模型同步依赖**: 远程玩家/本地玩家的模型选择通过 `ysm_epicfight_compat:model_sync` 通道同步，要求**专用服务器也安装本模组** (服务端仅做 NBT 读取与广播，无渲染开销)。服务端未安装时回退 EF 默认 biped (与旧版行为一致)
+5. **远程玩家模型需本地可用**: 被渲染玩家的 YSM 模型包必须在本地存在 (`config/yes_steve_model/{builtin,custom,auth}`)。auth 模型由 YSM 自动下载到本地；会话中途新下载的模型需 F3+T 或 `/ysm model reload` 触发网格重新生成后才会显示
+6. **YSM 混淆类**: 7 个 Mixin 依赖 YSM 2.6.5 的混淆名；升级 YSM 版本需通过描述符扫描重新定位目标类 (注释中已写方法)
+7. **非 PNG/JPEG 贴图**: 其他格式 (WebP/AVIF/BMP) 不支持解码，跳过并告警
+8. **缓存健壮性 (1.1.0 起)**: manifest 记录输出哈希，缓存恢复前逐文件校验；被半生成/复制损坏的缓存会强制重建而非永久信任；所有输出文件原子写入，资源重载不会读到半截 JSON
