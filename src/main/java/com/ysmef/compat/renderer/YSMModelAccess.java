@@ -4,6 +4,7 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.Level;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.api.distmarker.OnlyIn;
 import net.minecraftforge.server.ServerLifecycleHooks;
@@ -29,7 +30,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * normally is absent, degrading to Epic Fight's biped mesh with a one-time log).
  *
  * The NBT snapshot is cached briefly per player to avoid serializing the full player
- * every frame.
+ * every frame. The cache is keyed per client world (the client Level instance): a new
+ * world (or returning to the menu and re-entering a world) always gets a fresh read,
+ * so a model selection from a previous world can never pin the current one. This
+ * matters because the game-time-based TTL alone is unsafe across worlds: entering a
+ * new save whose game time is lower than the previous save's would keep a stale entry
+ * "fresh" (negative delta is always below the TTL), pinning the old model forever.
  */
 @OnlyIn(Dist.CLIENT)
 public final class YSMModelAccess {
@@ -40,7 +46,7 @@ public final class YSMModelAccess {
     private static final String TEXTURE_TAG = "select_texture";
     private static final long CACHE_TTL_TICKS = 20;
 
-    private record CacheEntry(YSMModelRef model, long gameTime) {}
+    private record CacheEntry(Level level, YSMModelRef model, long gameTime) {}
 
     private static final Map<UUID, CacheEntry> CACHE = new ConcurrentHashMap<>();
 
@@ -54,15 +60,16 @@ public final class YSMModelAccess {
         if (player == null || player.level() == null) {
             return null;
         }
-        long gameTime = player.level().getGameTime();
+        Level level = player.level();
+        long gameTime = level.getGameTime();
         UUID uuid = player.getUUID();
         CacheEntry entry = CACHE.get(uuid);
-        if (entry != null && gameTime - entry.gameTime() < CACHE_TTL_TICKS) {
+        if (entry != null && entry.level() == level && gameTime - entry.gameTime() < CACHE_TTL_TICKS) {
             return entry.model();
         }
 
         YSMModelRef model = readModel(player);
-        CACHE.put(uuid, new CacheEntry(model, gameTime));
+        CACHE.put(uuid, new CacheEntry(level, model, gameTime));
         logCapabilityRead(player, model);
         return model;
     }
@@ -137,7 +144,8 @@ public final class YSMModelAccess {
     }
 
     /**
-     * Clear the per-player selection cache (called on resource reload / disconnect).
+     * Clear the per-player selection cache (called on resource reload and when
+     * leaving a world / disconnecting, see YSMReloadTrigger).
      */
     public static void clearCache() {
         CACHE.clear();

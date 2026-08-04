@@ -5,6 +5,7 @@ import com.ysmef.compat.model.YSMMeshLibrary;
 import com.ysmef.compat.renderer.YSMModelAccess;
 import net.minecraft.client.Minecraft;
 import net.minecraftforge.api.distmarker.Dist;
+import net.minecraftforge.client.event.ClientPlayerNetworkEvent;
 import net.minecraftforge.event.CommandEvent;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
@@ -36,6 +37,17 @@ public class YSMReloadTrigger {
     private static final int REGENERATE_DELAY_TICKS = 40;
 
     private static volatile int pendingRegenerateTicks = -1;
+
+    /**
+     * Drop the per-player model selection cache when leaving a world / disconnecting,
+     * so the next world always re-reads the fresh selection from its own server player
+     * (a stale entry from the previous world would otherwise pin the old model - the
+     * game-time TTL alone cannot detect a new world with a lower game time).
+     */
+    @SubscribeEvent
+    public static void onDisconnect(ClientPlayerNetworkEvent.LoggingOut event) {
+        YSMModelAccess.clearCache();
+    }
 
     @SubscribeEvent
     public static void onCommand(CommandEvent event) {
