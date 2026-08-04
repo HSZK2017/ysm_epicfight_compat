@@ -1,5 +1,6 @@
 package com.ysmef.compat.model.runtime;
 
+import com.ysmef.compat.YSMEpicFightCompat;
 import com.ysmef.compat.model.EFMeshJsonWriter;
 import com.ysmef.compat.model.YSMMesh;
 import com.ysmef.compat.ysm.script.Molang;
@@ -78,6 +79,9 @@ public final class YSMPlayerAnimator implements Molang.Env {
 
     private final List<YSMRuntimeModel.CompiledAnim> activeAnims = new ArrayList<>();
 
+    private long lastDiagLogNanos = 0;
+    private long diagFrameCounter = 0;
+
     public YSMPlayerAnimator(YSMRuntimeModel model) {
         this.model = model;
         int n = model.bones.length;
@@ -133,6 +137,41 @@ public final class YSMPlayerAnimator implements Molang.Env {
         }
 
         composeAndApply(mesh, entity, poses);
+        logDiagPeriodic(mesh);
+    }
+
+    /**
+     * Periodic diagnostic dump (every 2 s per animator) of the script-evaluated
+     * state: the locomotion state, the bone parts currently hidden and how many
+     * bones carry a runtime transform. Used to compare identical-looking
+     * sessions across game directories.
+     */
+    private void logDiagPeriodic(YSMMesh mesh) {
+        long nowNs = System.nanoTime();
+        if (nowNs - lastDiagLogNanos < 2_000_000_000L) {
+            return;
+        }
+        lastDiagLogNanos = nowNs;
+        diagFrameCounter++;
+        StringBuilder hidden = new StringBuilder();
+        for (Map.Entry<String, MeshPart> entry : mesh.getPartEntrySetSafe()) {
+            String partName = entry.getKey();
+            if (partName.startsWith(EFMeshJsonWriter.BONE_PART_PREFIX) && entry.getValue().isHidden()) {
+                if (hidden.length() > 0) {
+                    hidden.append(',');
+                }
+                hidden.append(partName.substring(EFMeshJsonWriter.BONE_PART_PREFIX.length()));
+            }
+        }
+        int transformed = 0;
+        for (int i = 0; i < model.bones.length; i++) {
+            if (!isIdentity(chainDelta[i])) {
+                transformed++;
+            }
+        }
+        YSMEpicFightCompat.LOGGER.info(
+                "YSM-EF Compat: [diag] script model='{}' state='{}' hiddenBones=[{}] transformedBones={}",
+                model.modelId, currentState, hidden, transformed);
     }
 
     // ------------------------------------------------------------------

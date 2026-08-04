@@ -56,6 +56,17 @@ public class YSMCompatClientEvents {
     /**
      * Register the generated mesh folder as an always-on client resource pack, so
      * Epic Fight's mesh loader can read the generated animmodels JSONs.
+     *
+     * This event fires before the very first resource reload, so the blocking
+     * generation gate runs here: if the config folder is missing or any YSM
+     * model is unconverted/outdated, all models are re-converted on all CPU
+     * cores before the pack repository is built, guaranteeing the reload never
+     * sees a half-generated pack (which showed up as missing faces).
+     *
+     * TLM maid meshes are generated in the same blocking gate: they are written
+     * into the same generated pack folder, and generating them after the pack
+     * was registered (as happened with the FMLClientSetup deferred work) left
+     * the first resource reload with an incomplete pack for maids.
      */
     @SubscribeEvent
     public static void addPackFinders(AddPackFindersEvent event) {
@@ -63,6 +74,20 @@ public class YSMCompatClientEvents {
             return;
         }
         YSMMeshLibrary.preparePackFolder();
+        try {
+            YSMMeshLibrary.ensureGeneratedBlocking();
+        } catch (Throwable t) {
+            YSMEpicFightCompat.LOGGER.error("YSM-EF Compat: base mesh generation failed", t);
+        }
+        try {
+            TlmModelLibrary.resetLazyGeneration();
+            net.minecraft.client.Minecraft mc = Minecraft.getInstance();
+            if (mc != null && mc.getResourceManager() != null) {
+                TlmModelLibrary.generateAll(mc.getResourceManager());
+            }
+        } catch (Throwable t) {
+            YSMEpicFightCompat.LOGGER.error("YSM-EF Compat: TLM mesh generation failed", t);
+        }
         event.addRepositorySource((consumer) -> {
             Pack pack = Pack.create(
                     "ysm_epicfight_compat_generated",
@@ -81,14 +106,18 @@ public class YSMCompatClientEvents {
     }
 
     /**
-     * Generate the Epic Fight base meshes for all locally available YSM models
-     * and all TLM model pack maid models.
+     * Safety net for the YSM/TLM mesh gates: the YSM base meshes are generated
+     * earlier, in addPackFinders, before the first resource reload ever reads
+     * the generated pack; the ensureGeneratedBlocking call here is only a
+     * no-op safety net when everything is already up to date. The TLM meshes
+     * are also regenerated here with the fully loaded resource manager (covers
+     * jar-builtin TLM manifests that may not be visible during addPackFinders).
      */
     @SubscribeEvent
     public static void onClientSetup(FMLClientSetupEvent event) {
         event.enqueueWork(() -> {
             try {
-                YSMMeshLibrary.generateAll();
+                YSMMeshLibrary.ensureGeneratedBlocking();
             } catch (Throwable t) {
                 YSMEpicFightCompat.LOGGER.error("YSM-EF Compat: base mesh generation failed", t);
             }
@@ -109,7 +138,7 @@ public class YSMCompatClientEvents {
         event.registerReloadListener((ResourceManagerReloadListener) resourceManager -> {
             YSMModelAccess.clearCache();
             try {
-                YSMMeshLibrary.generateAll();
+                YSMMeshLibrary.ensureGeneratedBlocking();
             } catch (Throwable t) {
                 YSMEpicFightCompat.LOGGER.error("YSM-EF Compat: base mesh regeneration failed", t);
             }

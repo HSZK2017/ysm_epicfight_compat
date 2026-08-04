@@ -10,7 +10,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 
@@ -226,5 +229,122 @@ public final class YsmModelPackage {
             name = name.substring(0, dotIdx);
         }
         return name;
+    }
+
+    /**
+     * Cheap fingerprint of the model's source files (FNV-1a 64 over relative
+     * paths, sizes and modification times). Fast (metadata only), but NOT
+     * stable: YSM re-writes/re-extracts model files at startup in several
+     * situations (models bundled by other mods, auth cache refreshes), which
+     * bumps mtimes without changing any content. Always confirm a mismatch
+     * with contentFingerprint before regenerating.
+     *
+     * @return the fingerprint, or -1 if the package no longer exists locally
+     */
+    public static long fingerprint(String modelId) {
+        try {
+            long hash = 0xcbf29ce484222325L;
+            boolean found = false;
+            for (String root : ROOTS) {
+                Path base = YSM_CONFIG.resolve(root).resolve(modelId);
+                if (modelId.endsWith(".ysm")) {
+                    if (Files.isRegularFile(base)) {
+                        hash = fnv1a(hash, root + '/' + modelId);
+                        hash = fnv1a(hash, Long.toString(Files.size(base)));
+                        hash = fnv1a(hash, Files.getLastModifiedTime(base).toString());
+                        found = true;
+                        break;
+                    }
+                    continue;
+                }
+                if (Files.isDirectory(base)) {
+                    List<String> entries = new ArrayList<>();
+                    try (Stream<Path> stream = Files.walk(base)) {
+                        stream.filter(Files::isRegularFile).forEach(path -> {
+                            String rel = base.relativize(path).toString().replace('\\', '/');
+                            try {
+                                entries.add(rel + ':' + Files.size(path) + ':' + Files.getLastModifiedTime(path).toMillis());
+                            } catch (IOException ignored) {
+                            }
+                        });
+                    }
+                    Collections.sort(entries);
+                    for (String entry : entries) {
+                        hash = fnv1a(hash, entry);
+                    }
+                    found = true;
+                    break;
+                }
+            }
+            return found ? hash : -1L;
+        } catch (IOException e) {
+            return -1L;
+        }
+    }
+
+    /**
+     * Content-based fingerprint of the model's source files (FNV-1a 64 over
+     * relative paths and file contents; binary .ysm packages are decrypted
+     * first, so re-encryption with a fresh key/iv still yields the same value).
+     * Stable across mtime refreshes and spurious rewrites — a mismatch means
+     * the model really changed (including a "/ysm model reload" refresh).
+     *
+     * Slower than fingerprint(): reads (and for .ysm decrypts) every file, so
+     * use it only to confirm cheap-fingerprint mismatches.
+     *
+     * @return the fingerprint, or -1 if the package no longer exists locally
+     */
+    public static long contentFingerprint(String modelId) {
+        try {
+            for (String root : ROOTS) {
+                Path base = YSM_CONFIG.resolve(root).resolve(modelId);
+                if (modelId.endsWith(".ysm")) {
+                    if (Files.isRegularFile(base)) {
+                        byte[] decrypted = YsmFileCrypto.decryptYsmFile(Files.readAllBytes(base));
+                        long hash = 0xcbf29ce484222325L;
+                        hash = fnv1a(hash, root + '/' + modelId);
+                        hash = fnv1a(hash, Long.toString(decrypted.length));
+                        return fnv1aBytes(hash, decrypted);
+                    }
+                    continue;
+                }
+                if (Files.isDirectory(base)) {
+                    List<Path> files = new ArrayList<>();
+                    try (Stream<Path> stream = Files.walk(base)) {
+                        stream.filter(Files::isRegularFile).forEach(files::add);
+                    }
+                    files.sort(java.util.Comparator.comparing(
+                            path -> base.relativize(path).toString().replace('\\', '/')));
+                    long hash = 0xcbf29ce484222325L;
+                    for (Path file : files) {
+                        String rel = base.relativize(file).toString().replace('\\', '/');
+                        byte[] data = Files.readAllBytes(file);
+                        hash = fnv1a(hash, rel);
+                        hash = fnv1a(hash, Long.toString(data.length));
+                        hash = fnv1aBytes(hash, data);
+                    }
+                    return hash;
+                }
+            }
+            return -1L;
+        } catch (Exception e) {
+            return -1L;
+        }
+    }
+
+    private static long fnv1aBytes(long hash, byte[] data) {
+        for (byte b : data) {
+            hash ^= (b & 0xFF);
+            hash *= 0x100000001b3L;
+        }
+        return hash;
+    }
+
+    private static long fnv1a(long hash, String value) {
+        for (int i = 0; i < value.length(); i++) {
+            hash ^= value.charAt(i);
+            hash *= 0x100000001b3L;
+        }
+        return hash;
     }
 }

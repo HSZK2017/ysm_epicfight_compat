@@ -78,13 +78,16 @@ public final class YSMRuntimeModel {
         return animators.computeIfAbsent(entity.getUUID(), id -> new YSMPlayerAnimator(this));
     }
 
-    public static void clearAnimators() {
-        synchronized (CACHE) {
-            for (YSMRuntimeModel model : CACHE.values()) {
-                model.animators.clear();
-            }
-        }
-    }
+    // [decommissioned] dead method: never called; per-player animators are kept
+    // per UUID on purpose but are only cleared when the runtime model is dropped.
+    //
+    // public static void clearAnimators() {
+    //     synchronized (CACHE) {
+    //         for (YSMRuntimeModel model : CACHE.values()) {
+    //             model.animators.clear();
+    //         }
+    //     }
+    // }
 
     // ------------------------------------------------------------------
     // Default visibility (battle mode)

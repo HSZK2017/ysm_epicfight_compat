@@ -1,5 +1,8 @@
 package com.ysmef.compat.model;
 
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.mojang.blaze3d.platform.NativeImage;
 import com.ysmef.compat.YSMEpicFightCompat;
 import com.ysmef.compat.ysm.YsmModelPackage;
@@ -14,9 +17,18 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 /**
  * Central registry of generated Epic Fight base meshes for YSM models.
@@ -28,18 +40,41 @@ import java.util.concurrent.ConcurrentHashMap;
  * Epic Fight's Meshes registry through a MeshAccessor, the same mechanism the
  * EpicFight_TouhouLittleMaid compat mod uses for its wine_fox model.
  *
+ * Generation gating (manifest.json + per-model source fingerprints + output
+ * integrity hashes):
+ * - if the config folder, the manifest or any mesh file is missing, if the
+ *   generator version changed, or if any YSM model was added/removed/modified
+ *   (e.g. via "/ysm model reload"), ALL models are re-converted in parallel on
+ *   every available CPU core, and the caller blocks until conversion finishes,
+ *   so the game cannot reach the main menu with half-generated meshes
+ * - every converted output (mesh JSON, runtime JSON, cached texture bytes) is
+ *   hashed into the manifest at generation time; before restoring the cache
+ *   the hashes are re-verified on disk, so a broken/stale cache (e.g. files
+ *   copied mid-write or partially overwritten) forces a full regeneration
+ *   instead of being trusted forever (the cause of permanently missing faces)
+ * - otherwise the previous results (mesh accessors + cached texture bytes) are
+ *   loaded back without decrypting any model package
+ *
  * Textures of the model packages are registered in the texture manager under
  * our own resource locations so Epic Fight can render the mesh with the YSM
  * model's texture regardless of the (obfuscated) YSM texture registry.
  */
 public class YSMMeshLibrary {
 
-    private static final Path PACK_ROOT = Paths.get("config", "ysm_epicfight_compat", "resourcepack");
-    private static final Path MESH_DIR = PACK_ROOT.resolve("assets")
-            .resolve(YSMEpicFightCompat.MODID).resolve("animmodels").resolve("entity");
-    private static final Path RUNTIME_DIR = PACK_ROOT.resolve("assets")
-            .resolve(YSMEpicFightCompat.MODID).resolve("ysm_runtime").resolve("entity");
+    private static final Path CONFIG_ROOT = Paths.get("config", "ysm_epicfight_compat");
+    private static final Path PACK_ROOT = CONFIG_ROOT.resolve("resourcepack");
+    private static final Path MESH_DIR = PACK_ROOT.resolve("assets").resolve(YSMEpicFightCompat.MODID).resolve("animmodels").resolve("entity");
+    private static final Path RUNTIME_DIR = PACK_ROOT.resolve("assets").resolve(YSMEpicFightCompat.MODID).resolve("ysm_runtime").resolve("entity");
     private static final Path PACK_META = PACK_ROOT.resolve("pack.mcmeta");
+    private static final Path MANIFEST = CONFIG_ROOT.resolve("manifest.json");
+    private static final Path TEXTURE_CACHE_DIR = CONFIG_ROOT.resolve("texturecache");
+
+    /**
+     * Bumped whenever the conversion algorithm or the manifest format changes
+     * in a way that invalidates previously generated meshes (forces a one-time
+     * full regeneration).
+     */
+    private static final int GENERATOR_VERSION = 4;
 
     private static final String MESH_NAMESPACE = YSMEpicFightCompat.MODID;
 
@@ -59,6 +94,15 @@ public class YSMMeshLibrary {
     private static final Map<String, Boolean> UPLOADED_TEXTURES = new ConcurrentHashMap<>();
 
     private static volatile boolean generated = false;
+
+    /** Per-model conversion result produced by worker threads. */
+    private record TextureEntry(String textureName, ResourceLocation location, byte[] data, int[] info,
+                                String hash, long size) {}
+
+    private record ModelResult(String modelId, String meshId, int quads, long fingerprint,
+                               long contentFingerprint, String defaultTextureRL,
+                               String meshHash, long meshSize, String runtimeHash, long runtimeSize,
+                               List<TextureEntry> textures) {}
 
     /**
      * The resource pack root that should be registered as a client resource pack.
@@ -111,6 +155,8 @@ public class YSMMeshLibrary {
     public static void preparePackFolder() {
         try {
             Files.createDirectories(MESH_DIR);
+            Files.createDirectories(RUNTIME_DIR);
+            Files.createDirectories(TEXTURE_CACHE_DIR);
             if (!Files.exists(PACK_META)) {
                 Files.writeString(PACK_META, """
                         {
@@ -127,75 +173,349 @@ public class YSMMeshLibrary {
     }
 
     /**
-     * Scan all locally available YSM models, convert them to Epic Fight mesh
-     * JSONs on disk, and register them in Epic Fight's mesh registry.
+     * Whether the generated meshes are missing or out of date and a full
+     * regeneration is required. Checks, in cheap-to-expensive order:
+     * the config folder, the manifest, the generator version, the set of
+     * locally available YSM models, per-model source fingerprints (picks up
+     * "/ysm model reload" changes) and the presence of each mesh JSON.
+     *
+     * Fingerprints are two-tiered: a cheap metadata sig (paths/sizes/mtimes)
+     * guards the common case, and any mismatch is confirmed against the
+     * content sig (file contents / decrypted .ysm payload) before regenerating.
+     * If only the metadata changed — YSM re-writes or re-encrypts model files
+     * at startup in several situations (models bundled by other mods, auth
+     * cache refreshes) — the manifest's cheap sigs are refreshed in place and
+     * no regeneration happens.
+     *
+     * The manifest must also carry the output integrity hashes (mhash/rhash
+     * per model, hash per texture, see verifyOutputs); their absence means the
+     * cache predates hash tracking and a full regeneration is forced. The
+     * byte-level verification itself runs on the cache-restore path
+     * (loadFromCache), keeping this gate free of file hashing.
      */
-    public static synchronized void generateAll() {
+    public static boolean needsGeneration() {
+        try {
+            if (!Files.isDirectory(MESH_DIR) || !Files.isRegularFile(MANIFEST)) {
+                return true;
+            }
+            JsonObject manifest = JsonParser.parseString(Files.readString(MANIFEST, StandardCharsets.UTF_8)).getAsJsonObject();
+            if (!manifest.has("generator") || manifest.get("generator").getAsInt() != GENERATOR_VERSION
+                    || !manifest.has("models") || !manifest.get("models").isJsonObject()) {
+                return true;
+            }
+            JsonObject manifestModels = manifest.getAsJsonObject("models");
+            Map<String, Boolean> scanned = YsmModelPackage.scanAvailableModels();
+            Set<String> manifestIds = new HashSet<>();
+            for (Map.Entry<String, JsonElement> entry : manifestModels.entrySet()) {
+                manifestIds.add(entry.getKey());
+            }
+            if (!manifestIds.equals(scanned.keySet())) {
+                return true;
+            }
+            boolean manifestTouched = false;
+            for (Map.Entry<String, JsonElement> entry : manifestModels.entrySet()) {
+                String modelId = entry.getKey();
+                JsonObject modelEntry = entry.getValue().getAsJsonObject();
+                if (!modelEntry.has("sig") || !modelEntry.has("csig") || !modelEntry.has("mesh")
+                        || !modelEntry.has("mhash") || !modelEntry.has("msize")
+                        || !modelEntry.has("rhash") || !modelEntry.has("rsize")) {
+                    return true;
+                }
+                if (!Files.isRegularFile(MESH_DIR.resolve(modelEntry.get("mesh").getAsString() + ".json"))) {
+                    return true;
+                }
+                if (modelEntry.has("textures") && modelEntry.get("textures").isJsonObject()) {
+                    for (Map.Entry<String, JsonElement> texEntry : modelEntry.getAsJsonObject("textures").entrySet()) {
+                        JsonObject tex = texEntry.getValue().getAsJsonObject();
+                        if (!tex.has("rl") || !tex.has("hash") || !tex.has("size")) {
+                            return true;
+                        }
+                    }
+                }
+                if (modelEntry.get("sig").getAsLong() != YsmModelPackage.fingerprint(modelId)) {
+                    long contentFingerprint = YsmModelPackage.contentFingerprint(modelId);
+                    if (contentFingerprint == -1L
+                            || contentFingerprint != modelEntry.get("csig").getAsLong()) {
+                        return true;
+                    }
+                    long refreshed = YsmModelPackage.fingerprint(modelId);
+                    if (refreshed != -1L) {
+                        modelEntry.addProperty("sig", refreshed);
+                        manifestTouched = true;
+                    }
+                }
+            }
+            if (manifestTouched) {
+                writeManifest(manifestModels);
+                YSMEpicFightCompat.LOGGER.info(
+                        "YSM-EF Compat: YSM model files were rewritten without content changes (mtime/encryption refresh), updated manifest signatures; no regeneration needed");
+            }
+            return false;
+        } catch (Exception e) {
+            return true;
+        }
+    }
+
+    /**
+     * Startup gate: if anything is missing or outdated, re-convert ALL models in
+     * parallel and block until every conversion has finished; otherwise restore
+     * the previous results from the manifest + texture cache. Safe to call on
+     * every resource reload — it is a no-op while everything is up to date.
+     */
+    public static synchronized void ensureGeneratedBlocking() {
+        if (needsGeneration()) {
+            YSMEpicFightCompat.LOGGER.info("YSM-EF Compat: generated meshes missing or outdated, converting all YSM models (blocking until done)");
+            generateAll();
+        } else if (!generated) {
+            loadFromCache();
+        }
+    }
+
+    /**
+     * Restore previously generated results without touching the (encrypted)
+     * model packages: mesh accessors come from the manifest, texture bytes are
+     * read back from the texture cache written during the last generation.
+     *
+     * Before trusting the cache, every recorded output is re-verified on disk
+     * (see verifyOutputs); a cache that fails the check — e.g. files copied
+     * mid-write, partially overwritten or truncated, which produce permanently
+     * missing faces — is discarded and a full regeneration is forced.
+     */
+    private static void loadFromCache() {
+        long start = System.nanoTime();
         preparePackFolder();
 
         MESHES.clear();
         TEXTURE_DATA.clear();
+        TEXTURE_INFO.clear();
         TEXTURE_LOCATIONS.clear();
+        UPLOADED_TEXTURES.clear();
 
-        Map<String, Boolean> models = YsmModelPackage.scanAvailableModels();
-        int converted = 0;
-        for (Map.Entry<String, Boolean> entry : models.entrySet()) {
-            String modelId = entry.getKey();
-            try {
-                YsmModelPackage pkg = YsmModelPackage.load(modelId);
-                if (pkg == null || pkg.geometry == null) {
-                    YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: skipping model '{}' (failed to load geometry)", modelId);
-                    continue;
-                }
-
-                String textureRL = registerTextures(modelId, pkg);
-
-                String meshId = sanitize(modelId);
-                Path outFile = MESH_DIR.resolve(meshId + ".json");
-                Path runtimeFile = RUNTIME_DIR.resolve(meshId + ".json");
-                int quads = EFMeshJsonWriter.write(pkg, outFile, runtimeFile, textureRL);
-                if (quads < 0) {
-                    YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: skipping model '{}' (no geometry after conversion)", modelId);
-                    continue;
-                }
+        try {
+            JsonObject manifest = JsonParser.parseString(Files.readString(MANIFEST, StandardCharsets.UTF_8)).getAsJsonObject();
+            JsonObject manifestModels = manifest.getAsJsonObject("models");
+            if (!verifyOutputs(manifestModels)) {
+                YSMEpicFightCompat.LOGGER.warn(
+                        "YSM-EF Compat: cached outputs failed integrity verification (missing or corrupted mesh/runtime/texture files), forcing full regeneration");
+                generateAll();
+                return;
+            }
+            int textures = 0;
+            for (Map.Entry<String, JsonElement> entry : manifestModels.entrySet()) {
+                String modelId = entry.getKey();
+                JsonObject modelEntry = entry.getValue().getAsJsonObject();
+                String meshId = modelEntry.get("mesh").getAsString();
 
                 Meshes.MeshAccessor<YSMMesh> accessor = Meshes.MeshAccessor.create(
                         MESH_NAMESPACE, "entity/" + meshId,
                         (loader) -> loader.loadSkinnedMesh(YSMMesh::new));
                 MESHES.put(modelId, accessor);
-                converted++;
-                if (YSMEpicFightCompat.LOGGER.isDebugEnabled()) {
-                    YSMEpicFightCompat.LOGGER.debug("YSM-EF Compat: converted model '{}' -> {} quads", modelId, quads);
+
+                if (!modelEntry.has("textures") || !modelEntry.get("textures").isJsonObject()) {
+                    continue;
                 }
-            } catch (Exception e) {
-                YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to convert model {}", modelId, e);
+                for (Map.Entry<String, JsonElement> texEntry : modelEntry.getAsJsonObject("textures").entrySet()) {
+                    JsonObject tex = texEntry.getValue().getAsJsonObject();
+                    ResourceLocation rl = ResourceLocation.parse(tex.get("rl").getAsString());
+                    TEXTURE_LOCATIONS.put(modelId + "#" + texEntry.getKey(), rl);
+                    int format = tex.has("fmt") ? tex.get("fmt").getAsInt() : 0;
+                    if (format != 0) {
+                        TEXTURE_INFO.put(rl.toString(), new int[]{
+                                tex.has("w") ? tex.get("w").getAsInt() : 0,
+                                tex.has("h") ? tex.get("h").getAsInt() : 0,
+                                format});
+                    }
+                    Path cacheFile = textureCachePath(rl);
+                    if (Files.isRegularFile(cacheFile)) {
+                        TEXTURE_DATA.put(rl.toString(), Files.readAllBytes(cacheFile));
+                        textures++;
+                    }
+                }
             }
+            generated = true;
+            YSMEpicFightCompat.LOGGER.info(
+                    "YSM-EF Compat: all {} YSM models already converted, restored meshes and {} textures from cache in {} ms (no recompute needed)",
+                    MESHES.size(), textures, (System.nanoTime() - start) / 1_000_000L);
+        } catch (Exception e) {
+            YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to load generated meshes from cache, forcing regeneration", e);
+            generated = false;
+            generateAll();
         }
-        generated = true;
-        YSMEpicFightCompat.LOGGER.info("YSM-EF Compat: generated {} base meshes from {} YSM model packages", converted, models.size());
     }
 
     /**
-     * Register all textures of the package as texture-manager-ready data and
-     * return the resource location of the model's default texture.
+     * Scan all locally available YSM models, convert them to Epic Fight mesh
+     * JSONs on disk, and register them in Epic Fight's mesh registry.
+     *
+     * Conversion runs on a worker pool sized to the available CPU cores
+     * (package decryption + mesh writing are pure CPU work); the calling thread
+     * blocks until every model has been processed and the manifest is written.
      */
-    private static String registerTextures(String modelId, YsmModelPackage pkg) {
-        String defaultName = pkg.defaultTexture;
-        for (Map.Entry<String, byte[]> entry : pkg.textures.entrySet()) {
-            ResourceLocation rl = textureLocation(modelId, entry.getKey());
-            TEXTURE_LOCATIONS.put(modelId + "#" + entry.getKey(), rl);
-            TEXTURE_DATA.put(rl.toString(), entry.getValue());
-            int[] info = pkg.textureInfo.get(entry.getKey());
-            if (info != null) {
-                TEXTURE_INFO.put(rl.toString(), info);
+    public static synchronized void generateAll() {
+        preparePackFolder();
+        long start = System.nanoTime();
+
+        Map<String, Boolean> models = YsmModelPackage.scanAvailableModels();
+        int threadCount = Math.max(2, Runtime.getRuntime().availableProcessors());
+        ExecutorService pool = Executors.newFixedThreadPool(threadCount, runnable -> {
+            Thread thread = new Thread(runnable, "ysm-ef-meshgen");
+            thread.setDaemon(true);
+            return thread;
+        });
+
+        Map<String, Meshes.MeshAccessor<YSMMesh>> newMeshes = new LinkedHashMap<>();
+        Map<String, byte[]> newTexData = new LinkedHashMap<>();
+        Map<String, int[]> newTexInfo = new LinkedHashMap<>();
+        Map<String, ResourceLocation> newTexLocations = new LinkedHashMap<>();
+        JsonObject manifestModels = new JsonObject();
+        int converted = 0;
+
+        try {
+            List<Future<ModelResult>> futures = new ArrayList<>();
+            for (String modelId : models.keySet()) {
+                futures.add(pool.submit(() -> convertModel(modelId)));
+            }
+
+            for (Future<ModelResult> future : futures) {
+                ModelResult result;
+                try {
+                    result = future.get();
+                } catch (Exception e) {
+                    YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to convert model ({})", e.toString());
+                    continue;
+                }
+                if (result == null) {
+                    continue;
+                }
+                converted++;
+
+                for (TextureEntry tex : result.textures()) {
+                    newTexLocations.put(result.modelId() + "#" + tex.textureName(), tex.location());
+                    newTexData.put(tex.location().toString(), tex.data());
+                    if (tex.info() != null) {
+                        newTexInfo.put(tex.location().toString(), tex.info());
+                    }
+                }
+
+                Meshes.MeshAccessor<YSMMesh> accessor = Meshes.MeshAccessor.create(
+                        MESH_NAMESPACE, "entity/" + result.meshId(),
+                        (loader) -> loader.loadSkinnedMesh(YSMMesh::new));
+                newMeshes.put(result.modelId(), accessor);
+
+                JsonObject modelEntry = new JsonObject();
+                modelEntry.addProperty("sig", result.fingerprint());
+                modelEntry.addProperty("csig", result.contentFingerprint());
+                modelEntry.addProperty("mesh", result.meshId());
+                modelEntry.addProperty("mhash", result.meshHash());
+                modelEntry.addProperty("msize", result.meshSize());
+                modelEntry.addProperty("rhash", result.runtimeHash());
+                modelEntry.addProperty("rsize", result.runtimeSize());
+                JsonObject texturesObj = new JsonObject();
+                for (TextureEntry tex : result.textures()) {
+                    JsonObject texObj = new JsonObject();
+                    texObj.addProperty("rl", tex.location().toString());
+                    if (tex.info() != null) {
+                        texObj.addProperty("w", tex.info()[0]);
+                        texObj.addProperty("h", tex.info()[1]);
+                        texObj.addProperty("fmt", tex.info()[2]);
+                    }
+                    texObj.addProperty("hash", tex.hash());
+                    texObj.addProperty("size", tex.size());
+                    texturesObj.add(tex.textureName(), texObj);
+                }
+                modelEntry.add("textures", texturesObj);
+                manifestModels.add(result.modelId(), modelEntry);
+
+                if (YSMEpicFightCompat.LOGGER.isDebugEnabled()) {
+                    YSMEpicFightCompat.LOGGER.debug("YSM-EF Compat: converted model '{}' -> {} quads", result.modelId(), result.quads());
+                }
+            }
+        } finally {
+            pool.shutdown();
+        }
+
+        MESHES.clear();
+        MESHES.putAll(newMeshes);
+        TEXTURE_DATA.clear();
+        TEXTURE_DATA.putAll(newTexData);
+        TEXTURE_INFO.clear();
+        TEXTURE_INFO.putAll(newTexInfo);
+        TEXTURE_LOCATIONS.clear();
+        TEXTURE_LOCATIONS.putAll(newTexLocations);
+        UPLOADED_TEXTURES.clear();
+
+        cleanupStaleFiles(manifestModels);
+        writeManifest(manifestModels);
+
+        generated = true;
+        YSMEpicFightCompat.LOGGER.info(
+                "YSM-EF Compat: generated {} base meshes from {} YSM model packages on {} threads in {} ms",
+                converted, models.size(), threadCount, (System.nanoTime() - start) / 1_000_000L);
+    }
+
+    /**
+     * Worker: convert one model package (decrypt, write mesh + runtime JSON,
+     * cache texture bytes). Pure CPU/disk work on model-local data; shared
+     * registries are only touched by the caller thread when merging results.
+     */
+    private static ModelResult convertModel(String modelId) {
+        try {
+            YsmModelPackage pkg = YsmModelPackage.load(modelId);
+            if (pkg == null || pkg.geometry == null) {
+                YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: skipping model '{}' (failed to load geometry)", modelId);
+                return null;
+            }
+
+            List<TextureEntry> textures = new ArrayList<>();
+            for (Map.Entry<String, byte[]> entry : pkg.textures.entrySet()) {
+                ResourceLocation rl = textureLocation(modelId, entry.getKey());
+                int[] info = pkg.textureInfo.get(entry.getKey());
+                byte[] data = entry.getValue();
+                writeTextureCache(rl, data);
+                textures.add(new TextureEntry(entry.getKey(), rl, data, info, sha256Hex(data), data.length));
+            }
+            String defaultTextureRL = defaultTextureOf(modelId, pkg);
+
+            String meshId = sanitize(modelId);
+            Path outFile = MESH_DIR.resolve(meshId + ".json");
+            Path runtimeFile = RUNTIME_DIR.resolve(meshId + ".json");
+            int quads = EFMeshJsonWriter.write(pkg, outFile, runtimeFile, defaultTextureRL);
+            if (quads < 0) {
+                YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: skipping model '{}' (no geometry after conversion)", modelId);
+                return null;
+            }
+
+            String meshHash = sha256Hex(outFile);
+            long meshSize = Files.size(outFile);
+            String runtimeHash = sha256Hex(runtimeFile);
+            long runtimeSize = Files.size(runtimeFile);
+
+            return new ModelResult(modelId, meshId, quads, YsmModelPackage.fingerprint(modelId),
+                    YsmModelPackage.contentFingerprint(modelId), defaultTextureRL,
+                    meshHash, meshSize, runtimeHash, runtimeSize, textures);
+        } catch (Exception e) {
+            YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to convert model {}", modelId, e);
+            return null;
+        }
+    }
+
+    /**
+     * Resolve the resource location of the model's default texture (mirrors the
+     * fallback order used at render time).
+     */
+    private static String defaultTextureOf(String modelId, YsmModelPackage pkg) {
+        ResourceLocation defaultRL = null;
+        if (!pkg.defaultTexture.isEmpty()) {
+            defaultRL = ResourceLocation.fromNamespaceAndPath(MESH_NAMESPACE,
+                    "textures/" + sanitize(modelId) + "/" + sanitize(pkg.defaultTexture) + ".png");
+            if (!pkg.textures.containsKey(pkg.defaultTexture)) {
+                defaultRL = null;
             }
         }
-        ResourceLocation defaultRL = null;
-        if (!defaultName.isEmpty()) {
-            defaultRL = TEXTURE_LOCATIONS.get(modelId + "#" + defaultName);
-        }
         if (defaultRL == null && !pkg.textures.isEmpty()) {
-            defaultRL = TEXTURE_LOCATIONS.get(modelId + "#" + pkg.textures.keySet().iterator().next());
+            String first = pkg.textures.keySet().iterator().next();
+            defaultRL = ResourceLocation.fromNamespaceAndPath(MESH_NAMESPACE,
+                    "textures/" + sanitize(modelId) + "/" + sanitize(first) + ".png");
         }
         return defaultRL != null ? defaultRL.toString()
                 : ResourceLocation.withDefaultNamespace("textures/entity/steve.png").toString();
@@ -204,6 +524,156 @@ public class YSMMeshLibrary {
     private static ResourceLocation textureLocation(String modelId, String textureName) {
         return ResourceLocation.fromNamespaceAndPath(MESH_NAMESPACE,
                 "textures/" + sanitize(modelId) + "/" + sanitize(textureName) + ".png");
+    }
+
+    private static Path textureCachePath(ResourceLocation rl) {
+        return TEXTURE_CACHE_DIR.resolve(rl.getNamespace()).resolve(rl.getPath());
+    }
+
+    private static void writeTextureCache(ResourceLocation rl, byte[] data) {
+        try {
+            Path cacheFile = textureCachePath(rl);
+            EFMeshJsonWriter.writeFileAtomic(cacheFile, data);
+        } catch (IOException e) {
+            YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to cache texture bytes for {}", rl);
+        }
+    }
+
+    private static void writeManifest(JsonObject manifestModels) {
+        try {
+            JsonObject manifest = new JsonObject();
+            manifest.addProperty("generator", GENERATOR_VERSION);
+            manifest.add("models", manifestModels);
+            EFMeshJsonWriter.writeFileAtomic(MANIFEST, new com.google.gson.GsonBuilder().create().toJson(manifest).getBytes(StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to write generation manifest", e);
+        }
+    }
+
+    /**
+     * Verify that every generated output recorded in the manifest (mesh JSON,
+     * runtime JSON and cached texture bytes) still exists on disk and is
+     * byte-identical to what generation produced. Size is checked first (a
+     * truncated or partial file almost always changes size), then the content
+     * hash. Returns false when anything is missing or corrupted, forcing a
+     * full regeneration instead of restoring a stale/broken cache.
+     */
+    private static boolean verifyOutputs(JsonObject manifestModels) {
+        try {
+            for (Map.Entry<String, JsonElement> entry : manifestModels.entrySet()) {
+                JsonObject modelEntry = entry.getValue().getAsJsonObject();
+                if (!modelEntry.has("mesh") || !modelEntry.has("mhash") || !modelEntry.has("msize")
+                        || !modelEntry.has("rhash") || !modelEntry.has("rsize")) {
+                    return false;
+                }
+                String meshName = modelEntry.get("mesh").getAsString();
+                if (!hashMatches(MESH_DIR.resolve(meshName + ".json"),
+                        modelEntry.get("msize").getAsLong(), modelEntry.get("mhash").getAsString())) {
+                    return false;
+                }
+                if (!hashMatches(RUNTIME_DIR.resolve(meshName + ".json"),
+                        modelEntry.get("rsize").getAsLong(), modelEntry.get("rhash").getAsString())) {
+                    return false;
+                }
+                if (modelEntry.has("textures") && modelEntry.get("textures").isJsonObject()) {
+                    for (Map.Entry<String, JsonElement> texEntry : modelEntry.getAsJsonObject("textures").entrySet()) {
+                        JsonObject tex = texEntry.getValue().getAsJsonObject();
+                        if (!tex.has("rl") || !tex.has("hash") || !tex.has("size")) {
+                            return false;
+                        }
+                        Path cacheFile = textureCachePath(ResourceLocation.parse(tex.get("rl").getAsString()));
+                        if (!hashMatches(cacheFile, tex.get("size").getAsLong(), tex.get("hash").getAsString())) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static boolean hashMatches(Path file, long expectedSize, String expectedHash) {
+        try {
+            if (!Files.isRegularFile(file) || Files.size(file) != expectedSize) {
+                return false;
+            }
+            return sha256Hex(file).equals(expectedHash);
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    private static String sha256Hex(Path file) throws IOException {
+        return sha256Hex(Files.readAllBytes(file));
+    }
+
+    private static String sha256Hex(byte[] data) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(data);
+            StringBuilder sb = new StringBuilder(hash.length * 2);
+            for (byte b : hash) {
+                sb.append(Character.forDigit((b >> 4) & 0xF, 16));
+                sb.append(Character.forDigit(b & 0xF, 16));
+            }
+            return sb.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 unavailable", e);
+        }
+    }
+
+    /**
+     * Remove outputs of models that no longer exist locally so stale meshes,
+     * runtime scripts and cached textures are never picked up again.
+     */
+    private static void cleanupStaleFiles(JsonObject manifestModels) {
+        Set<String> keepMeshIds = new HashSet<>();
+        Set<String> keepTexturePaths = new HashSet<>();
+        for (Map.Entry<String, JsonElement> entry : manifestModels.entrySet()) {
+            JsonObject modelEntry = entry.getValue().getAsJsonObject();
+            keepMeshIds.add(modelEntry.get("mesh").getAsString() + ".json");
+            if (modelEntry.has("textures") && modelEntry.get("textures").isJsonObject()) {
+                for (Map.Entry<String, JsonElement> texEntry : modelEntry.getAsJsonObject("textures").entrySet()) {
+                    String rl = texEntry.getValue().getAsJsonObject().get("rl").getAsString();
+                    keepTexturePaths.add(rl.substring(rl.indexOf(':') + 1));
+                }
+            }
+        }
+        deleteStaleJsons(MESH_DIR, keepMeshIds);
+        deleteStaleJsons(RUNTIME_DIR, keepMeshIds);
+        Path cacheRoot = TEXTURE_CACHE_DIR.resolve(MESH_NAMESPACE);
+        try (var stream = Files.walk(TEXTURE_CACHE_DIR)) {
+            stream.filter(Files::isRegularFile).forEach(path -> {
+                boolean keep = path.startsWith(cacheRoot)
+                        && keepTexturePaths.contains(cacheRoot.relativize(path).toString().replace('\\', '/'));
+                if (!keep) {
+                    try {
+                        Files.deleteIfExists(path);
+                    } catch (IOException ignored) {
+                    }
+                }
+            });
+        } catch (IOException ignored) {
+        }
+    }
+
+    private static void deleteStaleJsons(Path dir, Set<String> keepNames) {
+        try (var stream = Files.walk(dir)) {
+            stream.filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().endsWith(".json"))
+                    .filter(path -> dir.relativize(path).getNameCount() == 0
+                            || !dir.relativize(path).getName(0).toString().equals("tlm"))
+                    .filter(path -> !keepNames.contains(dir.relativize(path).toString().replace('\\', '/')))
+                    .forEach(path -> {
+                        try {
+                            Files.deleteIfExists(path);
+                        } catch (IOException ignored) {
+                        }
+                    });
+        } catch (IOException ignored) {
+        }
     }
 
     private static String sanitize(String value) {

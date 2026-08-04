@@ -136,17 +136,19 @@ public final class YSMJointMapper {
         return STANDARD_MAPPING.containsKey(normalize(bone.name));
     }
 
-    /**
-     * The EF joint id -> EF joint name, for sanity checks.
-     */
-    public static String jointNameOf(int jointId) {
-        for (Map.Entry<String, Integer> entry : JOINT_IDS.entrySet()) {
-            if (entry.getValue() == jointId) {
-                return entry.getKey();
-            }
-        }
-        return "Root";
-    }
+    // [decommissioned] dead method: never referenced anywhere in the codebase.
+    //
+    // /**
+    //  * The EF joint id -> EF joint name, for sanity checks.
+    //  */
+    // public static String jointNameOf(int jointId) {
+    //     for (Map.Entry<String, Integer> entry : JOINT_IDS.entrySet()) {
+    //         if (entry.getValue() == jointId) {
+    //             return entry.getKey();
+    //         }
+    //     }
+    //     return "Root";
+    // }
 
     /**
      * Normalizes a bone name for mapping lookup: lower case, underscores/spaces

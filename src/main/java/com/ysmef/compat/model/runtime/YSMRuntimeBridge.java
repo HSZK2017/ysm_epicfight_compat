@@ -1,5 +1,6 @@
 package com.ysmef.compat.model.runtime;
 
+import com.ysmef.compat.YSMEpicFightCompat;
 import com.ysmef.compat.model.EFMeshJsonWriter;
 import com.ysmef.compat.model.YSMMesh;
 import com.ysmef.compat.renderer.YSMBattleMode;
@@ -55,6 +56,7 @@ public final class YSMRuntimeBridge {
         if (YSMBattleMode.isBattleMode(entity)) {
             if (model != null) {
                 model.applyDefaultVisibility(mesh);
+                logBattleDiagOnce(mesh, modelId);
             } else {
                 unhideAllBoneParts(mesh);
             }
@@ -77,5 +79,27 @@ public final class YSMRuntimeBridge {
                 entry.getValue().setHidden(false);
             }
         }
+    }
+
+    private static final java.util.Set<String> DIAG_BATTLE_LOGGED = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** One-time per model: how many bone parts the static default visibility hides. */
+    private static void logBattleDiagOnce(YSMMesh mesh, String modelId) {
+        if (!DIAG_BATTLE_LOGGED.add(modelId)) {
+            return;
+        }
+        int hidden = 0;
+        int total = 0;
+        for (Map.Entry<String, MeshPart> entry : mesh.getPartEntrySetSafe()) {
+            if (entry.getKey().startsWith(EFMeshJsonWriter.BONE_PART_PREFIX)) {
+                total++;
+                if (entry.getValue().isHidden()) {
+                    hidden++;
+                }
+            }
+        }
+        YSMEpicFightCompat.LOGGER.info(
+                "YSM-EF Compat: [diag] battle model='{}' hiddenBoneParts={}/{}",
+                modelId, hidden, total);
     }
 }

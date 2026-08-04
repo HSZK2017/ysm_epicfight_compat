@@ -62,8 +62,22 @@ public class YSMPlayerRenderer extends PHumanoidRenderer<AbstractClientPlayer, A
     @Override
     public AssetAccessor<HumanoidMesh> getMeshProvider(AbstractClientPlayerPatch<AbstractClientPlayer> entitypatch) {
         validateArmatureOnce(entitypatch.getArmature());
+        logBattleModeDiagOnce(entitypatch.getOriginal());
         AssetAccessor<HumanoidMesh> mesh = YSMMeshSelector.selectMesh(entitypatch.getOriginal());
         return mesh != null ? mesh : super.getMeshProvider(entitypatch);
+    }
+
+    private static final java.util.Set<String> DIAG_MODE_LOGGED = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** One-time per player: whether Epic Fight's battle mode is active while the patched renderer runs. */
+    private static void logBattleModeDiagOnce(AbstractClientPlayer player) {
+        if (player == null || !DIAG_MODE_LOGGED.add(player.getUUID().toString())) {
+            return;
+        }
+        boolean battle = YSMBattleMode.isBattleMode(player);
+        com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
+                "YSM-EF Compat: [diag] player '{}' epicFightBattleMode={}",
+                player.getGameProfile().getName(), battle);
     }
 
     /**

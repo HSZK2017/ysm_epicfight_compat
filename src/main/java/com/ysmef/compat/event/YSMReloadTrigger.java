@@ -2,6 +2,7 @@ package com.ysmef.compat.event;
 
 import com.ysmef.compat.YSMEpicFightCompat;
 import com.ysmef.compat.model.YSMMeshLibrary;
+import com.ysmef.compat.renderer.YSMModelAccess;
 import net.minecraft.client.Minecraft;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.event.CommandEvent;
@@ -15,7 +16,14 @@ import net.minecraftforge.fml.common.Mod;
  *
  * The command itself is handled by YSM (obfuscated), so we listen to Forge's
  * CommandEvent, and schedule our regeneration on the client (render) thread
- * with a short delay, letting YSM finish its own reload + client sync first.
+ * with a delay, letting YSM finish its own reload + client sync first.
+ *
+ * Regeneration uses the gated ensureGeneratedBlocking path (which respects
+ * content fingerprints): if model files were rewritten without actual content
+ * changes (e.g. mtime-only or re-encryption refresh), no mesh conversion
+ * happens and the previous results are kept. After regeneration the player
+ * model selection cache is cleared so the next frame picks up the latest
+ * model selections immediately.
  */
 @Mod.EventBusSubscriber(
         modid = YSMEpicFightCompat.MODID,
@@ -59,7 +67,8 @@ public class YSMReloadTrigger {
             Minecraft.getInstance().execute(() -> {
                 try {
                     YSMEpicFightCompat.LOGGER.info("YSM-EF Compat: regenerating base meshes after YSM model reload");
-                    YSMMeshLibrary.generateAll();
+                    YSMMeshLibrary.ensureGeneratedBlocking();
+                    YSMModelAccess.clearCache();
                 } catch (Throwable t) {
                     YSMEpicFightCompat.LOGGER.error("YSM-EF Compat: base mesh regeneration failed", t);
                 }
