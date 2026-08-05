@@ -113,4 +113,9 @@ jarJar.enable()
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
+    // OpenYsmPlayerRenderMixin uses a string @Mixin target (OpenYSM fork classes are not on
+    // the compile classpath - the obfuscated release jar is). Without this the mixin
+    // annotation processor fails the build with "Mixin target ... could not be found";
+    // at runtime a missing target only logs a warning and skips the mixin anyway.
+    options.compilerArgs += '-AMSG_MIXIN_SOFT_TARGET_NOT_FOUND=warning'
 }

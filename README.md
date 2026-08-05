@@ -92,7 +92,8 @@
 | **阻止 YSM 第三人称渲染** | `YSMRenderHook` (RenderLivingEvent.Pre HIGHEST)：EF 接管时取消事件 → YSM 的 RenderPlayerEvent.Pre 处理器 (NORMAL, 未 receiveCanceled) 收不到 → YSM CustomPlayerRenderer 不执行 |
 | **阻止 YSM 第一人称手臂** | `YsmArmRenderMixin`：注入 YSM `ReplacePlayerHandRenderEvent.onRenderArm` (混淆名)，战斗模式 ← `ci.cancel()` → 跳过 YSM 手臂渲染 → 原版手臂渲染 |
 | **阻止 YSM 背景手** | `YsmBackgroundHandMixin`：注入 YSM `RenderFirstPlayerBackground.onRenderHand` (混淆名)，同上 |
-| **解除战斗模式武器拦截** | `YsmPlayerRenderMixin`：注入 YSM `ReplacePlayerRenderEvent.onRenderPlayerPre` (混淆名)，战斗模式 `ci.cancel()` → YSM 不再 cancel RenderPlayerEvent.Pre → 原版 PlayerRenderer 继续 → `YSMRenderHook` 以原版渲染器接管 → EF `PatchedItemInHandLayer` 正常绘制武器。原路径 (YSM 渲染器发起的嵌套 RenderLivingEvent.Pre) 中 renderer 是 YSM 渲染器、其 layers 无 PlayerItemInHandLayer，武器永远不绘制 |
+| **解除战斗模式武器拦截 (YSM)** | `YsmPlayerRenderMixin`：注入 YSM `ReplacePlayerRenderEvent.onRenderPlayerPre` (混淆名)，战斗模式 `ci.cancel()` → YSM 不再 cancel RenderPlayerEvent.Pre → 原版 PlayerRenderer 继续 → `YSMRenderHook` 以原版渲染器接管 → EF `PatchedItemInHandLayer` 正常绘制武器。原路径 (YSM 渲染器发起的嵌套 RenderLivingEvent.Pre) 中 renderer 是 YSM 渲染器、其 layers 无 PlayerItemInHandLayer，武器永远不绘制 |
+| **解除战斗模式武器拦截 (OpenYSM)** | `OpenYsmPlayerRenderMixin`：目标为 OpenYSM (未混淆 fork，同 modId `yes_steve_model`) 的 `ReplacePlayerRenderEvent.onRenderPlayerPre` (字符串 targets，不依赖 OpenYSM jar 编译)，行为同上。OpenYSM 的 CustomPlayerRenderer 由 `GeoReplacedEntityRenderer.renderEntityWithTexture` **手动 post** `RenderLivingEvent.Pre`，但拦截点同为 RenderPlayerEvent.Pre 处理器，修复方式一致 |
 | **阻止 YSM 弹射物/载具变体** | `YsmProjectileRenderMixin` (投射物)、`YsmFishingHookRenderMixin` (鱼钩) → 注入 YSM 自定义渲染器 (混淆名) 的 entry 方法，战斗模式 owner → `setReturnValue(true)` 跳过自定义渲染；`YsmVehicleRenderMixin` (载具)、`YsmVehiclePreviewMixin` (预览) → 按乘客判定战斗模式 |
 | **阻止盔甲渲染** | `YsmConditionalArmorLayer`：通过 `addPatchedLayerAlways` 覆盖 EF 默认 `WearableItemLayer`，玩家使用 YSM 网格时 `renderLayer` 返回 → 盔甲模型 (不对齐 YSM 网格) 不绘制；非 YSM 玩家盔甲不受影响 |
 | **阻止原版头/鞘翅模型** | `YsmConditionalHeadLayer` / `YsmConditionalElytraLayer`：同盔甲模式覆盖 EF 默认 `PatchedHeadLayer` / `PatchedElytraLayer`，YSM 网格玩家不绘制原版头 (带头饰时) / 鞘翅模型 |
@@ -147,6 +148,10 @@ YSM release jar 的 932 个类被混淆；9 个 Mixin 安全类 (含 mixins.json
 
 所有混淆方法共享同一名称 `Oo0Oo0o00O00Oo0OOoOOoooo`，Mixin `@Inject` 以完整描述符区分。
 
+### OpenYSM 兼容 (未混淆 fork)
+
+OpenYSM (`参考/OpenYSM`，同 modId `yes_steve_model`、同包名，未混淆) 与 release jar 互斥。`OpenYsmPlayerRenderMixin` 以字符串 targets 引用 OpenYSM 类 (`com.elfmcys.yesstevemodel.client.event.ReplacePlayerRenderEvent`)，编译期不依赖 OpenYSM jar；运行于 release YSM 时该 target 缺失 → Mixin 仅告警并跳过 (非 strict 配置不崩溃)，运行于 OpenYSM 时正常生效，其余 7 个混淆名 Mixin 同样仅告警跳过。
+
 ---
 
 ## 参考资源
@@ -198,6 +203,6 @@ YSM release jar 的 932 个类被混淆；9 个 Mixin 安全类 (含 mixins.json
 3. **战斗模式默认可见性**: 使用冻结默认环境 (变量未设、查询=0) 静态求值 parallel 动画的 scale 通道来决定变体骨骼可见性。实际变种可能因条件 Molang (`v.xxx`, `q.xxx`) 在某些模型上默认可见 (应为隐藏)，在运行时会被覆盖，但静态求值不可见；此为并行/变体分级设计，恰符合 YSM 的首帧行为
 4. **多人联机模型同步依赖**: 远程玩家/本地玩家的模型选择通过 `ysm_epicfight_compat:model_sync` 通道同步，要求**专用服务器也安装本模组** (服务端仅做 NBT 读取与广播，无渲染开销)。服务端未安装时回退 EF 默认 biped (与旧版行为一致)
 5. **远程玩家模型需本地可用**: 被渲染玩家的 YSM 模型包必须在本地存在 (`config/yes_steve_model/{builtin,custom,auth}`)。auth 模型由 YSM 自动下载到本地；会话中途新下载的模型需 F3+T 或 `/ysm model reload` 触发网格重新生成后才会显示
-6. **YSM 混淆类**: 7 个 Mixin 依赖 YSM 2.6.5 的混淆名；升级 YSM 版本需通过描述符扫描重新定位目标类 (注释中已写方法)
+6. **YSM 混淆类**: 7 个 Mixin 依赖 YSM 2.6.5 的混淆名；升级 YSM 版本需通过描述符扫描重新定位目标类 (注释中已写方法)。OpenYSM (未混淆 fork) 由 `OpenYsmPlayerRenderMixin` (字符串 targets) 覆盖同一渲染拦截点；其余混淆名 Mixin 在 OpenYSM 下仅告警跳过
 7. **非 PNG/JPEG 贴图**: 其他格式 (WebP/AVIF/BMP) 不支持解码，跳过并告警
 8. **缓存健壮性 (1.1.0 起)**: manifest 记录输出哈希，缓存恢复前逐文件校验；被半生成/复制损坏的缓存会强制重建而非永久信任；所有输出文件原子写入，资源重载不会读到半截 JSON

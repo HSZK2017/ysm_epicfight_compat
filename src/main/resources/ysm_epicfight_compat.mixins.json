@@ -9,6 +9,7 @@
     "YsmArmRenderMixin",
     "YsmBackgroundHandMixin",
     "YsmPlayerRenderMixin",
+    "OpenYsmPlayerRenderMixin",
     "YsmProjectileRenderMixin",
     "YsmFishingHookRenderMixin",
     "YsmVehicleRenderMixin",
