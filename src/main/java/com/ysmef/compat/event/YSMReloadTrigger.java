@@ -13,19 +13,19 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 
 /**
- * Regenerates the converted Epic Fight base meshes whenever YSM models are
+ * Re-validates the converted Epic Fight base meshes whenever YSM models are
  * reloaded at runtime ("/ysm model reload" or any "ysm ... reload" command).
  *
  * The command itself is handled by YSM (obfuscated), so we listen to Forge's
- * CommandEvent, and schedule our regeneration on the client (render) thread
+ * CommandEvent, and schedule the invalidation on the client (render) thread
  * with a delay, letting YSM finish its own reload + client sync first.
  *
- * Regeneration uses the gated ensureGeneratedBlocking path (which respects
- * content fingerprints): if model files were rewritten without actual content
- * changes (e.g. mtime-only or re-encryption refresh), no mesh conversion
- * happens and the previous results are kept. After regeneration the player
- * model selection cache is cleared so the next frame picks up the latest
- * model selections immediately.
+ * Invalidation (YSMMeshLibrary.invalidateAll) drops the registered meshes and
+ * compiled runtime models; the lazy per-model path then re-validates the cache
+ * on the next mesh lookup - models whose files changed are re-converted in the
+ * background, unchanged ones are restored from the verified cache without any
+ * conversion. After invalidation the player model selection cache is cleared so
+ * the next frame picks up the latest model selections immediately.
  */
 @Mod.EventBusSubscriber(
         modid = YSMEpicFightCompat.MODID,
@@ -66,7 +66,7 @@ public class YSMReloadTrigger {
                 || normalized.equals("ysm reload")
                 || normalized.startsWith("ysm reload ")) {
             pendingRegenerateTicks = REGENERATE_DELAY_TICKS;
-            YSMEpicFightCompat.LOGGER.info("YSM-EF Compat: detected '{}', scheduling base mesh regeneration", normalized);
+            YSMEpicFightCompat.LOGGER.info("YSM-EF Compat: detected '{}', scheduling base mesh invalidation", normalized);
         }
     }
 
@@ -83,11 +83,13 @@ public class YSMReloadTrigger {
             pendingRegenerateTicks = -1;
             Minecraft.getInstance().execute(() -> {
                 try {
-                    YSMEpicFightCompat.LOGGER.info("YSM-EF Compat: regenerating base meshes after YSM model reload");
-                    YSMMeshLibrary.ensureGeneratedBlocking();
+                    YSMEpicFightCompat.LOGGER.info("YSM-EF Compat: invalidating base meshes after YSM model reload");
+                    YSMMeshLibrary.invalidateAll();
+                    com.ysmef.compat.model.TlmModelLibrary.resetLazyGeneration();
+                    YSMMeshLibrary.preparePackFolder();
                     YSMModelAccess.clearCache();
                 } catch (Throwable t) {
-                    YSMEpicFightCompat.LOGGER.error("YSM-EF Compat: base mesh regeneration failed", t);
+                    YSMEpicFightCompat.LOGGER.error("YSM-EF Compat: base mesh invalidation failed", t);
                 }
             });
             return;

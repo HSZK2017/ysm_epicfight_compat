@@ -52,6 +52,7 @@ public final class YSMRuntimeModel {
         public final Matrix4f bindWorld = new Matrix4f();
         public final Matrix4f bindLocal = new Matrix4f();
         public final Matrix4f bindLocalInv = new Matrix4f();
+        public final Matrix4f bindWorldInv = new Matrix4f();
     }
 
     public final String modelId;
@@ -60,18 +61,21 @@ public final class YSMRuntimeModel {
     final List<CompiledAnim> parallels;
     final Map<String, CompiledAnim> states;
     final Map<String, CompiledAnim> conditionAnims;
+    /** Number of compiled keyframe channels; used to size per-animator cursor arrays. */
+    final int channelCount;
 
     private final Map<UUID, YSMPlayerAnimator> animators = new ConcurrentHashMap<>();
 
     private YSMRuntimeModel(String modelId, BoneRt[] bones, Map<String, Integer> boneIndex,
                             List<CompiledAnim> parallels, Map<String, CompiledAnim> states,
-                            Map<String, CompiledAnim> conditionAnims) {
+                            Map<String, CompiledAnim> conditionAnims, int channelCount) {
         this.modelId = modelId;
         this.bones = bones;
         this.boneIndex = boneIndex;
         this.parallels = parallels;
         this.states = states;
         this.conditionAnims = conditionAnims;
+        this.channelCount = channelCount;
     }
 
     public YSMPlayerAnimator animatorFor(LivingEntity entity) {
@@ -237,34 +241,39 @@ public final class YSMRuntimeModel {
     // ------------------------------------------------------------------
 
     private static final Map<String, YSMRuntimeModel> CACHE = new HashMap<>();
-    private static final Map<String, Long> CACHE_MTIME = new HashMap<>();
 
-    /** Get the compiled runtime model for a YSM model id, or null if unavailable. */
+    /**
+     * Get the compiled runtime model for a YSM model id, or null if unavailable.
+     *
+     * No per-call disk stat: staleness is handled explicitly by the caller.
+     * YSMMeshLibrary calls {@link #invalidate(String)} after (re)converting a
+     * model, and the reload paths call {@link #invalidateAll()}; without those
+     * the compiled model is cached for the session. (Previously the file mtime
+     * was re-read on every call - a disk stat per player per frame.)
+     */
     public static YSMRuntimeModel get(String modelId) {
-        Path file = YSMMeshLibrary.getRuntimeFile(YSMMeshLibrary.meshIdOf(modelId));
-        long mtime;
-        try {
-            mtime = Files.getLastModifiedTime(file).toMillis();
-        } catch (Exception e) {
-            return null;
-        }
         synchronized (CACHE) {
-            Long cachedMtime = CACHE_MTIME.get(modelId);
-            if (cachedMtime != null && cachedMtime == mtime) {
+            if (CACHE.containsKey(modelId)) {
                 return CACHE.get(modelId);
             }
+            Path file = YSMMeshLibrary.getRuntimeFile(YSMMeshLibrary.meshIdOf(modelId));
             try {
                 String json = Files.readString(file);
                 YSMRuntimeModel model = compile(modelId, JsonParser.parseString(json).getAsJsonObject());
                 CACHE.put(modelId, model);
-                CACHE_MTIME.put(modelId, mtime);
                 return model;
             } catch (Exception e) {
                 YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to load runtime model '{}': {}", modelId, e.toString());
                 CACHE.put(modelId, null);
-                CACHE_MTIME.put(modelId, mtime);
                 return null;
             }
+        }
+    }
+
+    /** Forget one cached runtime model (called after its mesh was (re)converted). */
+    public static void invalidate(String modelId) {
+        synchronized (CACHE) {
+            CACHE.remove(modelId);
         }
     }
 
@@ -272,7 +281,6 @@ public final class YSMRuntimeModel {
     public static void invalidateAll() {
         synchronized (CACHE) {
             CACHE.clear();
-            CACHE_MTIME.clear();
         }
     }
 
@@ -318,6 +326,7 @@ public final class YSMRuntimeModel {
         BoneRt[] bones = boneList.toArray(new BoneRt[0]);
         for (int i = 0; i < bones.length; i++) {
             computeBindWorld(bones, i);
+            bones[i].bindWorldInv.set(bones[i].bindWorld).invert();
         }
 
         // animations
@@ -325,6 +334,7 @@ public final class YSMRuntimeModel {
         Map<String, CompiledAnim> states = new HashMap<>();
         Map<String, CompiledAnim> conditions = new HashMap<>();
         JsonObject anims = root.has("animations") ? root.getAsJsonObject("animations") : null;
+        int nextChannelId = 0;
         if (anims != null) {
             for (Map.Entry<String, JsonElement> entry : anims.entrySet()) {
                 String name = entry.getKey();
@@ -336,12 +346,33 @@ public final class YSMRuntimeModel {
                 } else {
                     states.put(name, anim);
                 }
+                nextChannelId = assignChannelIds(anim, nextChannelId);
             }
         }
         // pre_parallel* first, then parallel*, each in numeric order
         parallels.sort(Comparator.comparing((CompiledAnim a) -> a.name.startsWith("pre_parallel") ? 0 : 1)
                 .thenComparing(a -> a.name));
-        return new YSMRuntimeModel(modelId, bones, boneIndex, parallels, states, conditions);
+        return new YSMRuntimeModel(modelId, bones, boneIndex, parallels, states, conditions, nextChannelId);
+    }
+
+    /**
+     * Assign sequential channel ids to every keyframe channel of an animation
+     * (rot/pos/scale per animated bone). Ids are unique per model and index the
+     * per-animator incremental keyframe cursors (see YSMPlayerAnimator).
+     */
+    private static int assignChannelIds(CompiledAnim anim, int nextId) {
+        for (CompiledChannels channels : anim.bones.values()) {
+            if (channels.rot != null) {
+                channels.rot.channelId = nextId++;
+            }
+            if (channels.pos != null) {
+                channels.pos.channelId = nextId++;
+            }
+            if (channels.scale != null) {
+                channels.scale.channelId = nextId++;
+            }
+        }
+        return nextId;
     }
 
     private static boolean isConditionAnim(String name) {
@@ -384,6 +415,7 @@ public final class YSMRuntimeModel {
     }
 
     public static final class CompiledChannel {
+        public int channelId;
         public float[] times;
         public int[] lerps;
         public Molang.Expr[][] post;   // [key][axis]

@@ -5,7 +5,6 @@ import com.ysmef.compat.model.TlmModelLibrary;
 import com.ysmef.compat.model.YSMMeshLibrary;
 import com.ysmef.compat.renderer.YSMModelAccess;
 import com.ysmef.compat.renderer.YSMPlayerRenderer;
-import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.packs.PackType;
 import net.minecraft.server.packs.PathPackResources;
@@ -19,7 +18,6 @@ import net.minecraftforge.client.event.RegisterClientReloadListenersEvent;
 import net.minecraftforge.event.AddPackFindersEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
-import net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent;
 import yesman.epicfight.api.client.forgeevent.PatchedRenderersEvent;
 
 /**
@@ -27,7 +25,11 @@ import yesman.epicfight.api.client.forgeevent.PatchedRenderersEvent;
  * - hooks the YSM-aware patched renderer into Epic Fight's patched renderer registry
  * - registers the generated mesh resource pack (converted Epic Fight base meshes
  *   for every locally available YSM model, see YSMMeshLibrary)
- * - triggers the base-mesh generation at client setup and refreshes it on reload
+ *
+ * Conversion is fully lazy (OpenYSM-style): nothing is generated at startup.
+ * YSMMeshLibrary converts each model on first use (background pool) and the
+ * generated pack folder is a live PathPackResources, so mesh JSONs written
+ * after the pack repository was built are picked up on demand.
  *
  * Epic Fight's own player patches (Server/Remote/LocalPlayerPatch) are intentionally
  * left untouched: they already handle combat animations and decide when Epic Fight
@@ -55,18 +57,12 @@ public class YSMCompatClientEvents {
 
     /**
      * Register the generated mesh folder as an always-on client resource pack, so
-     * Epic Fight's mesh loader can read the generated animmodels JSONs.
+     * Epic Fight's on-demand mesh loader can read the generated animmodels JSONs
+     * (including ones written later by the lazy per-model conversion - the pack
+     * is a folder pack and resolves resources live from disk).
      *
-     * This event fires before the very first resource reload, so the blocking
-     * generation gate runs here: if the config folder is missing or any YSM
-     * model is unconverted/outdated, all models are re-converted on all CPU
-     * cores before the pack repository is built, guaranteeing the reload never
-     * sees a half-generated pack (which showed up as missing faces).
-     *
-     * TLM maid meshes are generated in the same blocking gate: they are written
-     * into the same generated pack folder, and generating them after the pack
-     * was registered (as happened with the FMLClientSetup deferred work) left
-     * the first resource reload with an incomplete pack for maids.
+     * Only the pack skeleton (folder + pack.mcmeta) is prepared here; no model
+     * is converted at startup.
      */
     @SubscribeEvent
     public static void addPackFinders(AddPackFindersEvent event) {
@@ -74,20 +70,6 @@ public class YSMCompatClientEvents {
             return;
         }
         YSMMeshLibrary.preparePackFolder();
-        try {
-            YSMMeshLibrary.ensureGeneratedBlocking();
-        } catch (Throwable t) {
-            YSMEpicFightCompat.LOGGER.error("YSM-EF Compat: base mesh generation failed", t);
-        }
-        try {
-            TlmModelLibrary.resetLazyGeneration();
-            net.minecraft.client.Minecraft mc = Minecraft.getInstance();
-            if (mc != null && mc.getResourceManager() != null) {
-                TlmModelLibrary.generateAll(mc.getResourceManager());
-            }
-        } catch (Throwable t) {
-            YSMEpicFightCompat.LOGGER.error("YSM-EF Compat: TLM mesh generation failed", t);
-        }
         event.addRepositorySource((consumer) -> {
             Pack pack = Pack.create(
                     "ysm_epicfight_compat_generated",
@@ -106,48 +88,18 @@ public class YSMCompatClientEvents {
     }
 
     /**
-     * Safety net for the YSM/TLM mesh gates: the YSM base meshes are generated
-     * earlier, in addPackFinders, before the first resource reload ever reads
-     * the generated pack; the ensureGeneratedBlocking call here is only a
-     * no-op safety net when everything is already up to date. The TLM meshes
-     * are also regenerated here with the fully loaded resource manager (covers
-     * jar-builtin TLM manifests that may not be visible during addPackFinders).
-     */
-    @SubscribeEvent
-    public static void onClientSetup(FMLClientSetupEvent event) {
-        event.enqueueWork(() -> {
-            try {
-                YSMMeshLibrary.ensureGeneratedBlocking();
-            } catch (Throwable t) {
-                YSMEpicFightCompat.LOGGER.error("YSM-EF Compat: base mesh generation failed", t);
-            }
-            try {
-                TlmModelLibrary.resetLazyGeneration();
-                TlmModelLibrary.generateAll(Minecraft.getInstance().getResourceManager());
-            } catch (Throwable t) {
-                YSMEpicFightCompat.LOGGER.error("YSM-EF Compat: TLM mesh generation failed", t);
-            }
-        });
-    }
-
-    /**
-     * Refresh generated meshes on resource reload so model file changes (F3+T) apply.
+     * On resource reload (F3+T): drop the registered meshes, texture state and
+     * compiled runtime models so the next mesh lookup re-validates and lazily
+     * re-converts whatever changed (cheap for unchanged models: verified cache
+     * restore). TLM maid meshes are re-scanned lazily on the next maid render.
      */
     @SubscribeEvent
     public static void onRegisterReloadListeners(RegisterClientReloadListenersEvent event) {
         event.registerReloadListener((ResourceManagerReloadListener) resourceManager -> {
             YSMModelAccess.clearCache();
-            try {
-                YSMMeshLibrary.ensureGeneratedBlocking();
-            } catch (Throwable t) {
-                YSMEpicFightCompat.LOGGER.error("YSM-EF Compat: base mesh regeneration failed", t);
-            }
-            try {
-                TlmModelLibrary.resetLazyGeneration();
-                TlmModelLibrary.generateAll(resourceManager);
-            } catch (Throwable t) {
-                YSMEpicFightCompat.LOGGER.error("YSM-EF Compat: TLM mesh regeneration failed", t);
-            }
+            YSMMeshLibrary.invalidateAll();
+            TlmModelLibrary.resetLazyGeneration();
+            YSMMeshLibrary.preparePackFolder();
         });
     }
 }

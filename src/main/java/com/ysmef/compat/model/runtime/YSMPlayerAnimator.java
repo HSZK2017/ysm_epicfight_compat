@@ -76,6 +76,29 @@ public final class YSMPlayerAnimator implements Molang.Env {
     private final Matrix4f[] deltaModel;
     private final Matrix4f[] chainDelta;
     private final float[] effMinScale;
+    private final boolean[] composed;
+    private final OpenMatrix4f[] partMats;
+    private final Matrix4f scratchA = new Matrix4f();
+    private final float[] evalL0 = new float[3];
+    private final float[] evalR0 = new float[3];
+    private final float[] evalP0 = new float[3];
+    private final float[] evalP3 = new float[3];
+
+    /** Incremental keyframe lookup cursors, one per compiled channel (amortized O(1)). */
+    private final int[] channelCursor;
+
+    /** Per-bone mesh parts captured once per mesh instance (see ensurePartMap). */
+    private YSMMesh partMapMesh;
+    private List<Map.Entry<String, MeshPart>> partEntries;
+    private int[] partBoneIdx;
+
+    // LOD-style evaluation rate limiting (OpenYSM AnimatableEntity#getRefreshRate):
+    // entities beyond 40 blocks evaluate at 30 Hz, beyond 64 blocks at 10 Hz,
+    // everything else (and the local player) every frame. Skipped frames replay
+    // the last evaluated bone state into the mesh instead of re-evaluating molang.
+    private static final double LOD_DIST_SQR_NEAR = 40.0 * 40.0;
+    private static final double LOD_DIST_SQR_FAR = 64.0 * 64.0;
+    private boolean evaluatedOnce = false;
 
     private final List<YSMRuntimeModel.CompiledAnim> activeAnims = new ArrayList<>();
 
@@ -95,16 +118,28 @@ public final class YSMPlayerAnimator implements Molang.Env {
         deltaModel = new Matrix4f[n];
         chainDelta = new Matrix4f[n];
         effMinScale = new float[n];
+        composed = new boolean[n];
+        partMats = new OpenMatrix4f[n];
         for (int i = 0; i < n; i++) {
             localAnim[i] = new Matrix4f();
             deltaModel[i] = new Matrix4f();
             chainDelta[i] = new Matrix4f();
+            partMats[i] = new OpenMatrix4f();
         }
+        channelCursor = new int[model.channelCount];
+        java.util.Arrays.fill(channelCursor, -1);
     }
 
     /**
      * Evaluate the scripts for this entity this frame and apply per-part hidden
      * flags and transforms to the mesh about to be drawn.
+     *
+     * Evaluation is rate-limited by distance (see LOD_DIST_SQR_*): the expensive
+     * part (query refresh, molang evaluation, keyframe lookup, matrix composition)
+     * runs at most every N ticks for distant entities; every frame the stored bone
+     * state from the last full evaluation is replayed into the mesh, so a
+     * rate-limited entity keeps rendering its last known pose instead of
+     * recomputing it.
      */
     public void apply(YSMMesh mesh, LivingEntity entity, OpenMatrix4f[] poses, float partialTick) {
         double now = (entity.tickCount + partialTick) / 20.0;
@@ -112,6 +147,45 @@ public final class YSMPlayerAnimator implements Molang.Env {
         offHand = entity.getItemInHand(InteractionHand.OFF_HAND);
         updatePosDelta(entity);
 
+        if (shouldFullEval(entity)) {
+            evaluate(entity, partialTick, now);
+            evaluatedOnce = true;
+        }
+        pushToMesh(mesh);
+        logDiagPeriodic(mesh);
+    }
+
+    /**
+     * Distance-based evaluation gate: the local player (and everyone near the
+     * camera) evaluates every frame; entities beyond 40/64 blocks drop to
+     * 30/10 Hz. The first evaluation is always full so the mesh starts with
+     * correct state.
+     */
+    private boolean shouldFullEval(LivingEntity entity) {
+        if (!evaluatedOnce) {
+            return true;
+        }
+        Player local = Minecraft.getInstance().player;
+        if (local == null || entity == local) {
+            return true;
+        }
+        double distSqr = entity.distanceToSqr(local);
+        int tick = entity.tickCount;
+        if (distSqr > LOD_DIST_SQR_FAR) {
+            return tick % 6 == 0;
+        }
+        if (distSqr > LOD_DIST_SQR_NEAR) {
+            return tick % 2 == 0;
+        }
+        return true;
+    }
+
+    /**
+     * Full evaluation: refresh the query context, resolve the state machine and
+     * evaluate all active animations into the scratch arrays, then compose the
+     * per-bone chain deltas and effective visibility scales.
+     */
+    private void evaluate(LivingEntity entity, float partialTick, double now) {
         String state = resolveState(entity);
         if (!state.equals(currentState)) {
             currentState = state;
@@ -136,8 +210,7 @@ public final class YSMPlayerAnimator implements Molang.Env {
             evalAnim(anim, now);
         }
 
-        composeAndApply(mesh, entity, poses);
-        logDiagPeriodic(mesh);
+        compose();
     }
 
     /**
@@ -278,13 +351,22 @@ public final class YSMPlayerAnimator implements Molang.Env {
         }
     }
 
+    /**
+     * Evaluate a keyframe channel at time t into out. The search window is
+     * carried between frames per channel (OpenYSM InterpolationLookup): while
+     * the animation time advances monotonically the lookup starts from the
+     * previous window, making the scan amortized O(1); a backwards jump (loop
+     * wrap / animation restart) resets the cursor.
+     */
     private void evalChannel(YSMRuntimeModel.CompiledChannel channel, float t, float[] out) {
         float[] times = channel.times;
         int n = times.length;
-        int right = 1;
+        int cursor = channelCursor[channel.channelId];
+        int right = (cursor < 0 || t < times[Math.min(cursor, n - 1)]) ? 1 : cursor;
         while (right < n && times[right] <= t) {
             right++;
         }
+        channelCursor[channel.channelId] = right;
         if (right >= n) {
             evalValue(channel.post[n - 1], out);
             return;
@@ -302,21 +384,17 @@ public final class YSMPlayerAnimator implements Molang.Env {
             return;
         }
         float alpha = (t - t0) / (t1 - t0);
-        float[] leftVal = {0, 0, 0};
-        float[] rightVal = {0, 0, 0};
-        evalValue(channel.post[left], leftVal);
-        evalValue(channel.pre[right] != null ? channel.pre[right] : channel.post[right], rightVal);
+        evalValue(channel.post[left], evalL0);
+        evalValue(channel.pre[right] != null ? channel.pre[right] : channel.post[right], evalR0);
         if (lerp == ScriptAnimKeyLerp.CATMULLROM && n >= 2) {
-            float[] p0 = {0, 0, 0};
-            float[] p3 = {0, 0, 0};
-            evalValue(channel.post[Math.max(0, left - 1)], p0);
-            evalValue(channel.post[Math.min(n - 1, right + 1)], p3);
+            evalValue(channel.post[Math.max(0, left - 1)], evalP0);
+            evalValue(channel.post[Math.min(n - 1, right + 1)], evalP3);
             for (int i = 0; i < 3; i++) {
-                out[i] = catmullRom(p0[i], leftVal[i], rightVal[i], p3[i], alpha);
+                out[i] = catmullRom(evalP0[i], evalL0[i], evalR0[i], evalP3[i], alpha);
             }
         } else {
             for (int i = 0; i < 3; i++) {
-                out[i] = leftVal[i] + (rightVal[i] - leftVal[i]) * alpha;
+                out[i] = evalL0[i] + (evalR0[i] - evalL0[i]) * alpha;
             }
         }
     }
@@ -337,29 +415,93 @@ public final class YSMPlayerAnimator implements Molang.Env {
     // Composition & application
     // ------------------------------------------------------------------
 
-    private void composeAndApply(YSMMesh mesh, LivingEntity entity, OpenMatrix4f[] poses) {
+    /**
+     * Compose the per-bone chain deltas and effective visibility scales into the
+     * persistent arrays. Runs only on full-evaluation frames.
+     */
+    private void compose() {
+        java.util.Arrays.fill(composed, false);
         int n = model.bones.length;
-        boolean[] composed = new boolean[n];
         for (int i = 0; i < n; i++) {
-            composeBone(i, composed);
+            composeBone(i);
         }
-        for (Map.Entry<String, MeshPart> entry : mesh.getPartEntrySetSafe()) {
-            String partName = entry.getKey();
-            if (!partName.startsWith(EFMeshJsonWriter.BONE_PART_PREFIX)) {
-                continue;
-            }
-            String boneName = partName.substring(EFMeshJsonWriter.BONE_PART_PREFIX.length());
-            Integer boneIdx = model.boneIndex.get(boneName);
-            MeshPart part = entry.getValue();
-            if (boneIdx == null) {
-                continue;
-            }
+    }
+
+    /**
+     * Push the stored per-bone state (hidden flags + chain deltas) into the mesh
+     * parts. Runs every frame - also on rate-limited frames, replaying the state
+     * from the last full evaluation so the shared mesh always reflects the entity
+     * currently being drawn.
+     */
+    private void pushToMesh(YSMMesh mesh) {
+        ensurePartMap(mesh);
+        for (int i = 0; i < partEntries.size(); i++) {
+            int boneIdx = partBoneIdx[i];
+            MeshPart part = partEntries.get(i).getValue();
             boolean hidden = effMinScale[boneIdx] < HIDE_SCALE_EPSILON;
             part.setHidden(hidden);
             if (!hidden && !isIdentity(chainDelta[boneIdx])) {
-                mesh.setRuntimeTransform(partName, OpenMatrix4f.importFromMojangMatrix(new Matrix4f(chainDelta[boneIdx])));
+                importInto(partMats[boneIdx], chainDelta[boneIdx]);
+                mesh.setRuntimeTransform(partEntries.get(i).getKey(), partMats[boneIdx]);
             }
         }
+    }
+
+    /**
+     * Capture the per-bone mesh parts (entry + bone index) once per mesh instance
+     * (the mesh is shared and re-created only on regeneration, so the capture is
+     * cached per mesh reference). Removes the per-frame substring + hash lookups
+     * from the push loop.
+     */
+    private void ensurePartMap(YSMMesh mesh) {
+        if (partEntries != null && partMapMesh == mesh) {
+            return;
+        }
+        partMapMesh = mesh;
+        String prefix = EFMeshJsonWriter.BONE_PART_PREFIX;
+        List<Map.Entry<String, MeshPart>> entries = new ArrayList<>();
+        List<Integer> boneIdxList = new ArrayList<>();
+        for (Map.Entry<String, MeshPart> entry : mesh.getPartEntrySetSafe()) {
+            String partName = entry.getKey();
+            if (!partName.startsWith(prefix)) {
+                continue;
+            }
+            Integer boneIdx = model.boneIndex.get(partName.substring(prefix.length()));
+            if (boneIdx != null) {
+                entries.add(entry);
+                boneIdxList.add(boneIdx);
+            }
+        }
+        partEntries = entries;
+        partBoneIdx = new int[boneIdxList.size()];
+        for (int i = 0; i < boneIdxList.size(); i++) {
+            partBoneIdx[i] = boneIdxList.get(i);
+        }
+    }
+
+    /**
+     * OpenMatrix4f.importFromMojangMatrix without allocation: Epic Fight stores
+     * the matrix transposed relative to JOML (Mojang Matrix4f.get writes
+     * column-major, OpenMatrix4f.load reads row-major), so the field mapping is
+     * mXY <-> mYX.
+     */
+    private static void importInto(OpenMatrix4f om, Matrix4f m) {
+        om.m00 = m.m00();
+        om.m01 = m.m10();
+        om.m02 = m.m20();
+        om.m03 = m.m30();
+        om.m10 = m.m01();
+        om.m11 = m.m11();
+        om.m12 = m.m21();
+        om.m13 = m.m31();
+        om.m20 = m.m02();
+        om.m21 = m.m12();
+        om.m22 = m.m22();
+        om.m23 = m.m32();
+        om.m30 = m.m03();
+        om.m31 = m.m13();
+        om.m32 = m.m23();
+        om.m33 = m.m33();
     }
 
     private static boolean isIdentity(Matrix4f m) {
@@ -375,15 +517,16 @@ public final class YSMPlayerAnimator implements Molang.Env {
      * Computes the bone's animated local transform, its model-space animation
      * delta (conjugated into bind space) and the composed delta of the whole
      * chain up to the nearest Epic-Fight-driven ancestor, plus the effective
-     * visibility scale along the chain.
+     * visibility scale along the chain. Allocation-free: all matrices are
+     * persistent scratch (bindWorldInv is precomputed at model load).
      */
-    private void composeBone(int i, boolean[] composed) {
+    private void composeBone(int i) {
         if (composed[i]) {
             return;
         }
         YSMRuntimeModel.BoneRt bone = model.bones[i];
         if (bone.parent >= 0) {
-            composeBone(bone.parent, composed);
+            composeBone(bone.parent);
         }
 
         float sx = hasScale[i] ? animScale[i][0] : 1f;
@@ -412,11 +555,11 @@ public final class YSMPlayerAnimator implements Molang.Env {
 
         // delta of this bone's animated local vs its bind local, conjugated into
         // model bind space so it can pre-multiply the Epic Fight joint pose
-        Matrix4f localDelta = new Matrix4f(localAnim[i]).mul(bone.bindLocalInv);
-        if (isIdentity(localDelta)) {
+        scratchA.set(localAnim[i]).mul(bone.bindLocalInv);
+        if (isIdentity(scratchA)) {
             deltaModel[i].identity();
         } else {
-            deltaModel[i].set(bone.bindWorld).mul(localDelta).mul(new Matrix4f(bone.bindWorld).invert());
+            deltaModel[i].set(bone.bindWorld).mul(scratchA).mul(bone.bindWorldInv);
         }
 
         float parentMinScale = 1f;

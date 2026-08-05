@@ -18,30 +18,29 @@
                                            YsmBinaryReader.read
                                                      │
                                                      ▼
-                                          YSMGeoModel.fromBinary
+                                           YSMGeoModel.fromBinary
                                                      │
                                                      ▼
-                                          EFMeshJsonWriter.write
-                                          ├── 主网格 JSON (animmodels/entity/<id>.json)
-                                          │   · Blender 坐标系、预三角化角点流 (每四边形 6 角点)
-                                          │   · 骨骼级部件 ("y/<boneName>")
-                                          │   · 顶点焊接、关节映射、宽高缩放
-                                          └── 运行时 JSON (ysm_runtime/entity/<id>.json)
-                                              · 骨骼表 (层级、绑定矩阵、关节绑定)
-                                              · Molang 动画 (parallel/state/condition)
+                                           EFMeshJsonWriter.write
+                                           ├── 主网格 JSON (animmodels/entity/<id>.json)
+                                           │   · Blender 坐标系、预三角化角点流 (每四边形 6 角点)
+                                           │   · 骨骼级部件 ("y/<boneName>")
+                                           │   · 顶点焊接、关节映射、宽高缩放
+                                           └── 运行时 JSON (ysm_runtime/entity/<id>.json)
+                                               · 骨骼表 (层级、绑定矩阵、关节绑定)
+                                               · Molang 动画 (parallel/state/condition)
                                                      │
                                                      ▼
-                                           YSMMeshLibrary.generateAll
-                                           · MeshAccessor 注册
-                                           · 贴图 → TextureManager
-                                           · 输出哈希写入 manifest (mhash/rhash/贴图 hash)
-                                                      │
-                                                      ▼
-                                           YSMMeshLibrary.ensureGeneratedBlocking (阻塞门禁)
-                                           · AddPackFindersEvent：包仓库构建前全量生成
-                                           · TLM 女仆网格同门禁生成
-                                           · 缓存恢复前 verifyOutputs 校验输出哈希
-                                           · 失败 → 强制全量重建 (不再信任坏缓存)
+                                           YSMMeshLibrary.ensureModel (懒转换, 1.4.0)
+                                           · 首次使用某模型时才转换该模型 (后台池)
+                                           · 命中缓存 (manifest 指纹+输出哈希校验) → 免解密直接恢复
+                                           · 转换结果合并入 manifest (逐模型增量写)
+                                                     │
+                                                     ▼
+                                           YSMMeshLibrary.findMesh / findTexture
+                                           · MeshAccessor 按需加载 (EF 网格 JSON 从
+                                             PathPackResources 实时读取, 无需重载资源)
+                                           · 贴图 → TextureManager 按需上传
 ```
 
 ---
@@ -104,6 +103,19 @@
 |---|---|
 | **强制计算着色器路径** | EF 的 `SkinnedMesh.draw` 仅在客户端配置 `use_compute_shader=true` 时走 GPU 计算着色器路径，默认值 (false) 走 CPU 蒙皮路径——**CPU 路径渲染转换网格会丢三角面** (经双目录翻转配置实测复现/消除)。`YSMMesh.draw` 现在无视配置，存在计算着色器 setup 时直接调用 `drawWithShader` (反射读取私有字段 `computerShaderSetup`)，无 setup (老显卡) 才回退 CPU 路径并告警 |
 | **副作用** | 计算着色器路径同样支持每帧隐藏标记与逐部件变换 (经 `VanillaComputeShaderSetup.drawWithShader` 反编译验证)，战斗模式/运行时动画均不受影响 |
+
+### 性能优化 (1.4.0, 移植 OpenYSM 方案)
+
+| 机制 | 细节 |
+|---|---|
+| **懒转换 (无开机模型加载)** | 去除 `ensureGeneratedBlocking` 开机全量阻塞转换 (27 模型 ≈ 3s)。模型在**首次渲染使用**时才转换：`YSMMeshLibrary.ensureModel` 先校验该模型的 manifest 指纹 + 输出哈希 (命中则免解密从缓存恢复)，未命中则提交后台池转换 (≤4 线程)，期间回退 EF biped，完成下一帧生效。生成包是 PathPackResources，运行时写入的网格 JSON 无需资源重载即可被 EF 按需加载器读到 |
+| **逐模型缓存恢复** | manifest 逐模型增量写入；单模型输出 (网格/运行时 JSON/贴图缓存) 按 mhash/rhash/texhash 校验后才信任，坏缓存只重转该模型。`/ysm model reload` 与 F3+T 改为 `invalidateAll`：下一帧按需重新校验/转换，未变更模型零成本恢复 |
+| **运行时模型免磁盘 stat** | `YSMRuntimeModel.get` 原每帧每玩家 `Files.getLastModifiedTime`；现仅查缓存，由转换完成/reload 路径显式 `invalidate(modelId)`/`invalidateAll()` |
+| **逐部件变换数组化 (GPU 路径)** | `YSMMesh` 的 `runtimeTransforms` String 映射改为按部件序号的 `OpenMatrix4f[]`，EF 计算着色器每帧逐部件变换上传从 String 哈希查找变为 O(1) 数组访问 |
+| **关键帧增量游标** | 每个编译通道分配 `channelId`，动画器持 `int[] channelCursor` (OpenYSM InterpolationLookup)：时间单调推进时从上一窗口继续扫描 (摊还 O(1))，循环回绕/动画重启自动复位 |
+| **零分配矩阵合成** | `bindWorldInv` 模型加载期预计算；`composeBone` 复用持久 scratch 矩阵与 `composed[]`，逐帧不再分配 Matrix4f/数组；`importFromMojangMatrix` 语义以 16 字段直写复刻 (含转置映射)，`partMats[]` 复用同一 OpenMatrix4f |
+| **距离降频 (LOD 刷新率)** | OpenYSM `getRefreshRate` 移植：本地玩家/40 格内每帧全量求值；40–64 格 30Hz；>64 格 10Hz。降频帧只把上次求值结果重放进网格 (跳过 Molang 求值/关键帧/查询刷新)，远处实体渲染成本大幅下降 |
+| **部件映射缓存** | 动画器按网格实例缓存 part→骨骼 索引映射，push 循环不再逐帧做字符串截取 + HashMap 查找 |
 
 ### 贴图处理
 
@@ -185,7 +197,7 @@ OpenYSM (`参考/OpenYSM`，同 modId `yes_steve_model`、同包名，未混淆)
 
 注意：`jarJar` 打出的 all.jar 必须经过 `reobfJarJar`（强制重跑用 `--rerun-tasks`），否则运行时方法名未映射会直接崩溃 (`NoSuchMethodError`/`AbstractMethodError`)。
 
-产物：`build/libs/YSM_EpicFight_Compat-1.20.1-1.3.0-all.jar` (内嵌 `zstd-jni 1.5.6-3`，jar-in-jar)
+产物：`build/libs/YSM_EpicFight_Compat-1.20.1-1.4.0-all.jar` (内嵌 `zstd-jni 1.5.6-3`，jar-in-jar)
 
 依赖：
 - Epic Fight 20.14.17+ (`maven.modrinth`)
@@ -205,4 +217,5 @@ OpenYSM (`参考/OpenYSM`，同 modId `yes_steve_model`、同包名，未混淆)
 5. **远程玩家模型需本地可用**: 被渲染玩家的 YSM 模型包必须在本地存在 (`config/yes_steve_model/{builtin,custom,auth}`)。auth 模型由 YSM 自动下载到本地；会话中途新下载的模型需 F3+T 或 `/ysm model reload` 触发网格重新生成后才会显示
 6. **YSM 混淆类**: 7 个 Mixin 依赖 YSM 2.6.5 的混淆名；升级 YSM 版本需通过描述符扫描重新定位目标类 (注释中已写方法)。OpenYSM (未混淆 fork) 由 `OpenYsmPlayerRenderMixin` (字符串 targets) 覆盖同一渲染拦截点；其余混淆名 Mixin 在 OpenYSM 下仅告警跳过
 7. **非 PNG/JPEG 贴图**: 其他格式 (WebP/AVIF/BMP) 不支持解码，跳过并告警
-8. **缓存健壮性 (1.1.0 起)**: manifest 记录输出哈希，缓存恢复前逐文件校验；被半生成/复制损坏的缓存会强制重建而非永久信任；所有输出文件原子写入，资源重载不会读到半截 JSON
+8. **缓存健壮性 (1.1.0 起, 1.4.0 改逐模型)**: manifest 记录输出哈希，缓存恢复前对**该模型**的输出逐文件校验；被半生成/复制损坏的缓存只强制重转该模型而非永久信任；所有输出文件原子写入，资源重载不会读到半截 JSON
+9. **懒转换首用延迟**: 模型首次被渲染时若缓存未命中，转换在后台进行，玩家会短暂回退 EF biped (约几帧) 后切换为 YSM 模型；本地首次换上新模型同理。转换本身 <0.5s/模型，仅一次

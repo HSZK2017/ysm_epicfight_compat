@@ -45,7 +45,10 @@ public class YSMMesh extends HumanoidMesh {
 
     private ResourceLocation textureOverride;
     private String runtimeModelId;
-    private final Map<String, OpenMatrix4f> runtimeTransforms = new HashMap<>();
+    /** Per-part runtime transforms, indexed by part ordinal (see rebindPartTransforms). */
+    private OpenMatrix4f[] transformByPart;
+    /** partName -> ordinal into transformByPart, built once at rebind time. */
+    private final Map<String, Integer> partIndex = new HashMap<>();
 
     public YSMMesh(Map<String, Number[]> arrayMap,
                    Map<MeshPartDefinition, List<VertexBuilder>> parts,
@@ -60,13 +63,24 @@ public class YSMMesh extends HumanoidMesh {
      * runtime script evaluator, so per-bone transforms can be injected per frame.
      * The compute-shader part binding (partVBO, assigned when Epic Fight built the
      * ComputeShaderSetup during the super constructor) is carried over verbatim.
+     *
+     * Transforms are stored in a flat array indexed by part ordinal: the supplier
+     * (read by Epic Fight's per-part transform upload on the GPU path every frame)
+     * and the runtime evaluator both do O(1) array access instead of a string-keyed
+     * map lookup per part per frame.
      */
     private void rebindPartTransforms() {
         List<Map.Entry<String, SkinnedMeshPart>> entries = new ArrayList<>(this.parts.entrySet());
-        for (Map.Entry<String, SkinnedMeshPart> entry : entries) {
+        this.transformByPart = new OpenMatrix4f[entries.size()];
+        this.partIndex.clear();
+        for (int i = 0; i < entries.size(); i++) {
+            Map.Entry<String, SkinnedMeshPart> entry = entries.get(i);
             String partName = entry.getKey();
+            int index = i;
+            partIndex.put(partName, index);
             SkinnedMeshPart old = entry.getValue();
-            SkinnedMeshPart part = new SkinnedMeshPart(old.getVertices(), null, () -> this.runtimeTransforms.get(partName));
+            SkinnedMeshPart part = new SkinnedMeshPart(old.getVertices(), null,
+                    () -> this.transformByPart[index]);
             part.initVBO(old.getPartVBO());
             entry.setValue(part);
         }
@@ -81,11 +95,16 @@ public class YSMMesh extends HumanoidMesh {
     }
 
     public void setRuntimeTransform(String partName, OpenMatrix4f transform) {
-        this.runtimeTransforms.put(partName, transform);
+        Integer index = this.partIndex.get(partName);
+        if (index != null) {
+            this.transformByPart[index] = transform;
+        }
     }
 
     public void clearRuntimeTransforms() {
-        this.runtimeTransforms.clear();
+        if (this.transformByPart != null) {
+            java.util.Arrays.fill(this.transformByPart, null);
+        }
     }
 
     /** Typed view of this mesh's part entries for the runtime evaluator. */
