@@ -5,8 +5,10 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.mojang.blaze3d.platform.NativeImage;
 import com.ysmef.compat.YSMEpicFightCompat;
+import com.ysmef.compat.config.YSMCompatConfig;
 import com.ysmef.compat.model.runtime.YSMRuntimeModel;
 import com.ysmef.compat.ysm.YsmModelPackage;
+import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.resources.ResourceLocation;
@@ -99,6 +101,29 @@ public class YSMMeshLibrary {
 
     /** Models currently being converted on the background pool. */
     private static final Set<String> PENDING_MODELS = ConcurrentHashMap.newKeySet();
+
+    /**
+     * ModernYSM-style LRU usage tracking (access order): every successful mesh
+     * lookup touches its model; when the loaded model count exceeds the config
+     * cap, the least-recently-used models are evicted (GPU buffers + textures +
+     * compiled scripts released) and re-registered from the verified on-disk
+     * cache on next use.
+     */
+    private static final java.util.LinkedHashMap<String, Boolean> ACCESS_ORDER = new java.util.LinkedHashMap<>(64, 0.75f, true);
+
+    /** Models whose mesh was actually instantiated (accessor.get() succeeded), i.e. own GL resources. */
+    private static final Set<String> LOADED_MODELS = ConcurrentHashMap.newKeySet();
+
+    /**
+     * Invalidated by {@link #invalidateAll()}: in-flight lazy conversions of the
+     * previous generation must not register their (possibly stale) results after
+     * a model reload - the on-disk outputs stay valid and are re-verified by the
+     * next lookup, but the in-memory registration is dropped.
+     */
+    private static final java.util.concurrent.atomic.AtomicInteger LOAD_GENERATION = new java.util.concurrent.atomic.AtomicInteger();
+
+    /** textureRL string -> true when the texture has translucent pixels (alpha < 253). */
+    private static final Map<String, Boolean> TEXTURE_TRANSLUCENT = new ConcurrentHashMap<>();
 
     /** Background conversion pool (model decryption + mesh writing are pure CPU work). */
     private static final ExecutorService LAZY_POOL = Executors.newFixedThreadPool(
@@ -233,6 +258,7 @@ public class YSMMeshLibrary {
      */
     public static synchronized boolean ensureModel(String modelId) {
         if (MESHES.containsKey(modelId)) {
+            touch(modelId);
             return true;
         }
         if (FAILED_MODELS.contains(modelId) || PENDING_MODELS.contains(modelId)) {
@@ -243,6 +269,8 @@ public class YSMMeshLibrary {
         if (modelEntry != null && generatorVersionMatches()
                 && fingerprintMatches(modelId, modelEntry) && verifyModelOutputs(modelEntry)
                 && registerFromCache(modelId, modelEntry)) {
+            touch(modelId);
+            trimIfNeeded();
             return true;
         }
 
@@ -258,12 +286,22 @@ public class YSMMeshLibrary {
 
     /** Worker: convert one model off-thread and merge the result under the lock. */
     private static void convertModelAsync(String modelId) {
+        int generation = LOAD_GENERATION.get();
         try {
             ModelResult result = convertModel(modelId);
             synchronized (YSMMeshLibrary.class) {
+                if (generation != LOAD_GENERATION.get()) {
+                    // the caches were invalidated (model reload) while converting:
+                    // the on-disk outputs are still valid for the next lookup, but
+                    // the in-memory registration of this (possibly stale) result is dropped
+                    PENDING_MODELS.remove(modelId);
+                    return;
+                }
                 if (result != null) {
                     registerModelResult(result);
                     YSMRuntimeModel.invalidate(modelId);
+                    touch(modelId);
+                    trimIfNeeded();
                 } else {
                     FAILED_MODELS.add(modelId);
                 }
@@ -271,11 +309,117 @@ public class YSMMeshLibrary {
             }
         } catch (Throwable t) {
             synchronized (YSMMeshLibrary.class) {
-                FAILED_MODELS.add(modelId);
+                if (generation == LOAD_GENERATION.get()) {
+                    FAILED_MODELS.add(modelId);
+                }
                 PENDING_MODELS.remove(modelId);
             }
             YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: lazy mesh conversion failed for '{}'", modelId, t);
         }
+    }
+
+    /**
+     * Record a model usage (LRU touch). The access-ordered map makes the next
+     * {@link #trimIfNeeded()} evict the least-recently-used models first.
+     */
+    private static void touch(String modelId) {
+        synchronized (ACCESS_ORDER) {
+            ACCESS_ORDER.put(modelId, Boolean.TRUE);
+        }
+    }
+
+    /**
+     * ModernYSM-style LRU eviction: when more models are loaded than the config
+     * cap, release the least-recently-used ones (GPU buffers, textures, compiled
+     * scripts). The next lookup re-registers them from the verified on-disk
+     * cache without re-converting. GL/texture calls require the render thread,
+     * so eviction is skipped when called from a worker (the next render-thread
+     * lookup trims).
+     */
+    private static void trimIfNeeded() {
+        int cap = YSMCompatConfig.LAZY_MODEL_CACHE_SIZE.get();
+        java.util.Iterator<String> victimIterator;
+        synchronized (ACCESS_ORDER) {
+            if (ACCESS_ORDER.size() <= cap) {
+                return;
+            }
+            victimIterator = new java.util.ArrayList<>(ACCESS_ORDER.keySet()).iterator();
+        }
+        if (!RenderSystem.isOnRenderThread()) {
+            return;
+        }
+        synchronized (YSMMeshLibrary.class) {
+            int evicted = 0;
+            while (true) {
+                String victim;
+                synchronized (ACCESS_ORDER) {
+                    if (ACCESS_ORDER.size() <= cap || !victimIterator.hasNext()) {
+                        break;
+                    }
+                    victim = victimIterator.next();
+                    ACCESS_ORDER.remove(victim);
+                }
+                if (PENDING_MODELS.contains(victim) || FAILED_MODELS.contains(victim)) {
+                    continue;
+                }
+                if (evictModel(victim)) {
+                    evicted++;
+                }
+            }
+            if (evicted > 0) {
+                YSMEpicFightCompat.LOGGER.debug("YSM-EF Compat: evicted {} LRU models ({} loaded, cap {})",
+                        evicted, ACCESS_ORDER.size(), cap);
+            }
+        }
+    }
+
+    /**
+     * Release everything of one model (mesh GL resources, uploaded textures,
+     * compiled runtime scripts) and forget its registrations, so the next lookup
+     * re-registers it from the verified cache. Returns true when something was
+     * released.
+     */
+    private static boolean evictModel(String modelId) {
+        Meshes.MeshAccessor<YSMMesh> accessor = MESHES.remove(modelId);
+        if (accessor == null) {
+            return false;
+        }
+        if (LOADED_MODELS.remove(modelId)) {
+            try {
+                YSMMesh mesh = accessor.get();
+                if (mesh != null) {
+                    mesh.destroy();
+                    com.ysmef.compat.gpu.YsmGpuRenderPath.disposeMesh(mesh);
+                }
+            } catch (Throwable t) {
+                YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to release evicted model '{}'", modelId, t);
+            }
+        }
+        java.util.List<ResourceLocation> toRelease = new java.util.ArrayList<>();
+        synchronized (TEXTURE_LOCATIONS) {
+            java.util.Iterator<Map.Entry<String, ResourceLocation>> it = TEXTURE_LOCATIONS.entrySet().iterator();
+            while (it.hasNext()) {
+                Map.Entry<String, ResourceLocation> entry = it.next();
+                if (entry.getKey().startsWith(modelId + "#")) {
+                    toRelease.add(entry.getValue());
+                    it.remove();
+                }
+            }
+        }
+        for (ResourceLocation rl : toRelease) {
+            String key = rl.toString();
+            TEXTURE_DATA.remove(key);
+            TEXTURE_INFO.remove(key);
+            UPLOADED_TEXTURES.remove(key);
+            TEXTURE_TRANSLUCENT.remove(key);
+            try {
+                Minecraft.getInstance().getTextureManager().release(rl);
+            } catch (Throwable ignored) {
+            }
+        }
+        YSMRuntimeModel.invalidate(modelId);
+        YSMEpicFightCompat.LOGGER.debug("YSM-EF Compat: evicted model '{}' ({} textures released)", modelId, toRelease.size());
+        return true;
     }
 
     /**
@@ -487,13 +631,20 @@ public class YSMMeshLibrary {
      * a "/ysm model reload" command.
      */
     public static synchronized void invalidateAll() {
+        LOAD_GENERATION.incrementAndGet();
         MESHES.clear();
         TEXTURE_DATA.clear();
         TEXTURE_INFO.clear();
         TEXTURE_LOCATIONS.clear();
         UPLOADED_TEXTURES.clear();
+        TEXTURE_TRANSLUCENT.clear();
         FAILED_MODELS.clear();
         PENDING_MODELS.clear();
+        synchronized (ACCESS_ORDER) {
+            ACCESS_ORDER.clear();
+        }
+        LOADED_MODELS.clear();
+        com.ysmef.compat.gpu.YsmGpuRenderPath.disposeAll();
         YSMRuntimeModel.invalidateAll();
     }
 
@@ -811,7 +962,21 @@ public class YSMMeshLibrary {
      */
     public static Meshes.MeshAccessor<YSMMesh> findMesh(String modelId) {
         ensureModel(modelId);
-        return MESHES.get(modelId);
+        Meshes.MeshAccessor<YSMMesh> accessor = MESHES.get(modelId);
+        if (accessor != null) {
+            touch(modelId);
+        }
+        return accessor;
+    }
+
+    /**
+     * Record that the model's mesh was actually instantiated (owns GL resources:
+     * Epic Fight compute buffers + the GPU skinning buffers). Used by the LRU
+     * eviction to release those resources. Called after accessor.get() succeeds.
+     */
+    public static void markMeshLoaded(String modelId) {
+        LOADED_MODELS.add(modelId);
+        touch(modelId);
     }
 
     /**
@@ -849,12 +1014,46 @@ public class YSMMeshLibrary {
                 UPLOADED_TEXTURES.put(rl.toString(), Boolean.TRUE);
                 return;
             }
+            // the GPU skinning path needs the model's translucency for its two-pass draw
+            TEXTURE_TRANSLUCENT.put(rl.toString(), hasTranslucentPixels(image));
             Minecraft.getInstance().getTextureManager().register(rl, new DynamicTexture(image));
             UPLOADED_TEXTURES.put(rl.toString(), Boolean.TRUE);
         } catch (Throwable t) {
             YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to upload texture {}", rl, t);
             UPLOADED_TEXTURES.put(rl.toString(), Boolean.TRUE);
         }
+    }
+
+    /**
+     * Whether the model texture has translucent pixels (any alpha below 253),
+     * driving the GPU path's second (blended) draw pass. Unknown textures are
+     * treated as opaque.
+     */
+    public static boolean isTranslucentTexture(ResourceLocation rl) {
+        if (rl == null) {
+            return false;
+        }
+        return Boolean.TRUE.equals(TEXTURE_TRANSLUCENT.get(rl.toString()));
+    }
+
+    /** One-time scan of the decoded texture for translucent pixels (alpha < 253). */
+    private static boolean hasTranslucentPixels(NativeImage image) {
+        int width = image.getWidth();
+        int height = image.getHeight();
+        // large textures: sample a strided grid instead of every pixel
+        long pixels = (long) width * height;
+        int stride = 1;
+        if (pixels > 1_048_576) {
+            stride = (int) Math.ceil(Math.sqrt(pixels / 262_144.0));
+        }
+        for (int y = 0; y < height; y += stride) {
+            for (int x = 0; x < width; x += stride) {
+                if (((image.getPixelRGBA(x, y) >>> 24) & 0xFF) < 253) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**

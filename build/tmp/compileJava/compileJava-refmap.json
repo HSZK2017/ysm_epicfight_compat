@@ -1,4 +1,14 @@
 {
-  "mappings": {},
-  "data": {}
+  "mappings": {
+    "com/ysmef/compat/mixin/RenderSystemAccessorMixin": {
+      "shaderLightDirections": "shaderLightDirections:[Lorg/joml/Vector3f;"
+    }
+  },
+  "data": {
+    "searge": {
+      "com/ysmef/compat/mixin/RenderSystemAccessorMixin": {
+        "shaderLightDirections": "shaderLightDirections:[Lorg/joml/Vector3f;"
+      }
+    }
+  }
 }

@@ -6,6 +6,7 @@
   "refmap": "ysm_epicfight_compat.refmap.json",
   "client": [
     "PPlayerRendererMixin",
+    "RenderSystemAccessorMixin",
     "YsmArmRenderMixin",
     "YsmBackgroundHandMixin",
     "YsmPlayerRenderMixin",

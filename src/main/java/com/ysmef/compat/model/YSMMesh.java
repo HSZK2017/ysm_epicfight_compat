@@ -1,6 +1,7 @@
 package com.ysmef.compat.model;
 
 import com.mojang.blaze3d.vertex.PoseStack;
+import com.ysmef.compat.gpu.YsmGpuRenderPath;
 import com.ysmef.compat.model.runtime.YSMRuntimeBridge;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
@@ -101,6 +102,19 @@ public class YSMMesh extends HumanoidMesh {
         }
     }
 
+    /** Number of mesh parts (the bone SSBO of the GPU path has one entry per part). */
+    public int getPartCount() {
+        return this.transformByPart != null ? this.transformByPart.length : 0;
+    }
+
+    /** The current runtime transform of a part by ordinal, or null for identity. */
+    public OpenMatrix4f getPartTransform(int ordinal) {
+        if (this.transformByPart == null || ordinal < 0 || ordinal >= this.transformByPart.length) {
+            return null;
+        }
+        return this.transformByPart[ordinal];
+    }
+
     public void clearRuntimeTransforms() {
         if (this.transformByPart != null) {
             java.util.Arrays.fill(this.transformByPart, null);
@@ -133,6 +147,13 @@ public class YSMMesh extends HumanoidMesh {
         YSMRuntimeBridge.apply(this, armature, poses);
         ResourceLocation texture = resolveTexture();
         logDrawDiagOnce(texture);
+        // ModernYSM-style direct GPU skinning path (bone SSBO + skinning shader):
+        // one glDrawArrays per model, vertex skinning fully on the GPU. Falls back
+        // to Epic Fight's compute-shader path automatically when unavailable.
+        if (texture != null && YsmGpuRenderPath.tryRender(this, poseStack, bufferSources, texture,
+                packedLight, r, g, b, a, overlay, armature, poses)) {
+            return;
+        }
         RenderType finalRenderType = texture != null
                 ? EpicFightRenderTypes.replaceTexture(texture, renderType)
                 : renderType;

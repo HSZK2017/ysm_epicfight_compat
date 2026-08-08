@@ -1,6 +1,7 @@
 package com.ysmef.compat.model.runtime;
 
 import com.ysmef.compat.YSMEpicFightCompat;
+import com.ysmef.compat.config.YSMCompatConfig;
 import com.ysmef.compat.model.EFMeshJsonWriter;
 import com.ysmef.compat.model.YSMMesh;
 import com.ysmef.compat.ysm.script.Molang;
@@ -54,7 +55,7 @@ public final class YSMPlayerAnimator implements Molang.Env {
     private final Map<String, Double> queries = new HashMap<>();
     private ItemStack mainHand = ItemStack.EMPTY;
     private ItemStack offHand = ItemStack.EMPTY;
-    private String currentState = "";
+    private volatile String currentState = "";
     private float animTimeCurrent;
 
     // frame tracking
@@ -74,8 +75,14 @@ public final class YSMPlayerAnimator implements Molang.Env {
     private final boolean[] hasPos, hasRot, hasScale;
     private final Matrix4f[] localAnim;
     private final Matrix4f[] deltaModel;
-    private final Matrix4f[] chainDelta;
-    private final float[] effMinScale;
+    /** Double-buffered composed chain deltas: the worker evaluates into one buffer while the render thread reads the other. */
+    private final Matrix4f[][] chainDeltaBuf;
+    /** Double-buffered effective visibility scales (same layout as chainDeltaBuf). */
+    private final float[][] effMinScaleBuf;
+    /** Buffer index currently written by evaluate(); the read side uses {@link #readyBuffer}. */
+    private int writeBuf;
+    /** Buffer index of the last completed evaluation, published via the volatile write. */
+    private volatile int readyBuffer = -1;
     private final boolean[] composed;
     private final OpenMatrix4f[] partMats;
     private final Matrix4f scratchA = new Matrix4f();
@@ -98,9 +105,28 @@ public final class YSMPlayerAnimator implements Molang.Env {
     // the last evaluated bone state into the mesh instead of re-evaluating molang.
     private static final double LOD_DIST_SQR_NEAR = 40.0 * 40.0;
     private static final double LOD_DIST_SQR_FAR = 64.0 * 64.0;
-    private boolean evaluatedOnce = false;
+    private volatile boolean evaluatedOnce = false;
 
     private final List<YSMRuntimeModel.CompiledAnim> activeAnims = new ArrayList<>();
+
+    /**
+     * ModernYSM-style async script evaluation: evaluations for entities other
+     * than the local player run on this single-threaded daemon pool; the render
+     * thread consumes the last completed result (double-buffered, see
+     * chainDeltaBuf/effMinScaleBuf). The first evaluation of each animator stays
+     * synchronous so the mesh never starts in an un-evaluated state.
+     */
+    private static final java.util.concurrent.ExecutorService SCRIPT_POOL = java.util.concurrent.Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "ysm-ef-script");
+        thread.setDaemon(true);
+        return thread;
+    });
+
+    /** Dedupe flag: only one evaluation may be in flight per animator. */
+    private final java.util.concurrent.atomic.AtomicBoolean evalPending = new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /** Global switch: disabled permanently after the first off-thread failure. */
+    private static volatile boolean ASYNC_EVAL_FAILED = false;
 
     private long lastDiagLogNanos = 0;
     private long diagFrameCounter = 0;
@@ -116,14 +142,15 @@ public final class YSMPlayerAnimator implements Molang.Env {
         hasScale = new boolean[n];
         localAnim = new Matrix4f[n];
         deltaModel = new Matrix4f[n];
-        chainDelta = new Matrix4f[n];
-        effMinScale = new float[n];
+        chainDeltaBuf = new Matrix4f[2][n];
+        effMinScaleBuf = new float[2][n];
         composed = new boolean[n];
         partMats = new OpenMatrix4f[n];
         for (int i = 0; i < n; i++) {
             localAnim[i] = new Matrix4f();
             deltaModel[i] = new Matrix4f();
-            chainDelta[i] = new Matrix4f();
+            chainDeltaBuf[0][i] = new Matrix4f();
+            chainDeltaBuf[1][i] = new Matrix4f();
             partMats[i] = new OpenMatrix4f();
         }
         channelCursor = new int[model.channelCount];
@@ -140,19 +167,52 @@ public final class YSMPlayerAnimator implements Molang.Env {
      * state from the last full evaluation is replayed into the mesh, so a
      * rate-limited entity keeps rendering its last known pose instead of
      * recomputing it.
+     *
+     * For entities other than the local player the evaluation itself runs on a
+     * background thread (ModernYSM-style, config scriptAsyncEval): the render
+     * thread replays the last completed result, so the per-frame cost on the
+     * render thread is only the mesh push (O(parts), no molang).
      */
     public void apply(YSMMesh mesh, LivingEntity entity, OpenMatrix4f[] poses, float partialTick) {
         double now = (entity.tickCount + partialTick) / 20.0;
-        mainHand = entity.getItemInHand(InteractionHand.MAIN_HAND);
-        offHand = entity.getItemInHand(InteractionHand.OFF_HAND);
-        updatePosDelta(entity);
-
         if (shouldFullEval(entity)) {
-            evaluate(entity, partialTick, now);
-            evaluatedOnce = true;
+            if (!evaluatedOnce || !useAsyncEval(entity)) {
+                evaluate(entity, partialTick, now);
+                evaluatedOnce = true;
+            } else {
+                submitAsyncEval(entity, partialTick, now);
+            }
         }
         pushToMesh(mesh);
         logDiagPeriodic(mesh);
+    }
+
+    private boolean useAsyncEval(LivingEntity entity) {
+        return YSMCompatConfig.ENABLE_SCRIPT_ASYNC_EVAL.get() && !ASYNC_EVAL_FAILED
+                && Minecraft.getInstance().player != entity;
+    }
+
+    /**
+     * Submit one evaluation to the script pool (deduped: at most one in flight
+     * per animator). Runs the same evaluate() as the synchronous path; the
+     * double-buffered result state is published via the volatile readyBuffer.
+     */
+    private void submitAsyncEval(LivingEntity entity, float partialTick, double now) {
+        if (!evalPending.compareAndSet(false, true)) {
+            return;
+        }
+        SCRIPT_POOL.execute(() -> {
+            try {
+                evaluate(entity, partialTick, now);
+                evaluatedOnce = true;
+            } catch (Throwable t) {
+                // never leave the render path broken: fall back to synchronous evaluation
+                ASYNC_EVAL_FAILED = true;
+                YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: async script evaluation failed for model '{}', falling back to synchronous evaluation", model.modelId, t);
+            } finally {
+                evalPending.set(false);
+            }
+        });
     }
 
     /**
@@ -183,9 +243,16 @@ public final class YSMPlayerAnimator implements Molang.Env {
     /**
      * Full evaluation: refresh the query context, resolve the state machine and
      * evaluate all active animations into the scratch arrays, then compose the
-     * per-bone chain deltas and effective visibility scales.
+     * per-bone chain deltas and effective visibility scales into the currently
+     * unused buffer and publish it (volatile readyBuffer). Entity reads
+     * (held items, position delta, ...) happen here, so the whole evaluation is
+     * self-contained and can run on the script pool.
      */
     private void evaluate(LivingEntity entity, float partialTick, double now) {
+        writeBuf = readyBuffer < 0 ? 0 : 1 - readyBuffer;
+        mainHand = entity.getItemInHand(InteractionHand.MAIN_HAND);
+        offHand = entity.getItemInHand(InteractionHand.OFF_HAND);
+        updatePosDelta(entity);
         String state = resolveState(entity);
         if (!state.equals(currentState)) {
             currentState = state;
@@ -211,6 +278,7 @@ public final class YSMPlayerAnimator implements Molang.Env {
         }
 
         compose();
+        readyBuffer = writeBuf;
     }
 
     /**
@@ -237,9 +305,13 @@ public final class YSMPlayerAnimator implements Molang.Env {
             }
         }
         int transformed = 0;
-        for (int i = 0; i < model.bones.length; i++) {
-            if (!isIdentity(chainDelta[i])) {
-                transformed++;
+        int ready = readyBuffer;
+        if (ready >= 0) {
+            Matrix4f[] chain = chainDeltaBuf[ready];
+            for (int i = 0; i < model.bones.length; i++) {
+                if (!isIdentity(chain[i])) {
+                    transformed++;
+                }
             }
         }
         YSMEpicFightCompat.LOGGER.info(
@@ -417,7 +489,7 @@ public final class YSMPlayerAnimator implements Molang.Env {
 
     /**
      * Compose the per-bone chain deltas and effective visibility scales into the
-     * persistent arrays. Runs only on full-evaluation frames.
+     * current write buffer. Runs only on full-evaluation frames.
      */
     private void compose() {
         java.util.Arrays.fill(composed, false);
@@ -430,18 +502,24 @@ public final class YSMPlayerAnimator implements Molang.Env {
     /**
      * Push the stored per-bone state (hidden flags + chain deltas) into the mesh
      * parts. Runs every frame - also on rate-limited frames, replaying the state
-     * from the last full evaluation so the shared mesh always reflects the entity
-     * currently being drawn.
+     * from the last full evaluation (read side of the double buffer) so the
+     * shared mesh always reflects the entity currently being drawn.
      */
     private void pushToMesh(YSMMesh mesh) {
         ensurePartMap(mesh);
+        int ready = readyBuffer;
+        if (ready < 0) {
+            return;
+        }
+        float[] eff = effMinScaleBuf[ready];
+        Matrix4f[] chain = chainDeltaBuf[ready];
         for (int i = 0; i < partEntries.size(); i++) {
             int boneIdx = partBoneIdx[i];
             MeshPart part = partEntries.get(i).getValue();
-            boolean hidden = effMinScale[boneIdx] < HIDE_SCALE_EPSILON;
+            boolean hidden = eff[boneIdx] < HIDE_SCALE_EPSILON;
             part.setHidden(hidden);
-            if (!hidden && !isIdentity(chainDelta[boneIdx])) {
-                importInto(partMats[boneIdx], chainDelta[boneIdx]);
+            if (!hidden && !isIdentity(chain[boneIdx])) {
+                importInto(partMats[boneIdx], chain[boneIdx]);
                 mesh.setRuntimeTransform(partEntries.get(i).getKey(), partMats[boneIdx]);
             }
         }
@@ -528,6 +606,8 @@ public final class YSMPlayerAnimator implements Molang.Env {
         if (bone.parent >= 0) {
             composeBone(bone.parent);
         }
+        Matrix4f[] chain = chainDeltaBuf[writeBuf];
+        float[] eff = effMinScaleBuf[writeBuf];
 
         float sx = hasScale[i] ? animScale[i][0] : 1f;
         float sy = hasScale[i] ? animScale[i][1] : 1f;
@@ -564,12 +644,12 @@ public final class YSMPlayerAnimator implements Molang.Env {
 
         float parentMinScale = 1f;
         if (bone.parent >= 0) {
-            parentMinScale = effMinScale[bone.parent];
-            chainDelta[i].set(chainDelta[bone.parent]).mul(deltaModel[i]);
+            parentMinScale = eff[bone.parent];
+            chain[i].set(chain[bone.parent]).mul(deltaModel[i]);
         } else {
-            chainDelta[i].set(deltaModel[i]);
+            chain[i].set(deltaModel[i]);
         }
-        effMinScale[i] = parentMinScale * Math.min(sx, Math.min(sy, sz));
+        eff[i] = parentMinScale * Math.min(sx, Math.min(sy, sz));
         composed[i] = true;
     }
 

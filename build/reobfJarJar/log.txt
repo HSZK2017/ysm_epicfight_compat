@@ -196,8 +196,11 @@ Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/enti
 Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/entity/passive/EntityMaid/playSound(Lnet/minecraft/sounds/SoundEvent;FF)V from net/minecraft/world/entity/Entity/playSound(Lnet/minecraft/sounds/SoundEvent;FF)V: playSound -> m_5496_
 Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/entity/passive/EntityMaid/hurtCurrentlyUsedShield(F)V from net/minecraft/world/entity/LivingEntity/hurtCurrentlyUsedShield(F)V: hurtCurrentlyUsedShield -> m_7909_
 Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/entity/passive/EntityMaid/handleRelativeFrictionAndCalculateMovement(Lnet/minecraft/world/phys/Vec3;F)Lnet/minecraft/world/phys/Vec3; from net/minecraft/world/entity/LivingEntity/handleRelativeFrictionAndCalculateMovement(Lnet/minecraft/world/phys/Vec3;F)Lnet/minecraft/world/phys/Vec3;: handleRelativeFrictionAndCalculateMovement -> m_21074_
+Conflicting propagated mapping for yesman/epicfight/client/renderer/EpicFightRenderTypes/lambda$static$6(Lnet/minecraft/resources/ResourceLocation;)Lnet/minecraft/client/renderer/RenderType; from net/minecraft/client/renderer/RenderType/lambda$static$6(Lnet/minecraft/resources/ResourceLocation;)Lnet/minecraft/client/renderer/RenderType;: lambda$static$6 -> m_285695_
 Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/entity/passive/EntityMaid/hasRestriction()Z from net/minecraft/world/entity/Mob/hasRestriction()Z: hasRestriction -> m_21536_
+Conflicting propagated mapping for yesman/epicfight/client/renderer/EpicFightRenderTypes/debugQuads()Lnet/minecraft/client/renderer/RenderType; from net/minecraft/client/renderer/RenderType/debugQuads()Lnet/minecraft/client/renderer/RenderType;: debugQuads -> m_269166_
 Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/entity/passive/EntityMaid/getMeleeAttackRangeSqr(Lnet/minecraft/world/entity/LivingEntity;)D from net/minecraft/world/entity/Mob/getMeleeAttackRangeSqr(Lnet/minecraft/world/entity/LivingEntity;)D: getMeleeAttackRangeSqr -> m_142593_
+Conflicting propagated mapping for yesman/epicfight/client/renderer/EpicFightRenderTypes/lambda$static$5(Lnet/minecraft/resources/ResourceLocation;)Lnet/minecraft/client/renderer/RenderType; from net/minecraft/client/renderer/RenderType/lambda$static$5(Lnet/minecraft/resources/ResourceLocation;)Lnet/minecraft/client/renderer/RenderType;: lambda$static$5 -> m_285687_
 Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/entity/passive/EntityMaid/isBlocking()Z from net/minecraft/world/entity/LivingEntity/isBlocking()Z: isBlocking -> m_21254_
 Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/entity/passive/EntityMaid/getVoicePitch()F from net/minecraft/world/entity/LivingEntity/getVoicePitch()F: getVoicePitch -> m_6100_
 Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/entity/passive/EntityMaid/isFood(Lnet/minecraft/world/item/ItemStack;)Z from net/minecraft/world/entity/animal/Animal/isFood(Lnet/minecraft/world/item/ItemStack;)Z: isFood -> m_6898_
@@ -220,9 +223,6 @@ Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/enti
 Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/entity/passive/EntityMaid/shootCrossbowProjectile(Lnet/minecraft/world/entity/LivingEntity;Lnet/minecraft/world/item/ItemStack;Lnet/minecraft/world/entity/projectile/Projectile;F)V from net/minecraft/world/entity/monster/CrossbowAttackMob/shootCrossbowProjectile(Lnet/minecraft/world/entity/LivingEntity;Lnet/minecraft/world/item/ItemStack;Lnet/minecraft/world/entity/projectile/Projectile;F)V: shootCrossbowProjectile -> m_5811_
 Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/entity/passive/EntityMaid/setChargingCrossbow(Z)V from net/minecraft/world/entity/monster/CrossbowAttackMob/setChargingCrossbow(Z)V: setChargingCrossbow -> m_6136_
 Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/api/entity/IMaid/onClimbable()Z from com/github/tartaricacid/touhoulittlemaid/entity/passive/EntityMaid/onClimbable()Z: onClimbable -> m_6147_
-Conflicting propagated mapping for yesman/epicfight/client/renderer/EpicFightRenderTypes/lambda$static$6(Lnet/minecraft/resources/ResourceLocation;)Lnet/minecraft/client/renderer/RenderType; from net/minecraft/client/renderer/RenderType/lambda$static$6(Lnet/minecraft/resources/ResourceLocation;)Lnet/minecraft/client/renderer/RenderType;: lambda$static$6 -> m_285695_
-Conflicting propagated mapping for yesman/epicfight/client/renderer/EpicFightRenderTypes/debugQuads()Lnet/minecraft/client/renderer/RenderType; from net/minecraft/client/renderer/RenderType/debugQuads()Lnet/minecraft/client/renderer/RenderType;: debugQuads -> m_269166_
-Conflicting propagated mapping for yesman/epicfight/client/renderer/EpicFightRenderTypes/lambda$static$5(Lnet/minecraft/resources/ResourceLocation;)Lnet/minecraft/client/renderer/RenderType; from net/minecraft/client/renderer/RenderType/lambda$static$5(Lnet/minecraft/resources/ResourceLocation;)Lnet/minecraft/client/renderer/RenderType;: lambda$static$5 -> m_285687_
 Adding extras
 Sorting
 Writing Output: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\reobfJarJar\output.jar
@@ -244,9 +244,16 @@ Writing Output: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\reo
   com/ysmef/compat/event/YSMCompatClientEvents.class
   com/ysmef/compat/event/YSMReloadTrigger.class
   com/ysmef/compat/event/YSMRenderHook.class
+  com/ysmef/compat/gpu/
+  com/ysmef/compat/gpu/GpuShaderUtil.class
+  com/ysmef/compat/gpu/YsmBoneSkinShader.class
+  com/ysmef/compat/gpu/YsmGpuCapability.class
+  com/ysmef/compat/gpu/YsmGpuMesh.class
+  com/ysmef/compat/gpu/YsmGpuRenderPath.class
   com/ysmef/compat/mixin/
   com/ysmef/compat/mixin/OpenYsmPlayerRenderMixin.class
   com/ysmef/compat/mixin/PPlayerRendererMixin.class
+  com/ysmef/compat/mixin/RenderSystemAccessorMixin.class
   com/ysmef/compat/mixin/YsmArmRenderMixin.class
   com/ysmef/compat/mixin/YsmBackgroundHandMixin.class
   com/ysmef/compat/mixin/YsmFishingHookRenderMixin.class
@@ -339,3 +346,7 @@ Writing Output: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\reo
   ysm_epicfight_compat.eftlm.mixins.json
   ysm_epicfight_compat.mixins.json
   ysm_epicfight_compat.refmap.json
+  ysm_epicfight_compat/
+  ysm_epicfight_compat/shaders/
+  ysm_epicfight_compat/shaders/bone_skin.fsh
+  ysm_epicfight_compat/shaders/bone_skin.vsh

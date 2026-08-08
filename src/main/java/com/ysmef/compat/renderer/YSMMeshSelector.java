@@ -80,6 +80,7 @@ public final class YSMMeshSelector {
         }
         try {
             YSMMesh mesh = accessor.get();
+            YSMMeshLibrary.markMeshLoaded(modelId);
             mesh.setRuntimeModelId(modelId);
             YSMRuntimeBridge.setCurrentEntity(entity);
             if (texture != null) {
