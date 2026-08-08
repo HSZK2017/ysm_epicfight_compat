@@ -4,6 +4,7 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.ysmef.compat.ysm.YsmModelPackage;
+import com.ysmef.compat.ysm.script.ScriptAnim;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 
@@ -81,7 +82,7 @@ public class EFMeshJsonWriter {
         if (quads < 0) {
             return -1;
         }
-        writeRuntimeJson(pkg, geoModel, runtimeFile);
+        writeRuntimeJson(geoModel, pkg.scriptAnims, runtimeFile, true);
         return quads;
     }
 
@@ -168,9 +169,16 @@ public class EFMeshJsonWriter {
     /**
      * Writes the runtime script JSON consumed by YSMRuntimeModel: the bone table
      * (hierarchy, bind transforms, EF joint binding) plus the molang animations that
-     * drive YSM's model-changing behavior.
+     * drive the model's variant behavior. Used for YSM packages as well as TLM
+     * model-pack models that ship bedrock animation files.
+     *
+     * @param tlmShowBackpack for TLM model-pack models: whether the model entry's
+     *                        "show_backpack" allows the model's own backpack
+     *                        geometry (driven by the tlm.has_backpack query).
+     *                        Always true for YSM packages.
      */
-    private static void writeRuntimeJson(YsmModelPackage pkg, YSMGeoModel geoModel, Path runtimeFile) throws IOException {
+    public static void writeRuntimeJson(YSMGeoModel geoModel, Map<String, ScriptAnim> scriptAnims,
+                                        Path runtimeFile, boolean tlmShowBackpack) throws IOException {
         JsonObject root = new JsonObject();
 
         JsonArray bones = new JsonArray();
@@ -194,7 +202,9 @@ public class EFMeshJsonWriter {
         }
         root.add("bones", bones);
 
-        root.add("animations", com.ysmef.compat.ysm.script.ScriptJson.animationsToJson(pkg.scriptAnims));
+        root.addProperty("tlm_show_backpack", tlmShowBackpack);
+
+        root.add("animations", com.ysmef.compat.ysm.script.ScriptJson.animationsToJson(scriptAnims));
 
         writeFileAtomic(runtimeFile, new GsonBuilder().create().toJson(root).getBytes(StandardCharsets.UTF_8));
     }

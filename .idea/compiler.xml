@@ -4,6 +4,7 @@
     <annotationProcessing>
       <profile name="Gradle Imported" enabled="true">
         <outputRelativeToContentRoot value="true" />
+        <option name="MSG_MIXIN_SOFT_TARGET_NOT_FOUND" value="warning" />
         <processorPath useClasspath="false">
           <entry name="$USER_HOME$/.gradle/caches/modules-2/files-2.1/org.spongepowered/mixin/0.8.5/6d1c8bf4c28e697f472a83bd6add76ec4951734/mixin-0.8.5-processor.jar" />
         </processorPath>
@@ -11,5 +12,12 @@
       </profile>
     </annotationProcessing>
     <bytecodeTargetLevel target="17" />
+  </component>
+  <component name="JavacSettings">
+    <option name="ADDITIONAL_OPTIONS_OVERRIDE">
+      <module name="YSM_EpicFight_Compat.main" options="-AMSG_MIXIN_SOFT_TARGET_NOT_FOUND=warning" />
+      <module name="YSM_EpicFight_Compat.test" options="-AMSG_MIXIN_SOFT_TARGET_NOT_FOUND=warning" />
+      <module name="com.ysmef.YSM_EpicFight_Compat" options="-AMSG_MIXIN_SOFT_TARGET_NOT_FOUND=warning" />
+    </option>
   </component>
 </project>

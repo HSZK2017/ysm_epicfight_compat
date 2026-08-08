@@ -21,9 +21,11 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -64,11 +66,18 @@ public final class YSMRuntimeModel {
     /** Number of compiled keyframe channels; used to size per-animator cursor arrays. */
     final int channelCount;
 
+    /**
+     * TLM model-pack entries may forbid the model's own backpack geometry
+     * ("show_backpack": false); the tlm.has_backpack query is forced to 0 then.
+     * Always true for YSM packages.
+     */
+    public final boolean tlmShowBackpack;
+
     private final Map<UUID, YSMPlayerAnimator> animators = new ConcurrentHashMap<>();
 
     private YSMRuntimeModel(String modelId, BoneRt[] bones, Map<String, Integer> boneIndex,
                             List<CompiledAnim> parallels, Map<String, CompiledAnim> states,
-                            Map<String, CompiledAnim> conditionAnims, int channelCount) {
+                            Map<String, CompiledAnim> conditionAnims, int channelCount, boolean tlmShowBackpack) {
         this.modelId = modelId;
         this.bones = bones;
         this.boneIndex = boneIndex;
@@ -76,6 +85,7 @@ public final class YSMRuntimeModel {
         this.states = states;
         this.conditionAnims = conditionAnims;
         this.channelCount = channelCount;
+        this.tlmShowBackpack = tlmShowBackpack;
     }
 
     public YSMPlayerAnimator animatorFor(LivingEntity entity) {
@@ -101,8 +111,9 @@ public final class YSMRuntimeModel {
 
     /**
      * Per-bone visibility of the model's default form, computed once from the
-     * parallel scripts (pre_parallel* / parallel*) with a frozen, all-default
-     * molang environment (no variables set, every query/function returning 0).
+     * parallel scripts (pre_parallel* / parallel*) with a frozen, neutral
+     * molang environment (no variables set; queries default to full health /
+     * standing / idle, everything else 0, see {@link #newDefaultEnv()}).
      * YSM collapses animation-driven variant geometry (weapons, expressions,
      * attachments) to scale 0 in those scripts, so evaluating them statically
      * yields exactly the main model without any animation-related variants.
@@ -221,7 +232,26 @@ public final class YSMRuntimeModel {
 
             @Override
             public double getQuery(String path) {
-                return 0.0;
+                // Neutral query defaults for the model's default form: full health
+                // (so damage-driven variants like low-HP bodies collapse away),
+                // standing on the ground, idle state, everything else unset.
+                // All-zero defaults would evaluate health conditions as "dead"
+                // (query.health = 0), leaving low-HP variant geometry visible in
+                // the default form rendered during Epic Fight combat animations.
+                if (path.startsWith("q.")) {
+                    path = "query." + path.substring(2);
+                }
+                switch (path) {
+                    case "query.health":
+                    case "query.max_health":
+                        return 20.0;
+                    case "query.is_on_ground":
+                    case "query.is_alive":
+                    case "ctrl.idle":
+                        return 1.0;
+                    default:
+                        return 0.0;
+                }
             }
 
             @Override
@@ -256,7 +286,7 @@ public final class YSMRuntimeModel {
             if (CACHE.containsKey(modelId)) {
                 return CACHE.get(modelId);
             }
-            Path file = YSMMeshLibrary.getRuntimeFile(YSMMeshLibrary.meshIdOf(modelId));
+            Path file = runtimeFileOf(modelId);
             try {
                 String json = Files.readString(file);
                 YSMRuntimeModel model = compile(modelId, JsonParser.parseString(json).getAsJsonObject());
@@ -268,6 +298,37 @@ public final class YSMRuntimeModel {
                 return null;
             }
         }
+    }
+
+    /**
+     * Resolves the runtime file of a model id. TLM model-pack meshes keep their
+     * runtime scripts under the tlm/ subdir and are named "namespace__path"
+     * (tlmMeshIdOf); TLM's extra-texture variants (model_id + "_" + md5(texturePath))
+     * share the base model's runtime file. YSM model ids use the plain sanitize
+     * name at the top level.
+     */
+    private static Path runtimeFileOf(String modelId) {
+        List<Path> candidates = new ArrayList<>();
+        addRuntimeCandidates(candidates, YSMMeshLibrary.meshIdOf(modelId));
+        String tlmId = YSMMeshLibrary.tlmMeshIdOf(modelId);
+        if (tlmId != null && !tlmId.equals(YSMMeshLibrary.meshIdOf(modelId))) {
+            addRuntimeCandidates(candidates, tlmId);
+        }
+        if (tlmId != null && tlmId.length() > 33 && tlmId.matches(".*_[0-9a-f]{32}")) {
+            // TLM extra-texture variant: reuse the base model's runtime file
+            addRuntimeCandidates(candidates, tlmId.substring(0, tlmId.length() - 33));
+        }
+        for (Path candidate : candidates) {
+            if (Files.isRegularFile(candidate)) {
+                return candidate;
+            }
+        }
+        return candidates.get(0);
+    }
+
+    private static void addRuntimeCandidates(List<Path> out, String meshId) {
+        out.add(YSMMeshLibrary.getRuntimeFile(meshId));
+        out.add(YSMMeshLibrary.getRuntimeFile("tlm/" + meshId));
     }
 
     /** Forget one cached runtime model (called after its mesh was (re)converted). */
@@ -333,26 +394,36 @@ public final class YSMRuntimeModel {
         List<CompiledAnim> parallels = new ArrayList<>();
         Map<String, CompiledAnim> states = new HashMap<>();
         Map<String, CompiledAnim> conditions = new HashMap<>();
+        Set<String> brokenAnims = new HashSet<>();
         JsonObject anims = root.has("animations") ? root.getAsJsonObject("animations") : null;
         int nextChannelId = 0;
         if (anims != null) {
             for (Map.Entry<String, JsonElement> entry : anims.entrySet()) {
                 String name = entry.getKey();
-                CompiledAnim anim = compileAnim(ScriptJson.animationsFromJson(name, entry.getValue().getAsJsonObject()), boneIndex);
-                if (name.startsWith("pre_parallel") || name.startsWith("parallel")) {
-                    parallels.add(anim);
-                } else if (isConditionAnim(name)) {
-                    conditions.put(name, anim);
-                } else {
-                    states.put(name, anim);
+                try {
+                    CompiledAnim anim = compileAnim(ScriptJson.animationsFromJson(name, entry.getValue().getAsJsonObject()), boneIndex);
+                    if (name.startsWith("pre_parallel") || name.startsWith("parallel")) {
+                        parallels.add(anim);
+                    } else if (isConditionAnim(name)) {
+                        conditions.put(name, anim);
+                    } else {
+                        states.put(name, anim);
+                    }
+                    nextChannelId = assignChannelIds(anim, nextChannelId);
+                } catch (Exception e) {
+                    // One broken molang animation must not disable variant visibility
+                    // for the whole model (that would render every variant at once).
+                    if (brokenAnims.add(name)) {
+                        YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: skipped broken runtime animation '{}': {}", name, e.toString());
+                    }
                 }
-                nextChannelId = assignChannelIds(anim, nextChannelId);
             }
         }
         // pre_parallel* first, then parallel*, each in numeric order
         parallels.sort(Comparator.comparing((CompiledAnim a) -> a.name.startsWith("pre_parallel") ? 0 : 1)
                 .thenComparing(a -> a.name));
-        return new YSMRuntimeModel(modelId, bones, boneIndex, parallels, states, conditions, nextChannelId);
+        boolean tlmShowBackpack = !root.has("tlm_show_backpack") || root.get("tlm_show_backpack").getAsBoolean();
+        return new YSMRuntimeModel(modelId, bones, boneIndex, parallels, states, conditions, nextChannelId, tlmShowBackpack);
     }
 
     /**

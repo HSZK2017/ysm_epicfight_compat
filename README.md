@@ -51,8 +51,8 @@
 
 | 类 | 职责 |
 |---|---|
-| `YsmModelPackage` | 统一入口——按 modelId 加载目录包或二进制包，返回几何 + 贴图 + 属性 + 脚本动画 (`ScriptAnim`) |
-| `YsmBinaryReader` | 二进制格式反序列化：`format` 版本链 (legacy V1/V15、modern 16+)，几何段、贴图表、动画/控制器/声音跳过；字节序 LE，VarInt LEB128 |
+| `YsmModelPackage` | 统一入口——按 modelId 加载目录包或二进制包，返回几何 + 贴图 + 属性 + 脚本动画 (`ScriptAnim`) + 动画控制器 (`ScriptController`, 探针输入) |
+| `YsmBinaryReader` | 二进制格式反序列化：`format` 版本链 (legacy V1/V15、modern 16+)，几何段、贴图表、动画、**动画控制器** (1.5.0 起解析，供动态骨骼探针)、声音/函数跳过；字节序 LE，VarInt LEB128 |
 | `YsmFileCrypto` | `.ysm` 解密管线：XChaCha20 解密 → MT19937 白化 → 魔改 zstd 块头洗牌 → 标准 zstd 流式解压 |
 | `ScriptJson` / `ScriptAnim` / `Molang` | YSM 脚本动画的解析与编译：Bedrock 动画 JSON → Molang 表达式编译 (`v./q./query./ctrl./math.` 查询/变量) → `YSMRuntimeModel` 加载时编译 |
 
@@ -135,7 +135,6 @@
 | `YSMReloadTrigger` | YSM 模型重载命令检测 + 断开世界时清空模型选择缓存 |
 
 ### 多人联机模型同步 (1.3.0)
-
 | 机制 | 细节 |
 |---|---|
 | **通信协议** | 参照 OpenYSM 2.6.5 网络协议 (`参考/OpenYSM/.../network`)：独立通道 `ysm_epicfight_compat:model_sync`，登录时接受任意版本，握手用 S2C/C2S 版本检查包 (YSM id 51/52 模式) 在 netty Connection 上记录协商版本 (AttributeKey)，握手完成前不交换模型数据 |
@@ -164,9 +163,20 @@ YSM release jar 的 932 个类被混淆；9 个 Mixin 安全类 (含 mixins.json
 
 OpenYSM (`参考/OpenYSM`，同 modId `yes_steve_model`、同包名，未混淆) 与 release jar 互斥。`OpenYsmPlayerRenderMixin` 以字符串 targets 引用 OpenYSM 类 (`com.elfmcys.yesstevemodel.client.event.ReplacePlayerRenderEvent`)，编译期不依赖 OpenYSM jar；运行于 release YSM 时该 target 缺失 → Mixin 仅告警并跳过 (非 strict 配置不崩溃)，运行于 OpenYSM 时正常生效，其余 7 个混淆名 Mixin 同样仅告警跳过。
 
+### 动态骨骼物理 (1.5.0)
+
+| 机制 | 细节 |
+|---|---|
+| **动态骨骼识别（控制器探针）** | 不再依赖骨骼命名（YSM 命名混乱：中文模型的"眼尾"含"尾"、前臂"ForeArm"含"ear"）。`DynamicBoneProbe` 借用模型自带的**动画控制器 + parallel 脚本**：在两个合成 molang 环境（静止 vs 快速旋转/奔跑：`yaw_speed=600°/s`、头部偏航 60°、冲刺地速、下落速度、`position_delta`）中重放状态机（含 transitions/on_entry/on_exit）与平行动画，对每个骨骼的旋转/位移通道取两环境最大差值，超过阈值（或弱信号+运动变量链分析）即为动态骨骼。类别先取名称提示，未知命名按绑定几何启发（头下→发、躯干后方→尾、腰下→裙）。结果在转换时写入运行时 JSON 的 `dyn` 字段；探针异常/旧缓存回退面部安全版名称分类器 |
+| **真实物理模拟** | 纯 Java Verlet 粒子链（参考 AnimationPhysics 的运动学锚定+链式约束+静止姿态弹簧架构，无原生库依赖）：重力 + 锚点加速度惯性伪力（快速移动/转身时头发裙摆自然摆动）+ 时间修正 Verlet 积分 + 刚性段距离约束 + 按类别刚度回拉（尾巴/耳朵回弹快、头发自由下垂）+ 暖启动（首帧对齐动画姿态，无爆燃） |
+| **身体碰撞箱** | 从已映射骨骼自动构建胶囊碰撞体（Torso→Chest、Chest→Head、双臂、双腿、头骨球），每帧由 EF 实时姿态定位；粒子被推出碰撞体（绑定姿态已重叠的粒子/碰撞体对永久忽略，发根在头骨内不再抖动）；半径按关节 bind→render 伸缩系数换算。配置 `dynamicPhysics.collision` 可关 |
+| **脚本姿态保留** | 物理每帧围绕"脚本动画求值后的静止姿态"摆动（compose→physics→recompose 三遍式），YSM 自带的耳朵抖动等脚本动作作为静止姿态保留，物理只叠加二次运动 |
+| **眼睛飞走修复** | ① 面部/脚本载体骨骼（eye/lid/brow/mouth/眼/睫/眉/嘴/molang* 等）永不参与物理——旧版"眼尾"被误判为尾巴骨骼导致眼角部件被单摆甩飞又弹回；② `query.yaw_speed` 差分加 `wrapDegrees`——快速转头越过 ±180° 边界时不再产生数千度/秒的尖峰踢飞所有 yaw 驱动脚本通道 |
+| **版本** | GENERATOR_VERSION 升至 5：旧缓存全部重转以获得探针数据 |
+
 ---
 
-## 参考资源
+
 
 ### YSM 源码与格式
 
@@ -185,6 +195,8 @@ OpenYSM (`参考/OpenYSM`，同 modId `yes_steve_model`、同包名，未混淆)
 | `20.14.17 runtime jar` | 反编译/javap 验证运行时 API——`PatchedLivingEntityRenderer`、`WearableItemLayer`、`EpicFightRenderTypes`、`PHumanoidRenderer`、`ClientConfig` |
 | `assets/animmodels/entity/biped.json` | EF 网格 JSON 格式规范——12 标准部件、6 角点/四边形预三角化格式、`render_properties` 贴图路径 |
 | `参考/EpicFight_TouhouLittleMaid` | 参考兼容范例——`MeshAccessor.create` 注册模式、`PHumanoidRenderer` 补丁渲染器模式 |
+| `参考/AnimationPhysics` | 动态骨骼物理架构参考——运动学锚定头、逐段刚体、6DOF 约束、`JointSpring` 静止姿态力矩、暖启动姿态同步（本模组以纯 Java Verlet 复现其架构，无原生库） |
+| `参考/EpicFight-Skin` | 物理与 EF 姿态回写集成参考——物理结果写回 armature pose 的时机与插值缓存 |
 
 ---
 
@@ -219,3 +231,4 @@ OpenYSM (`参考/OpenYSM`，同 modId `yes_steve_model`、同包名，未混淆)
 7. **非 PNG/JPEG 贴图**: 其他格式 (WebP/AVIF/BMP) 不支持解码，跳过并告警
 8. **缓存健壮性 (1.1.0 起, 1.4.0 改逐模型)**: manifest 记录输出哈希，缓存恢复前对**该模型**的输出逐文件校验；被半生成/复制损坏的缓存只强制重转该模型而非永久信任；所有输出文件原子写入，资源重载不会读到半截 JSON
 9. **懒转换首用延迟**: 模型首次被渲染时若缓存未命中，转换在后台进行，玩家会短暂回退 EF biped (约几帧) 后切换为 YSM 模型；本地首次换上新模型同理。转换本身 <0.5s/模型，仅一次
+10. **动态物理参数为通用值**: 碰撞体半径/刚度按类别取通用常量（头发 0.05、裙子 0.07 等），不读取模型作者可能的自定义物理参数；探针只识别"对运动有响应"的骨骼，纯关键帧循环但名称不含任何提示的部件不会被识别为动态骨骼 (可在配置中关闭碰撞或整体物理)

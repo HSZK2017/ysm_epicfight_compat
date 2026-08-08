@@ -5,6 +5,8 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.ysmef.compat.YSMEpicFightCompat;
+import com.ysmef.compat.ysm.script.ScriptAnim;
+import com.ysmef.compat.ysm.script.ScriptJson;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.resources.Resource;
 import net.minecraft.server.packs.resources.ResourceManager;
@@ -163,6 +165,8 @@ public final class TlmModelLibrary {
         }
         if (geoModel == null) return false;
 
+        Map<String, ScriptAnim> scriptAnims = loadScriptAnimsFromDisk(packRoot, namespace, entry);
+
         // resolve texture file
         ResourceLocation ourTexture = null;
         String texPathStr = entry.has("texture")
@@ -179,7 +183,33 @@ public final class TlmModelLibrary {
             }
         }
 
-        return writeAndRegister(modelId, modelIdRl, geoModel, scale, ourTexture);
+        boolean showBackpack = !entry.has("show_backpack") || entry.get("show_backpack").getAsBoolean();
+
+        // extra textures become model variants (model_id + "_" + md5(texturePath)),
+        // the same ids TLM hands out through EntityMaid#getModelId
+        Map<String, ResourceLocation> extraTextures = new LinkedHashMap<>();
+        if (entry.has("extra_textures") && entry.get("extra_textures").isJsonArray()) {
+            for (JsonElement elem : entry.getAsJsonArray("extra_textures")) {
+                ResourceLocation texRl = ResourceLocation.tryParse(elem.getAsString());
+                if (texRl == null) {
+                    continue;
+                }
+                Path extraFile = packRoot.resolve("assets").resolve(texRl.getNamespace()).resolve(texRl.getPath());
+                if (!Files.isRegularFile(extraFile)) {
+                    continue;
+                }
+                try {
+                    ResourceLocation registered = YSMMeshLibrary.registerTextureBytes(
+                            "tlm/" + sanitize(texRl.getNamespace()) + "/" + sanitize(texRl.getPath() + "_" + variantHash(texRl)),
+                            Files.readAllBytes(extraFile));
+                    extraTextures.put(modelId + "_" + variantHash(texRl), registered);
+                } catch (Exception e) {
+                    YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to read TLM extra texture {}: {}", texRl, e.toString());
+                }
+            }
+        }
+
+        return writeAndRegister(modelId, modelIdRl, geoModel, scale, ourTexture, scriptAnims, showBackpack, extraTextures);
     }
 
     /** Convert a model entry, reading model/texture files via the resource manager (jar-builtin). */
@@ -215,6 +245,8 @@ public final class TlmModelLibrary {
         }
         if (geoModel == null) return false;
 
+        Map<String, ScriptAnim> scriptAnims = loadScriptAnimsFromRM(resourceManager, entry);
+
         ResourceLocation ourTexture = null;
         Optional<Resource> textureResource = resourceManager.getResource(textureRl);
         if (textureResource.isPresent()) {
@@ -227,11 +259,37 @@ public final class TlmModelLibrary {
             }
         }
 
-        return writeAndRegister(modelId, modelIdRl, geoModel, scale, ourTexture);
+        boolean showBackpack = !entry.has("show_backpack") || entry.get("show_backpack").getAsBoolean();
+
+        Map<String, ResourceLocation> extraTextures = new LinkedHashMap<>();
+        if (entry.has("extra_textures") && entry.get("extra_textures").isJsonArray()) {
+            for (JsonElement elem : entry.getAsJsonArray("extra_textures")) {
+                ResourceLocation texRl = ResourceLocation.tryParse(elem.getAsString());
+                if (texRl == null) {
+                    continue;
+                }
+                Optional<Resource> extraResource = resourceManager.getResource(texRl);
+                if (extraResource.isEmpty()) {
+                    continue;
+                }
+                try (InputStream in = extraResource.get().open()) {
+                    ResourceLocation registered = YSMMeshLibrary.registerTextureBytes(
+                            "tlm/" + sanitize(texRl.getNamespace()) + "/" + sanitize(texRl.getPath() + "_" + variantHash(texRl)),
+                            in.readAllBytes());
+                    extraTextures.put(modelId + "_" + variantHash(texRl), registered);
+                } catch (Exception e) {
+                    YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to read TLM extra texture {}: {}", texRl, e.toString());
+                }
+            }
+        }
+
+        return writeAndRegister(modelId, modelIdRl, geoModel, scale, ourTexture, scriptAnims, showBackpack, extraTextures);
     }
 
     private static boolean writeAndRegister(String modelId, ResourceLocation modelIdRl,
-                                            YSMGeoModel geoModel, float scale, ResourceLocation ourTexture) {
+                                            YSMGeoModel geoModel, float scale, ResourceLocation ourTexture,
+                                            Map<String, ScriptAnim> scriptAnims, boolean showBackpack,
+                                            Map<String, ResourceLocation> extraTextures) {
         String meshFile = sanitize(modelIdRl.getNamespace()) + "__" + sanitize(modelIdRl.getPath());
         Path outFile = MESH_DIR.resolve(meshFile + ".json");
         String texturePath = ourTexture != null
@@ -244,12 +302,113 @@ public final class TlmModelLibrary {
             YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to write TLM mesh for {}: {}", modelId, e.toString());
             return false;
         }
+        if (!scriptAnims.isEmpty()) {
+            try {
+                EFMeshJsonWriter.writeRuntimeJson(geoModel, scriptAnims,
+                        YSMMeshLibrary.getRuntimeFile("tlm/" + meshFile), showBackpack);
+            } catch (Exception e) {
+                YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to write TLM runtime for {}: {}", modelId, e.toString());
+            }
+        }
 
         Meshes.MeshAccessor<YSMMesh> accessor = Meshes.MeshAccessor.create(
                 YSMEpicFightCompat.MODID, "entity/tlm/" + meshFile,
                 (loader) -> loader.loadSkinnedMesh(YSMMesh::new));
         MESHES.put(modelId, new TlmMeshEntry(accessor, ourTexture));
+        for (Map.Entry<String, ResourceLocation> variant : extraTextures.entrySet()) {
+            MESHES.put(variant.getKey(), new TlmMeshEntry(accessor, variant.getValue()));
+        }
         return true;
+    }
+
+    /**
+     * The md5(texture path) suffix TLM appends to a model id for every
+     * extra_textures variant (see TLM's CustomModelPack#decorate).
+     */
+    private static String variantHash(ResourceLocation textureRl) {
+        try {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("MD5");
+            byte[] bytes = digest.digest(textureRl.getPath().getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(32);
+            for (byte b : bytes) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            return Integer.toHexString(textureRl.getPath().hashCode());
+        }
+    }
+
+    /**
+     * Loads the model entry's bedrock animation files (TLM model packs animate their
+     * models with the same bedrock animation JSON format as YSM) and keeps only the
+     * animations relevant to the Epic Fight compat runtime (see ScriptJson).
+     * The molang variants driven by these scripts (low-HP forms, magic circles,
+     * held-item props) then collapse correctly in battle mode and animate in idle
+     * mode instead of rendering all at once.
+     */
+    private static Map<String, ScriptAnim> loadScriptAnimsFromDisk(Path packRoot, String namespace, JsonObject entry) {
+        Map<String, ScriptAnim> out = new LinkedHashMap<>();
+        JsonArray animations = entry.has("animation") && entry.get("animation").isJsonArray()
+                ? entry.getAsJsonArray("animation") : null;
+        if (animations == null) {
+            return out;
+        }
+        for (JsonElement animElem : animations) {
+            ResourceLocation animRl = ResourceLocation.tryParse(animElem.getAsString());
+            if (animRl == null) {
+                continue;
+            }
+            Path animFile = packRoot.resolve("assets").resolve(animRl.getNamespace()).resolve(animRl.getPath());
+            if (!Files.isRegularFile(animFile)) {
+                continue;
+            }
+            try {
+                mergeScriptAnims(JsonParser.parseString(Files.readString(animFile, StandardCharsets.UTF_8)).getAsJsonObject(), out);
+            } catch (Exception e) {
+                YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to parse TLM animation {}: {}", animRl, e.toString());
+            }
+        }
+        return out;
+    }
+
+    private static Map<String, ScriptAnim> loadScriptAnimsFromRM(ResourceManager resourceManager, JsonObject entry) {
+        Map<String, ScriptAnim> out = new LinkedHashMap<>();
+        JsonArray animations = entry.has("animation") && entry.get("animation").isJsonArray()
+                ? entry.getAsJsonArray("animation") : null;
+        if (animations == null) {
+            return out;
+        }
+        for (JsonElement animElem : animations) {
+            ResourceLocation animRl = ResourceLocation.tryParse(animElem.getAsString());
+            if (animRl == null) {
+                continue;
+            }
+            Optional<Resource> resource = resourceManager.getResource(animRl);
+            if (resource.isEmpty()) {
+                continue;
+            }
+            try (InputStream in = resource.get().open()) {
+                String json = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+                mergeScriptAnims(JsonParser.parseString(json).getAsJsonObject(), out);
+            } catch (Exception e) {
+                YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to parse TLM animation {}: {}", animRl, e.toString());
+            }
+        }
+        return out;
+    }
+
+    /** Merges all runtime-relevant animations of one bedrock animation file into the output map. */
+    private static void mergeScriptAnims(JsonObject root, Map<String, ScriptAnim> out) {
+        if (!root.has("animations") || !root.get("animations").isJsonObject()) {
+            return;
+        }
+        JsonObject anims = root.getAsJsonObject("animations");
+        for (Map.Entry<String, JsonElement> entry : anims.entrySet()) {
+            if (ScriptJson.isRuntimeRelevant(entry.getKey()) && entry.getValue().isJsonObject()) {
+                out.put(entry.getKey(), ScriptJson.fromBedrock(entry.getKey(), entry.getValue().getAsJsonObject()));
+            }
+        }
     }
 
     private static String sanitize(String value) {

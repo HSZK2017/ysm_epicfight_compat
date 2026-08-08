@@ -932,6 +932,13 @@ public final class YSMPlayerAnimator implements Molang.Env {
         q.put("ysm.hurt_time", (double) entity.hurtTime);
         q.put("ysm.food_level", (double) (entity instanceof Player player ? player.getFoodData().getFoodLevel() : 20));
 
+        // TLM model-pack query: whether the maid's own backpack geometry is shown
+        // (TLM exposes this as tlm.has_backpack = EntityMaid.hasBackpack(); the
+        // model entry's "show_backpack": false additionally forces it to 0).
+        q.put("tlm.has_backpack",
+                model.tlmShowBackpack && entity instanceof com.github.tartaricacid.touhoulittlemaid.entity.passive.EntityMaid maid
+                        && maid.hasBackpack() ? 1.0 : 0.0);
+
         q.put("ctrl.idle", currentState.equals("idle") || currentState.equals("new_idle_empty") ? 1.0 : 0.0);
         q.put("ctrl.run", currentState.equals("run") ? 1.0 : 0.0);
         q.put("ctrl.walk", currentState.equals("walk") ? 1.0 : 0.0);
