@@ -50,9 +50,13 @@ public final class YSMPlayerAnimator implements Molang.Env {
 
     private final YSMRuntimeModel model;
 
-    // molang state
-    private final Map<String, Double> vars = new HashMap<>();
-    private final Map<String, Double> queries = new HashMap<>();
+    // molang state (id-keyed slots, see Molang#idOf: queries and variables are
+    // interned into stable integer ids at compile time, so the hot evaluation
+    // path does no String hashing)
+    private double[] varsById = new double[32];
+    private boolean[] varSetById = new boolean[32];
+    private double[] queriesById = new double[256];
+    private static final int Q_ANIM_TIME = Molang.idOf("query.anim_time");
     private ItemStack mainHand = ItemStack.EMPTY;
     private ItemStack offHand = ItemStack.EMPTY;
     private volatile String currentState = "";
@@ -799,28 +803,51 @@ public final class YSMPlayerAnimator implements Molang.Env {
 
     @Override
     public double getVar(String path) {
-        return vars.getOrDefault(path, 0.0);
+        return getVarById(Molang.idOf(path));
     }
 
     @Override
     public boolean hasVar(String path) {
-        return vars.containsKey(path);
+        return hasVarById(Molang.idOf(path));
     }
 
     @Override
     public void setVar(String path, double value) {
-        vars.put(path, value);
+        setVarById(Molang.idOf(path), value);
     }
 
     @Override
     public double getQuery(String path) {
-        if (path.startsWith("q.")) {
-            path = "query." + path.substring(2);
+        return getQueryById(Molang.queryIdOf(path));
+    }
+
+    @Override
+    public double getVarById(int id) {
+        return id < varsById.length && varSetById[id] ? varsById[id] : 0.0;
+    }
+
+    @Override
+    public boolean hasVarById(int id) {
+        return id < varsById.length && varSetById[id];
+    }
+
+    @Override
+    public void setVarById(int id, double value) {
+        if (id >= varsById.length) {
+            int newLen = Math.max(id + 1, varsById.length * 2);
+            varsById = java.util.Arrays.copyOf(varsById, newLen);
+            varSetById = java.util.Arrays.copyOf(varSetById, newLen);
         }
-        if (path.equals("query.anim_time")) {
+        varsById[id] = value;
+        varSetById[id] = true;
+    }
+
+    @Override
+    public double getQueryById(int id) {
+        if (id == Q_ANIM_TIME) {
             return animTimeCurrent;
         }
-        return queries.getOrDefault(path, 0.0);
+        return id < queriesById.length ? queriesById[id] : 0.0;
     }
 
     @Override
@@ -929,8 +956,16 @@ public final class YSMPlayerAnimator implements Molang.Env {
         lastPosZ = entity.getZ();
     }
 
+    /** Write one query slot by its interned id (grows the slot array on demand). */
+    private void setQuery(String path, double value) {
+        int id = Molang.queryIdOf(path);
+        if (id >= queriesById.length) {
+            queriesById = java.util.Arrays.copyOf(queriesById, Math.max(id + 1, queriesById.length * 2));
+        }
+        queriesById[id] = value;
+    }
+
     private void fillQueries(LivingEntity entity, float partialTick, double now) {
-        Map<String, Double> q = queries;
         Minecraft mc = Minecraft.getInstance();
 
         float headYaw = entity.yHeadRotO + (entity.yHeadRot - entity.yHeadRotO) * partialTick;
@@ -952,77 +987,77 @@ public final class YSMPlayerAnimator implements Molang.Env {
         boolean onGround = entity.onGround();
         boolean crouching = entity.getPose() == Pose.CROUCHING;
 
-        q.put("query.life_time", now);
-        q.put("query.health", (double) entity.getHealth());
-        q.put("query.max_health", (double) entity.getMaxHealth());
-        q.put("query.hurt_time", (double) entity.hurtTime);
-        q.put("query.vertical_speed", verticalSpeed);
-        q.put("query.ground_speed", groundSpeed);
-        q.put("query.yaw_speed", yawSpeedDeg);
-        q.put("query.is_sneaking", onGround && crouching ? 1.0 : 0.0);
-        q.put("query.is_swimming", entity.isSwimming() ? 1.0 : 0.0);
-        q.put("query.is_sprinting", entity.isSprinting() ? 1.0 : 0.0);
-        q.put("query.is_on_ground", onGround ? 1.0 : 0.0);
-        q.put("query.is_jumping", !isCreativeFlying(entity) && !entity.isPassenger() && !onGround && !entity.isInWater() ? 1.0 : 0.0);
-        q.put("query.is_riding", entity.isPassenger() ? 1.0 : 0.0);
-        q.put("query.is_sleeping", entity.isSleeping() ? 1.0 : 0.0);
-        q.put("query.is_in_water", entity.isInWater() ? 1.0 : 0.0);
-        q.put("query.is_in_water_or_rain", entity.isInWaterRainOrBubble() ? 1.0 : 0.0);
-        q.put("query.is_gliding", entity.isFallFlying() ? 1.0 : 0.0);
-        q.put("query.is_on_fire", entity.isOnFire() ? 1.0 : 0.0);
-        q.put("query.is_playing_dead", entity.isDeadOrDying() ? 1.0 : 0.0);
-        q.put("query.is_spectator", entity instanceof Player player && player.isSpectator() ? 1.0 : 0.0);
-        q.put("query.is_using_item", entity.isUsingItem() ? 1.0 : 0.0);
-        q.put("query.is_eating", entity.getUseItem().getUseAnimation() == net.minecraft.world.item.UseAnim.EAT ? 1.0 : 0.0);
-        q.put("query.is_first_person", mc.options.getCameraType() == CameraType.FIRST_PERSON ? 1.0 : 0.0);
-        q.put("query.item_in_use_duration", entity.getTicksUsingItem() / 20.0);
-        q.put("query.item_max_use_duration", entity.getUseItem().getUseDuration() / 20.0);
-        q.put("query.item_remaining_use_duration", entity.getUseItemRemainingTicks() / 20.0);
-        q.put("query.walk_distance", (double) entity.moveDist);
-        q.put("query.modified_distance_moved", (double) entity.walkDist);
-        q.put("query.body_x_rotation", (double) entity.getXRot());
-        q.put("query.body_y_rotation", (double) net.minecraft.util.Mth.wrapDegrees(entity.getYRot()));
-        q.put("query.head_x_rotation", (double) netHeadYaw);
-        q.put("query.head_y_rotation", (double) headPitch);
-        q.put("query.cardinal_facing_2d", (double) entity.getDirection().get3DDataValue());
-        q.put("query.time_of_day", (entity.level().getDayTime() % 24000L) / 24000.0);
-        q.put("query.time_stamp", (double) entity.level().getDayTime());
-        q.put("query.moon_phase", (double) entity.level().getMoonPhase());
-        q.put("query.player_level", (double) (entity instanceof Player player ? player.experienceLevel : 0));
-        q.put("query.has_rider", entity.isVehicle() ? 1.0 : 0.0);
-        q.put("query.actor_count", 0.0);
+        setQuery("query.life_time", now);
+        setQuery("query.health", (double) entity.getHealth());
+        setQuery("query.max_health", (double) entity.getMaxHealth());
+        setQuery("query.hurt_time", (double) entity.hurtTime);
+        setQuery("query.vertical_speed", verticalSpeed);
+        setQuery("query.ground_speed", groundSpeed);
+        setQuery("query.yaw_speed", yawSpeedDeg);
+        setQuery("query.is_sneaking", onGround && crouching ? 1.0 : 0.0);
+        setQuery("query.is_swimming", entity.isSwimming() ? 1.0 : 0.0);
+        setQuery("query.is_sprinting", entity.isSprinting() ? 1.0 : 0.0);
+        setQuery("query.is_on_ground", onGround ? 1.0 : 0.0);
+        setQuery("query.is_jumping", !isCreativeFlying(entity) && !entity.isPassenger() && !onGround && !entity.isInWater() ? 1.0 : 0.0);
+        setQuery("query.is_riding", entity.isPassenger() ? 1.0 : 0.0);
+        setQuery("query.is_sleeping", entity.isSleeping() ? 1.0 : 0.0);
+        setQuery("query.is_in_water", entity.isInWater() ? 1.0 : 0.0);
+        setQuery("query.is_in_water_or_rain", entity.isInWaterRainOrBubble() ? 1.0 : 0.0);
+        setQuery("query.is_gliding", entity.isFallFlying() ? 1.0 : 0.0);
+        setQuery("query.is_on_fire", entity.isOnFire() ? 1.0 : 0.0);
+        setQuery("query.is_playing_dead", entity.isDeadOrDying() ? 1.0 : 0.0);
+        setQuery("query.is_spectator", entity instanceof Player player && player.isSpectator() ? 1.0 : 0.0);
+        setQuery("query.is_using_item", entity.isUsingItem() ? 1.0 : 0.0);
+        setQuery("query.is_eating", entity.getUseItem().getUseAnimation() == net.minecraft.world.item.UseAnim.EAT ? 1.0 : 0.0);
+        setQuery("query.is_first_person", mc.options.getCameraType() == CameraType.FIRST_PERSON ? 1.0 : 0.0);
+        setQuery("query.item_in_use_duration", entity.getTicksUsingItem() / 20.0);
+        setQuery("query.item_max_use_duration", entity.getUseItem().getUseDuration() / 20.0);
+        setQuery("query.item_remaining_use_duration", entity.getUseItemRemainingTicks() / 20.0);
+        setQuery("query.walk_distance", (double) entity.moveDist);
+        setQuery("query.modified_distance_moved", (double) entity.walkDist);
+        setQuery("query.body_x_rotation", (double) entity.getXRot());
+        setQuery("query.body_y_rotation", (double) net.minecraft.util.Mth.wrapDegrees(entity.getYRot()));
+        setQuery("query.head_x_rotation", (double) netHeadYaw);
+        setQuery("query.head_y_rotation", (double) headPitch);
+        setQuery("query.cardinal_facing_2d", (double) entity.getDirection().get3DDataValue());
+        setQuery("query.time_of_day", (entity.level().getDayTime() % 24000L) / 24000.0);
+        setQuery("query.time_stamp", (double) entity.level().getDayTime());
+        setQuery("query.moon_phase", (double) entity.level().getMoonPhase());
+        setQuery("query.player_level", (double) (entity instanceof Player player ? player.experienceLevel : 0));
+        setQuery("query.has_rider", entity.isVehicle() ? 1.0 : 0.0);
+        setQuery("query.actor_count", 0.0);
         if (mc.gameRenderer != null && mc.gameRenderer.getMainCamera() != null) {
-            q.put("query.distance_from_camera", mc.gameRenderer.getMainCamera().getPosition().distanceTo(entity.position()));
+            setQuery("query.distance_from_camera", mc.gameRenderer.getMainCamera().getPosition().distanceTo(entity.position()));
         }
 
-        q.put("ysm.head_yaw", (double) netHeadYaw);
-        q.put("ysm.head_pitch", (double) headPitch);
-        q.put("ysm.has_mainhand", mainHand.isEmpty() ? 0.0 : 1.0);
-        q.put("ysm.has_offhand", offHand.isEmpty() ? 0.0 : 1.0);
-        q.put("ysm.has_helmet", entity.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.HEAD).isEmpty() ? 0.0 : 1.0);
-        q.put("ysm.has_chest_plate", entity.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.CHEST).isEmpty() ? 0.0 : 1.0);
-        q.put("ysm.has_leggings", entity.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.LEGS).isEmpty() ? 0.0 : 1.0);
-        q.put("ysm.has_boots", entity.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.FEET).isEmpty() ? 0.0 : 1.0);
-        q.put("ysm.has_elytra", entity.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.CHEST).is(Items.ELYTRA) ? 1.0 : 0.0);
-        q.put("ysm.is_sleep", entity.getPose() == Pose.SLEEPING ? 1.0 : 0.0);
-        q.put("ysm.is_sneak", onGround && crouching ? 1.0 : 0.0);
-        q.put("ysm.is_passenger", entity.isPassenger() ? 1.0 : 0.0);
-        q.put("ysm.is_riptide", entity.isAutoSpinAttack() ? 1.0 : 0.0);
-        q.put("ysm.armor_value", (double) entity.getArmorValue());
-        q.put("ysm.hurt_time", (double) entity.hurtTime);
-        q.put("ysm.food_level", (double) (entity instanceof Player player ? player.getFoodData().getFoodLevel() : 20));
+        setQuery("ysm.head_yaw", (double) netHeadYaw);
+        setQuery("ysm.head_pitch", (double) headPitch);
+        setQuery("ysm.has_mainhand", mainHand.isEmpty() ? 0.0 : 1.0);
+        setQuery("ysm.has_offhand", offHand.isEmpty() ? 0.0 : 1.0);
+        setQuery("ysm.has_helmet", entity.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.HEAD).isEmpty() ? 0.0 : 1.0);
+        setQuery("ysm.has_chest_plate", entity.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.CHEST).isEmpty() ? 0.0 : 1.0);
+        setQuery("ysm.has_leggings", entity.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.LEGS).isEmpty() ? 0.0 : 1.0);
+        setQuery("ysm.has_boots", entity.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.FEET).isEmpty() ? 0.0 : 1.0);
+        setQuery("ysm.has_elytra", entity.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.CHEST).is(Items.ELYTRA) ? 1.0 : 0.0);
+        setQuery("ysm.is_sleep", entity.getPose() == Pose.SLEEPING ? 1.0 : 0.0);
+        setQuery("ysm.is_sneak", onGround && crouching ? 1.0 : 0.0);
+        setQuery("ysm.is_passenger", entity.isPassenger() ? 1.0 : 0.0);
+        setQuery("ysm.is_riptide", entity.isAutoSpinAttack() ? 1.0 : 0.0);
+        setQuery("ysm.armor_value", (double) entity.getArmorValue());
+        setQuery("ysm.hurt_time", (double) entity.hurtTime);
+        setQuery("ysm.food_level", (double) (entity instanceof Player player ? player.getFoodData().getFoodLevel() : 20));
 
         // TLM model-pack query: whether the maid's own backpack geometry is shown
         // (TLM exposes this as tlm.has_backpack = EntityMaid.hasBackpack(); the
         // model entry's "show_backpack": false additionally forces it to 0).
-        q.put("tlm.has_backpack",
+        setQuery("tlm.has_backpack",
                 model.tlmShowBackpack && entity instanceof com.github.tartaricacid.touhoulittlemaid.entity.passive.EntityMaid maid
                         && maid.hasBackpack() ? 1.0 : 0.0);
 
-        q.put("ctrl.idle", currentState.equals("idle") || currentState.equals("new_idle_empty") ? 1.0 : 0.0);
-        q.put("ctrl.run", currentState.equals("run") ? 1.0 : 0.0);
-        q.put("ctrl.walk", currentState.equals("walk") ? 1.0 : 0.0);
-        q.put("ctrl.playing_extra_animation", 0.0);
+        setQuery("ctrl.idle", currentState.equals("idle") || currentState.equals("new_idle_empty") ? 1.0 : 0.0);
+        setQuery("ctrl.run", currentState.equals("run") ? 1.0 : 0.0);
+        setQuery("ctrl.walk", currentState.equals("walk") ? 1.0 : 0.0);
+        setQuery("ctrl.playing_extra_animation", 0.0);
     }
 
     private static boolean isCreativeFlying(LivingEntity entity) {

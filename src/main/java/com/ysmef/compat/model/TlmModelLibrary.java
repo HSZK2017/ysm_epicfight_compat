@@ -318,6 +318,8 @@ public final class TlmModelLibrary {
         for (Map.Entry<String, ResourceLocation> variant : extraTextures.entrySet()) {
             MESHES.put(variant.getKey(), new TlmMeshEntry(accessor, variant.getValue()));
         }
+        // compile the runtime scripts on the background pool, not the render thread
+        YSMMeshLibrary.preloadRuntimeAsync(modelId);
         return true;
     }
 

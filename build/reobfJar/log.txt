@@ -139,8 +139,8 @@ Adding Libraries to Inheritance
 Reading Input: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\libs\YSM_EpicFight_Compat-1.20.1-1.4.0.jar
 Adding input to inheritance map
 Processing entries
-Conflicting propagated mapping for yesman/epicfight/api/client/model/Meshes/reload(Lnet/minecraft/server/packs/resources/PreparableReloadListener$PreparationBarrier;Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;Lnet/minecraft/util/profiling/ProfilerFiller;Ljava/util/concurrent/Executor;Ljava/util/concurrent/Executor;)Ljava/util/concurrent/CompletableFuture; from net/minecraft/server/packs/resources/PreparableReloadListener/reload(Lnet/minecraft/server/packs/resources/PreparableReloadListener$PreparationBarrier;Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;Lnet/minecraft/util/profiling/ProfilerFiller;Ljava/util/concurrent/Executor;Ljava/util/concurrent/Executor;)Ljava/util/concurrent/CompletableFuture;: reload -> m_5540_
 Conflicting propagated mapping for com/ysmef/compat/gui/YsmGpuRenderCheckbox/onPress()V from net/minecraft/client/gui/components/Checkbox/onPress()V: onPress -> m_5691_
+Conflicting propagated mapping for yesman/epicfight/api/client/model/Meshes/reload(Lnet/minecraft/server/packs/resources/PreparableReloadListener$PreparationBarrier;Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;Lnet/minecraft/util/profiling/ProfilerFiller;Ljava/util/concurrent/Executor;Ljava/util/concurrent/Executor;)Ljava/util/concurrent/CompletableFuture; from net/minecraft/server/packs/resources/PreparableReloadListener/reload(Lnet/minecraft/server/packs/resources/PreparableReloadListener$PreparationBarrier;Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;Lnet/minecraft/util/profiling/ProfilerFiller;Ljava/util/concurrent/Executor;Ljava/util/concurrent/Executor;)Ljava/util/concurrent/CompletableFuture;: reload -> m_5540_
 Conflicting propagated mapping for com/elfmcys/yesstevemodel/O0o000o0oOoOoOoOOO0oOOoO/render(Lnet/minecraft/client/gui/GuiGraphics;IIF)V from net/minecraft/client/gui/screens/Screen/render(Lnet/minecraft/client/gui/GuiGraphics;IIF)V: render -> m_88315_
 Conflicting propagated mapping for com/elfmcys/yesstevemodel/O0o000o0oOoOoOoOOO0oOOoO/init()V from net/minecraft/client/gui/screens/Screen/init()V: init -> m_7856_
 Conflicting propagated mapping for net/minecraft/world/entity/LivingEntity/lambda$addAdditionalSaveData$3(Lnet/minecraft/nbt/CompoundTag;Lnet/minecraft/nbt/Tag;)V from net/minecraft/world/entity/player/Player/lambda$addAdditionalSaveData$3(Lnet/minecraft/nbt/CompoundTag;Lnet/minecraft/nbt/Tag;)V: lambda$addAdditionalSaveData$3 -> m_219754_
@@ -339,6 +339,7 @@ Writing Output: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\reo
   com/ysmef/compat/ysm/YsmFileCrypto.class
   com/ysmef/compat/ysm/YsmModelPackage.class
   com/ysmef/compat/ysm/script/
+  com/ysmef/compat/ysm/script/Molang$1.class
   com/ysmef/compat/ysm/script/Molang$CoalesceExpr.class
   com/ysmef/compat/ysm/script/Molang$Env.class
   com/ysmef/compat/ysm/script/Molang$Expr.class

@@ -213,45 +213,40 @@ public final class YSMRuntimeModel {
 
     private static Molang.Env newDefaultEnv() {
         return new Molang.Env() {
-            private final Map<String, Double> vars = new HashMap<>();
+            private final java.util.Map<Integer, Double> vars = new HashMap<>();
+            private final java.util.Set<Integer> varSet = new HashSet<>();
 
             @Override
-            public double getVar(String path) {
-                return vars.getOrDefault(path, 0.0);
+            public double getVarById(int id) {
+                return varSet.contains(id) ? vars.getOrDefault(id, 0.0) : 0.0;
             }
 
             @Override
-            public boolean hasVar(String path) {
-                return vars.containsKey(path);
+            public boolean hasVarById(int id) {
+                return varSet.contains(id);
             }
 
             @Override
-            public void setVar(String path, double value) {
-                vars.put(path, value);
+            public void setVarById(int id, double value) {
+                vars.put(id, value);
+                varSet.add(id);
             }
 
             @Override
-            public double getQuery(String path) {
+            public double getQueryById(int id) {
                 // Neutral query defaults for the model's default form: full health
                 // (so damage-driven variants like low-HP bodies collapse away),
                 // standing on the ground, idle state, everything else unset.
                 // All-zero defaults would evaluate health conditions as "dead"
                 // (query.health = 0), leaving low-HP variant geometry visible in
                 // the default form rendered during Epic Fight combat animations.
-                if (path.startsWith("q.")) {
-                    path = "query." + path.substring(2);
+                if (id == Q_HEALTH || id == Q_MAX_HEALTH) {
+                    return 20.0;
                 }
-                switch (path) {
-                    case "query.health":
-                    case "query.max_health":
-                        return 20.0;
-                    case "query.is_on_ground":
-                    case "query.is_alive":
-                    case "ctrl.idle":
-                        return 1.0;
-                    default:
-                        return 0.0;
+                if (id == Q_ON_GROUND || id == Q_ALIVE || id == Q_IDLE) {
+                    return 1.0;
                 }
+                return 0.0;
             }
 
             @Override
@@ -266,11 +261,23 @@ public final class YSMRuntimeModel {
         };
     }
 
+    private static final int Q_HEALTH = Molang.idOf("query.health");
+    private static final int Q_MAX_HEALTH = Molang.idOf("query.max_health");
+    private static final int Q_ON_GROUND = Molang.idOf("query.is_on_ground");
+    private static final int Q_ALIVE = Molang.idOf("query.is_alive");
+    private static final int Q_IDLE = Molang.idOf("ctrl.idle");
+
     // ------------------------------------------------------------------
     // Loading / compilation
     // ------------------------------------------------------------------
 
     private static final Map<String, YSMRuntimeModel> CACHE = new HashMap<>();
+
+    /** Models whose runtime JSON is being compiled on a background thread. */
+    private static final java.util.Set<String> PRELOADING = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** Incremented on invalidateAll: stale background compiles drop their results. */
+    private static final java.util.concurrent.atomic.AtomicInteger RELOAD_GENERATION = new java.util.concurrent.atomic.AtomicInteger();
 
     /**
      * Get the compiled runtime model for a YSM model id, or null if unavailable.
@@ -280,23 +287,75 @@ public final class YSMRuntimeModel {
      * model, and the reload paths call {@link #invalidateAll()}; without those
      * the compiled model is cached for the session. (Previously the file mtime
      * was re-read on every call - a disk stat per player per frame.)
+     *
+     * The compile normally runs on a background thread ({@link #preload(String)},
+     * started when the mesh is registered); while it is in flight this returns
+     * null so the render thread never blocks on the compile, and the caller
+     * renders the un-evaluated fallback for a few frames instead of hitching.
      */
     public static YSMRuntimeModel get(String modelId) {
         synchronized (CACHE) {
             if (CACHE.containsKey(modelId)) {
                 return CACHE.get(modelId);
             }
-            Path file = runtimeFileOf(modelId);
-            try {
-                String json = Files.readString(file);
-                YSMRuntimeModel model = compile(modelId, JsonParser.parseString(json).getAsJsonObject());
-                CACHE.put(modelId, model);
-                return model;
-            } catch (Exception e) {
-                YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to load runtime model '{}': {}", modelId, e.toString());
-                CACHE.put(modelId, null);
-                return null;
+        }
+        if (PRELOADING.contains(modelId)) {
+            return null;
+        }
+        return loadAndCache(modelId);
+    }
+
+    /**
+     * Background preload: compile the runtime model off the render thread.
+     * Called from the conversion pool right after the runtime JSON was written,
+     * and (submitted) when a model is restored from the verified on-disk cache,
+     * so the first draw finds the compiled model instead of compiling inline.
+     *
+     * Deduplicated via {@link #PRELOADING}; the result is only cached when the
+     * task is still the current one (reloads/re-conversions drop stale results,
+     * the next {@link #get} then compiles synchronously as the fallback).
+     */
+    public static void preload(String modelId) {
+        synchronized (CACHE) {
+            if (CACHE.containsKey(modelId)) {
+                return;
             }
+        }
+        if (!PRELOADING.add(modelId)) {
+            return;
+        }
+        int generation = RELOAD_GENERATION.get();
+        try {
+            YSMRuntimeModel model = loadAndCompile(modelId);
+            if (PRELOADING.remove(modelId) && generation == RELOAD_GENERATION.get()) {
+                synchronized (CACHE) {
+                    CACHE.put(modelId, model);
+                }
+            }
+        } catch (Throwable t) {
+            PRELOADING.remove(modelId);
+        }
+    }
+
+    private static YSMRuntimeModel loadAndCache(String modelId) {
+        synchronized (CACHE) {
+            if (CACHE.containsKey(modelId)) {
+                return CACHE.get(modelId);
+            }
+            YSMRuntimeModel model = loadAndCompile(modelId);
+            CACHE.put(modelId, model);
+            return model;
+        }
+    }
+
+    private static YSMRuntimeModel loadAndCompile(String modelId) {
+        Path file = runtimeFileOf(modelId);
+        try {
+            String json = Files.readString(file);
+            return compile(modelId, JsonParser.parseString(json).getAsJsonObject());
+        } catch (Exception e) {
+            YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to load runtime model '{}': {}", modelId, e.toString());
+            return null;
         }
     }
 
@@ -336,6 +395,7 @@ public final class YSMRuntimeModel {
         synchronized (CACHE) {
             CACHE.remove(modelId);
         }
+        PRELOADING.remove(modelId);
     }
 
     /** Forget all cached runtime models (called when meshes are regenerated). */
@@ -343,6 +403,8 @@ public final class YSMRuntimeModel {
         synchronized (CACHE) {
             CACHE.clear();
         }
+        PRELOADING.clear();
+        RELOAD_GENERATION.incrementAndGet();
     }
 
     private static YSMRuntimeModel compile(String modelId, JsonObject root) {

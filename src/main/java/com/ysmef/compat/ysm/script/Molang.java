@@ -16,22 +16,46 @@ import java.util.concurrent.ConcurrentHashMap;
  * last value; unassigned variables read as "unset" (0 in arithmetic, subject of ??).
  *
  * Expressions are compiled once and cached globally.
+ *
+ * Performance notes (hot path - evaluated per frame per animated player):
+ * - query/variable paths are interned into integer ids at compile time; the
+ *   Env implementations read id-keyed slots instead of doing String hashing
+ * - function-call argument buffers are reused (no per-call double[] allocation)
+ * - variable references are classified (var vs query) at compile time
+ * - pure-numeric expressions are constant-folded to a single evaluation
  */
 public final class Molang {
 
     public interface Env {
-        double getVar(String path);
+        double getVarById(int id);
 
-        boolean hasVar(String path);
+        boolean hasVarById(int id);
 
-        void setVar(String path, double value);
+        void setVarById(int id, double value);
 
-        double getQuery(String path);
+        double getQueryById(int id);
 
         double callFunction(String name, double[] args);
 
         /** ctrl.hold('mainhand', ':sword') style calls with string arguments. */
         double callStringFunction(String name, String[] args);
+
+        // String-based convenience entry points (interning on the fly).
+        default double getVar(String path) {
+            return getVarById(idOf(path));
+        }
+
+        default boolean hasVar(String path) {
+            return hasVarById(idOf(path));
+        }
+
+        default void setVar(String path, double value) {
+            setVarById(idOf(path), value);
+        }
+
+        default double getQuery(String path) {
+            return getQueryById(queryIdOf(path));
+        }
     }
 
     public interface Expr {
@@ -40,6 +64,53 @@ public final class Molang {
 
     private static final Map<String, Expr> CACHE = new ConcurrentHashMap<>();
     private static final Expr ZERO = env -> 0.0;
+
+    // ------------------------------------------------------------------
+    // Path interning: query/variable paths become stable integer ids, so the
+    // hot evaluation path reads id-keyed slots instead of hashing Strings.
+    // ------------------------------------------------------------------
+
+    private static final Map<String, Integer> ID_BY_NAME = new ConcurrentHashMap<>();
+    private static final List<String> NAME_BY_ID = new ArrayList<>();
+    private static int nextId = 0;
+
+    /** Intern a path and return its stable integer id. */
+    public static int idOf(String name) {
+        Integer existing = ID_BY_NAME.get(name);
+        if (existing != null) {
+            return existing;
+        }
+        synchronized (Molang.class) {
+            Integer again = ID_BY_NAME.get(name);
+            if (again != null) {
+                return again;
+            }
+            int id = nextId++;
+            ID_BY_NAME.put(name, id);
+            NAME_BY_ID.add(name);
+            return id;
+        }
+    }
+
+    /** Resolve an id back to its path (cold path, e.g. default environments). */
+    public static String nameOf(int id) {
+        synchronized (Molang.class) {
+            return id >= 0 && id < NAME_BY_ID.size() ? NAME_BY_ID.get(id) : "";
+        }
+    }
+
+    /** Molang "q.foo" is an alias for "query.foo"; intern under the canonical form. */
+    public static String normalizeQuery(String path) {
+        return path.startsWith("q.") ? "query." + path.substring(2) : path;
+    }
+
+    public static int queryIdOf(String path) {
+        return idOf(normalizeQuery(path));
+    }
+
+    // ------------------------------------------------------------------
+    // Compilation
+    // ------------------------------------------------------------------
 
     public static Expr compile(String src) {
         if (src == null || src.isEmpty()) {
@@ -57,11 +128,64 @@ public final class Molang {
             Parser parser = new Parser(src);
             Expr expr = parser.parseStatements();
             parser.expectEnd();
+            if (isPureNumeric(src)) {
+                // constant folding: evaluate once at compile time, the per-frame
+                // cost of pure numbers/arithmetic drops to a single return
+                try {
+                    double value = expr.eval(FOLD_ENV);
+                    return env -> value;
+                } catch (Throwable t) {
+                    return expr;
+                }
+            }
             return expr;
         } catch (RuntimeException e) {
             return ZERO;
         }
     }
+
+    /** Whether the source contains no identifiers/strings, i.e. is pure numeric. */
+    private static boolean isPureNumeric(String src) {
+        for (int i = 0; i < src.length(); i++) {
+            char c = src.charAt(i);
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '$' || c == '\'') {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static final Env FOLD_ENV = new Env() {
+        @Override
+        public double getVarById(int id) {
+            throw new IllegalStateException("constant folding touched a variable");
+        }
+
+        @Override
+        public boolean hasVarById(int id) {
+            throw new IllegalStateException("constant folding touched a variable");
+        }
+
+        @Override
+        public void setVarById(int id, double value) {
+            throw new IllegalStateException("constant folding touched a variable");
+        }
+
+        @Override
+        public double getQueryById(int id) {
+            throw new IllegalStateException("constant folding touched a query");
+        }
+
+        @Override
+        public double callFunction(String name, double[] args) {
+            throw new IllegalStateException("constant folding touched a function call");
+        }
+
+        @Override
+        public double callStringFunction(String name, String[] args) {
+            throw new IllegalStateException("constant folding touched a function call");
+        }
+    };
 
     // ------------------------------------------------------------------
     // Lexer
@@ -215,15 +339,15 @@ public final class Molang {
                 if (isOp("=") || isOp("+=") || isOp("-=")) {
                     String op = advance().text();
                     Expr rhs = parseTernary();
-                    String path = ident.text();
+                    int id = Molang.idOf(ident.text());
                     return env -> {
                         double v = rhs.eval(env);
                         if (op.equals("+=")) {
-                            v = env.getVar(path) + v;
+                            v = env.getVarById(id) + v;
                         } else if (op.equals("-=")) {
-                            v = env.getVar(path) - v;
+                            v = env.getVarById(id) - v;
                         }
-                        env.setVar(path, v);
+                        env.setVarById(id, v);
                         return v;
                     };
                 }
@@ -414,7 +538,12 @@ public final class Molang {
                     }
                     Expr[] exprArgs = args.toArray(new Expr[0]);
                     return env -> {
-                        double[] values = new double[exprArgs.length];
+                        // reusable argument slots: no per-call allocation on the hot path
+                        double[] values = ARG_SLOTS.get();
+                        if (values.length < exprArgs.length) {
+                            values = new double[exprArgs.length];
+                            ARG_SLOTS.set(values);
+                        }
                         for (int i = 0; i < exprArgs.length; i++) {
                             values[i] = exprArgs[i].eval(env);
                         }
@@ -439,20 +568,26 @@ public final class Molang {
         return Double.isNaN(v) || Double.isInfinite(v) ? 0.0 : v;
     }
 
-    /** Variable reference: v./variable./temp./t. paths read and write vars; everything else is a query. */
+    /** Per-thread scratch for function arguments (the eval threads are stable). */
+    private static final ThreadLocal<double[]> ARG_SLOTS = ThreadLocal.withInitial(() -> new double[4]);
+
+    /**
+     * Variable reference: v./variable./temp./t. paths read and write vars; everything
+     * else is a query. The path is interned and classified at compile time, so the
+     * per-frame evaluation does no String work at all.
+     */
     private static final class VarExpr implements Expr {
-        private final String path;
+        private final int id;
+        private final boolean isVar;
 
         VarExpr(String path) {
-            this.path = path;
+            this.isVar = Parser.isVarNamespace(path);
+            this.id = isVar ? Molang.idOf(path) : Molang.queryIdOf(path);
         }
 
         @Override
         public double eval(Env env) {
-            if (Parser.isVarNamespace(path)) {
-                return env.getVar(path);
-            }
-            return env.getQuery(path);
+            return isVar ? env.getVarById(id) : env.getQueryById(id);
         }
     }
 
@@ -468,9 +603,9 @@ public final class Molang {
 
         @Override
         public double eval(Env env) {
-            if (left instanceof VarExpr varExpr && Parser.isVarNamespace(varExpr.path)) {
-                if (env.hasVar(varExpr.path)) {
-                    return env.getVar(varExpr.path);
+            if (left instanceof VarExpr varExpr && varExpr.isVar) {
+                if (env.hasVarById(varExpr.id)) {
+                    return env.getVarById(varExpr.id);
                 }
                 return right.eval(env);
             }

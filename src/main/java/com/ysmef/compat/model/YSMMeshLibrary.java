@@ -307,6 +307,12 @@ public class YSMMeshLibrary {
                 }
                 PENDING_MODELS.remove(modelId);
             }
+            if (result != null) {
+                // compile the freshly written runtime JSON on this worker thread, so
+                // the first draw finds the compiled scripts instead of compiling
+                // (potentially ~100ms for big models) on the render thread
+                YSMRuntimeModel.preload(modelId);
+            }
         } catch (Throwable t) {
             synchronized (YSMMeshLibrary.class) {
                 if (generation == LOAD_GENERATION.get()) {
@@ -548,11 +554,22 @@ public class YSMMeshLibrary {
                     }
                 }
             }
+            // restore path: compile the runtime scripts on the background pool so
+            // the first draw does not compile them inline on the render thread
+            preloadRuntimeAsync(modelId);
             return true;
         } catch (Exception e) {
             MESHES.remove(modelId);
             return false;
         }
+    }
+
+    /**
+     * Submit the runtime script compilation of a model to the background pool
+     * (used by the cache-restore path and by TLM model registration).
+     */
+    public static void preloadRuntimeAsync(String modelId) {
+        LAZY_POOL.submit(() -> YSMRuntimeModel.preload(modelId));
     }
 
     /**
