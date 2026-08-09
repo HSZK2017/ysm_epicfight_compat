@@ -18,6 +18,8 @@ public final class YsmBoneSkinShader {
 
     private static final String VSH_PATH = "/ysm_epicfight_compat/shaders/bone_skin.vsh";
     private static final String FSH_PATH = "/ysm_epicfight_compat/shaders/bone_skin.fsh";
+    private static final String VSH_ES_PATH = "/ysm_epicfight_compat/shaders/bone_skin_es.vsh";
+    private static final String FSH_ES_PATH = "/ysm_epicfight_compat/shaders/bone_skin_es.fsh";
 
     private static int program = 0;
     private static int locProj = -1;
@@ -46,8 +48,9 @@ public final class YsmBoneSkinShader {
         RenderSystem.assertOnRenderThreadOrInit();
 
         try {
-            int vs = GpuShaderUtil.compileShaderFromResource(GL20.GL_VERTEX_SHADER, VSH_PATH);
-            int fs = GpuShaderUtil.compileShaderFromResource(GL20.GL_FRAGMENT_SHADER, FSH_PATH);
+            boolean es = YsmGpuCapability.isGles();
+            int vs = GpuShaderUtil.compileShaderFromResource(GL20.GL_VERTEX_SHADER, es ? VSH_ES_PATH : VSH_PATH);
+            int fs = GpuShaderUtil.compileShaderFromResource(GL20.GL_FRAGMENT_SHADER, es ? FSH_ES_PATH : FSH_PATH);
             int prog = GpuShaderUtil.linkProgramWith(p -> {
                 GL20.glBindAttribLocation(p, 0, "a_position");
                 GL20.glBindAttribLocation(p, 1, "a_uv");

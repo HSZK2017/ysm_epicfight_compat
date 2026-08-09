@@ -90,8 +90,8 @@
 |---|---|
 | `YsmGpuRenderPath` | 直接 GPU 蒙皮路径：每帧 CPU 只合成关节矩阵（`poses×toOrigin`，OM 数学），部件段（bind 增量 + 隐藏标志）战斗模式下**静态缓存只上传一次**；一次 `glDrawArrays` 绘制；`u_proj = proj×mv×pose` 与 EF 计算路径数值等价（模拟验证逐位一致）；Iris/Oculus 光影包激活时自动回退 EF 路径 |
 | `YsmGpuMesh` | 静态 VBO（32B/顶点：pos+uv+2_10_10_10 法线+boneId+partId）+ 动态骨 SSBO（144B/条）+ 部件段缓存 |
-| `YsmBoneSkinShader` | 皮肤着色器（`bone_skin.vsh/fsh`，GL 4.3）：`boneMat = joint×part` 与 EF 计算着色器逐项一致；复刻 MC 光照/雾/overlay/光照贴图语义；半透明纹理双 Pass |
-| `YsmGpuCapability` | GL 能力探测（SSBO/420pack/显式属性位置/2_10_10_10），失败自动回退 |
+| `YsmBoneSkinShader` | 皮肤着色器（桌面 `bone_skin.vsh/fsh` GL 4.3 / Android `bone_skin_es.vsh/fsh` GLES 310 自动选择）：`boneMat = joint×part` 与 EF 计算着色器逐项一致；复刻 MC 光照/雾/overlay/光照贴图语义；半透明纹理双 Pass |
+| `YsmGpuCapability` | GL 能力探测（桌面 SSBO/420pack/显式属性位置/2_10_10_10，**Android OpenGL ES 3.1**），失败自动回退 |
 | `YsmGpuRenderEnable` | **YSM 分支检测 + GPU 开关联动**（见下节） |
 
 ### YSM 分支兼容（`YsmGpuRenderEnable` + mixin 族）
@@ -177,7 +177,7 @@
 
 ## 已知限制
 
-1. **GPU 路径要求 GL 4.3**（或等价 ARB 扩展）：无 SSBO 支持时自动回退 EF 计算着色器路径；计算着色器不可用时回退 CPU 路径（CPU 蒙皮转换网格可能缺面，已告警）
+1. **GPU 路径要求 GL 4.3（或等价 ARB 扩展），Android 要求 OpenGL ES 3.1**：满足时使用 GPU 蒙皮路径（Android 上自动选择 GLES `#version 310 es` 着色器变体）；否则自动回退 EF 计算着色器路径；计算着色器不可用时回退 CPU 路径（CPU 蒙皮转换网格可能缺面，已告警）。macOS（GL 4.1）与旧 GPU 直接走回退链
 2. **Iris/Oculus 光影包**：光影包激活时 GPU 路径让位 EF 计算路径（其内建 Iris 支持），避免绕过光影着色器
 3. **懒转换首用延迟**：模型首次渲染若缓存未命中，后台转换期间短暂回退 EF biped（几帧）；异步纹理上传同理（纹理出现前 1-2 帧为缺失纹理）
 4. **多人联机同步要求专用服务器安装本模组**（服务端仅做 NBT 读取与广播）；未安装时回退 EF biped

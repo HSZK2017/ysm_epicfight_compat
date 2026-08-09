@@ -373,3 +373,5 @@ Writing Output: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\reo
   ysm_epicfight_compat/shaders/
   ysm_epicfight_compat/shaders/bone_skin.fsh
   ysm_epicfight_compat/shaders/bone_skin.vsh
+  ysm_epicfight_compat/shaders/bone_skin_es.fsh
+  ysm_epicfight_compat/shaders/bone_skin_es.vsh
