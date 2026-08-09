@@ -1,7 +1,6 @@
 package com.ysmef.compat.gpu;
 
 import com.ysmef.compat.YSMEpicFightCompat;
-import com.ysmef.compat.config.YSMCompatConfig;
 import com.ysmef.compat.model.YSMMesh;
 import com.ysmef.compat.model.YSMMeshLibrary;
 import com.ysmef.compat.mixin.RenderSystemAccessorMixin;
@@ -118,14 +117,18 @@ public final class YsmGpuRenderPath {
     public static boolean tryRender(YSMMesh mesh, PoseStack poseStack, MultiBufferSource bufferSources,
                                     ResourceLocation texture, int packedLight, float r, float g, float b, float a,
                                     int overlay, @Nullable Armature armature, @Nullable OpenMatrix4f[] poses) {
-        if (!YSMCompatConfig.ENABLE_GPU_RENDER.get()) {
+        // Linked to the loaded YSM fork's own GPU toggle: ModernYSM's UseGpuRenderer
+        // (kept in sync), or this mod's enableGpuRender config for OpenYSM/LegacyYSM.
+        if (!YsmGpuRenderEnable.isEnabled()) {
             return false;
         }
         if (!YsmGpuCapability.isAvailable()) {
+            YsmGpuRenderEnable.disableIfOwned();
             logUnavailableOnce();
             return false;
         }
         if (!YsmBoneSkinShader.ensureCompiled()) {
+            YsmGpuRenderEnable.disableIfOwned();
             return false;
         }
         if (poses == null || armature == null || bufferSources instanceof OutlineBufferSource) {
@@ -219,6 +222,9 @@ public final class YsmGpuRenderPath {
         if (YsmBoneSkinShader.locPartOffset() >= 0) {
             GL30.glUniform1ui(YsmBoneSkinShader.locPartOffset(), poses.length);
         }
+        if (YsmBoneSkinShader.locPackedLight() >= 0) {
+            GL20.glUniform1i(YsmBoneSkinShader.locPackedLight(), packedLight);
+        }
 
         GlStateManager._glBindVertexArray(gpu.vao);
         boolean translucent = YSMMeshLibrary.isTranslucentTexture(texture);
@@ -245,7 +251,21 @@ public final class YsmGpuRenderPath {
 
         mc.gameRenderer.lightTexture().turnOffLightLayer();
 
+        logGpuActiveOnce(mesh, gpu);
         return true;
+    }
+
+    private static boolean gpuActiveLogged = false;
+
+    /** One-time per session: confirm the GPU skinning path is drawing. */
+    private static void logGpuActiveOnce(YSMMesh mesh, YsmGpuMesh gpu) {
+        if (gpuActiveLogged) {
+            return;
+        }
+        gpuActiveLogged = true;
+        YSMEpicFightCompat.LOGGER.info(
+                "YSM-EF Compat: GPU skinning path active (bone SSBO + skinning shader): model='{}', {} parts, {} vertices",
+                mesh.getRuntimeModelId(), mesh.getPartCount(), gpu.vertexCount);
     }
 
     /**
@@ -258,6 +278,12 @@ public final class YsmGpuRenderPath {
      *   their hidden flags (like TOTAL_POSES[poses.length + partIdx]);
      * - the vertex shader computes (joint x delta) per vertex, and u_proj is
      *   proj x mv x pose, matching EF's model_view + MC shader application.
+     *
+     * Upload optimization: in Epic Fight battle mode the parts carry no runtime
+     * transforms (identity deltas) and their hidden flags are static per model,
+     * so the part section is uploaded to the GPU only once; only the joint
+     * matrices (a few KB) are re-uploaded every frame. The packed light is a
+     * uniform (u_packedLight), so the cached section never goes stale.
      */
     private static void fillBoneBuffer(YsmGpuMesh gpu, YSMMesh mesh, PoseStack poseStack,
                                        Armature armature, OpenMatrix4f[] poses, int packedLight) {
@@ -285,24 +311,46 @@ public final class YsmGpuRenderPath {
             boneBuf.position(j * YsmGpuMesh.BONE_STRIDE);
             storeMatrix(boneBuf, jointScratch, packedLight, false);
         }
+        int jointBytes = jointCount * YsmGpuMesh.BONE_STRIDE;
 
-        // parts: raw bind-space deltas + hidden flags (identical to EF's part slots)
+        // parts: raw bind-space deltas + hidden flags; written into the cached
+        // section every frame (cheap CPU), uploaded only when the content changed
+        ByteBuffer partCache = gpu.partSectionCache();
+        partCache.position(0);
+        boolean anyTransform = false;
+        boolean hiddenChanged = false;
+        boolean[] cachedHidden = gpu.cachedPartHidden();
         int partIdx = 0;
         for (var part : mesh.getAllParts()) {
             if (jointCount + partIdx >= gpu.boneCount) {
                 break;
             }
             OpenMatrix4f delta = mesh.getPartTransform(partIdx);
-            boneBuf.position((jointCount + partIdx) * YsmGpuMesh.BONE_STRIDE);
             if (delta != null) {
-                storeMatrix(boneBuf, delta, packedLight, part.isHidden());
+                anyTransform = true;
+            }
+            boolean hidden = part.isHidden();
+            if (hidden != cachedHidden[partIdx]) {
+                cachedHidden[partIdx] = hidden;
+                hiddenChanged = true;
+            }
+            if (delta != null) {
+                storeMatrix(partCache, delta, packedLight, hidden);
             } else {
-                storeIdentity(boneBuf, packedLight, part.isHidden());
+                storeIdentity(partCache, packedLight, hidden);
             }
             partIdx++;
         }
+        partCache.position(0);
+
+        boolean uploadParts = !gpu.partSectionValid() || anyTransform || hiddenChanged;
+        if (uploadParts) {
+            boneBuf.position(jointBytes);
+            boneBuf.put(partCache);
+            gpu.markPartSectionValid();
+        }
         boneBuf.position(0);
-        boneBuf.limit(gpu.boneCount * YsmGpuMesh.BONE_STRIDE);
+        boneBuf.limit(uploadParts ? gpu.boneCount * YsmGpuMesh.BONE_STRIDE : jointBytes);
     }
 
     /** OpenMatrix4f -> SSBO row-major fields; GLSL mat4 reads them back column-major == same matrix. */

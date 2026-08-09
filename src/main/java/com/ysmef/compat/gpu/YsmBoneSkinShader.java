@@ -31,6 +31,7 @@ public final class YsmBoneSkinShader {
     private static int locLight1 = -1;
     private static int locAlphaMode = -1;
     private static int locPartOffset = -1;
+    private static int locPackedLight = -1;
     private static boolean failed = false;
 
     private YsmBoneSkinShader() {}
@@ -72,6 +73,7 @@ public final class YsmBoneSkinShader {
             locLight1 = GL20.glGetUniformLocation(prog, "u_light1");
             locAlphaMode = GL20.glGetUniformLocation(prog, "u_alphaMode");
             locPartOffset = GL20.glGetUniformLocation(prog, "u_partOffset");
+            locPackedLight = GL20.glGetUniformLocation(prog, "u_packedLight");
 
             int locSampler0 = GL20.glGetUniformLocation(prog, "Sampler0");
             int locSampler1 = GL20.glGetUniformLocation(prog, "Sampler1");
@@ -143,5 +145,9 @@ public final class YsmBoneSkinShader {
 
     public static int locPartOffset() {
         return locPartOffset;
+    }
+
+    public static int locPackedLight() {
+        return locPackedLight;
     }
 }

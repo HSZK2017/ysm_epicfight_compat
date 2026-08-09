@@ -140,6 +140,9 @@ Reading Input: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\libs
 Adding input to inheritance map
 Processing entries
 Conflicting propagated mapping for yesman/epicfight/api/client/model/Meshes/reload(Lnet/minecraft/server/packs/resources/PreparableReloadListener$PreparationBarrier;Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;Lnet/minecraft/util/profiling/ProfilerFiller;Ljava/util/concurrent/Executor;Ljava/util/concurrent/Executor;)Ljava/util/concurrent/CompletableFuture; from net/minecraft/server/packs/resources/PreparableReloadListener/reload(Lnet/minecraft/server/packs/resources/PreparableReloadListener$PreparationBarrier;Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;Lnet/minecraft/util/profiling/ProfilerFiller;Ljava/util/concurrent/Executor;Ljava/util/concurrent/Executor;)Ljava/util/concurrent/CompletableFuture;: reload -> m_5540_
+Conflicting propagated mapping for com/ysmef/compat/gui/YsmGpuRenderCheckbox/onPress()V from net/minecraft/client/gui/components/Checkbox/onPress()V: onPress -> m_5691_
+Conflicting propagated mapping for com/elfmcys/yesstevemodel/O0o000o0oOoOoOoOOO0oOOoO/render(Lnet/minecraft/client/gui/GuiGraphics;IIF)V from net/minecraft/client/gui/screens/Screen/render(Lnet/minecraft/client/gui/GuiGraphics;IIF)V: render -> m_88315_
+Conflicting propagated mapping for com/elfmcys/yesstevemodel/O0o000o0oOoOoOoOOO0oOOoO/init()V from net/minecraft/client/gui/screens/Screen/init()V: init -> m_7856_
 Conflicting propagated mapping for net/minecraft/world/entity/LivingEntity/lambda$addAdditionalSaveData$3(Lnet/minecraft/nbt/CompoundTag;Lnet/minecraft/nbt/Tag;)V from net/minecraft/world/entity/player/Player/lambda$addAdditionalSaveData$3(Lnet/minecraft/nbt/CompoundTag;Lnet/minecraft/nbt/Tag;)V: lambda$addAdditionalSaveData$3 -> m_219754_
 Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/entity/passive/EntityMaid/getHurtSound(Lnet/minecraft/world/damagesource/DamageSource;)Lnet/minecraft/sounds/SoundEvent; from net/minecraft/world/entity/LivingEntity/getHurtSound(Lnet/minecraft/world/damagesource/DamageSource;)Lnet/minecraft/sounds/SoundEvent;: getHurtSound -> m_7975_
 Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/entity/passive/EntityMaid/getBreedOffspring(Lnet/minecraft/server/level/ServerLevel;Lnet/minecraft/world/entity/AgeableMob;)Lnet/minecraft/world/entity/AgeableMob; from net/minecraft/world/entity/AgeableMob/getBreedOffspring(Lnet/minecraft/server/level/ServerLevel;Lnet/minecraft/world/entity/AgeableMob;)Lnet/minecraft/world/entity/AgeableMob;: getBreedOffspring -> m_142606_
@@ -229,6 +232,11 @@ Writing Output: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\reo
   META-INF/
   META-INF/MANIFEST.MF
   META-INF/mods.toml
+  assets/
+  assets/ysm_epicfight_compat/
+  assets/ysm_epicfight_compat/lang/
+  assets/ysm_epicfight_compat/lang/en_us.json
+  assets/ysm_epicfight_compat/lang/zh_cn.json
   com/
   com/ysmef/
   com/ysmef/compat/
@@ -246,14 +254,21 @@ Writing Output: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\reo
   com/ysmef/compat/gpu/YsmBoneSkinShader.class
   com/ysmef/compat/gpu/YsmGpuCapability.class
   com/ysmef/compat/gpu/YsmGpuMesh.class
+  com/ysmef/compat/gpu/YsmGpuRenderEnable$YsmFork.class
+  com/ysmef/compat/gpu/YsmGpuRenderEnable.class
   com/ysmef/compat/gpu/YsmGpuRenderPath.class
+  com/ysmef/compat/gui/
+  com/ysmef/compat/gui/YsmConfigScreenHook.class
+  com/ysmef/compat/gui/YsmGpuRenderCheckbox.class
   com/ysmef/compat/mixin/
+  com/ysmef/compat/mixin/OpenYsmConfigScreenMixin.class
   com/ysmef/compat/mixin/OpenYsmPlayerRenderMixin.class
   com/ysmef/compat/mixin/PPlayerRendererMixin.class
   com/ysmef/compat/mixin/RenderSystemAccessorMixin.class
   com/ysmef/compat/mixin/YsmArmRenderMixin.class
   com/ysmef/compat/mixin/YsmBackgroundHandMixin.class
   com/ysmef/compat/mixin/YsmFishingHookRenderMixin.class
+  com/ysmef/compat/mixin/YsmLegacyConfigScreenMixin.class
   com/ysmef/compat/mixin/YsmPlayerRenderMixin.class
   com/ysmef/compat/mixin/YsmProjectileRenderMixin.class
   com/ysmef/compat/mixin/YsmVehiclePreviewMixin.class

@@ -114,6 +114,11 @@ public final class YSMModelAccess {
     }
 
     private static void logCapabilityRead(Player player, YSMModelRef model) {
+        // the selection cache refreshes every CACHE_TTL_TICKS; log the read only
+        // once per player per session instead of spamming the log every second
+        if (!LOGGED_MODEL_READS.add(player.getUUID())) {
+            return;
+        }
         if (model != null) {
             com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
                     "YSM-EF Compat: player '{}' uses YSM model '{}' with texture '{}'",
@@ -124,6 +129,8 @@ public final class YSMModelAccess {
                     player.getGameProfile().getName());
         }
     }
+
+    private static final java.util.Set<java.util.UUID> LOGGED_MODEL_READS = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     /**
      * Clear the per-player NBT selection cache (called on resource reload and

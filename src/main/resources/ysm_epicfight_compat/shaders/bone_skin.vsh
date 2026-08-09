@@ -40,6 +40,7 @@ uniform int  u_fogShape;
 uniform vec3 u_light0;
 uniform vec3 u_light1;
 uniform uint u_partOffset;
+uniform int  u_packedLight;
 
 out vec2  v_uv;
 out vec3  v_normal;
@@ -86,6 +87,6 @@ void main() {
     v_normal = nrm;
     v_color = minecraft_mix_light(u_light0, u_light1, nrm, u_color);
     v_vertexDistance = fogDistance(eyePos.xyz, u_fogShape);
-    v_packedLight = joint.packedLight;
+    v_packedLight = u_packedLight;
     v_cullable = a_cullable;
 }

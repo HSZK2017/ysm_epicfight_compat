@@ -37,9 +37,12 @@ public class YSMCompatConfig {
 
         ENABLE_GPU_RENDER = builder
                 .comment("Render YSM meshes with the GPU skinning path (bone SSBO + skinning shader, ported from ModernYSM/OpenYSM).",
-                        "The vertex skinning moves fully to the GPU (one draw call per model) instead of Epic Fight's per-frame compute dispatch.",
-                        "Falls back to Epic Fight's compute-shader path automatically when the GPU path is unavailable.",
-                        "Disable only when it causes rendering problems on your system.")
+                        "When ModernYSM is installed, this option is ignored: the toggle is linked to ModernYSM's own",
+                        "'UseGpuRenderer' / 'UseCompatibilityRenderer' client config, so both mods enable and disable",
+                        "their GPU rendering together (including ModernYSM's runtime auto-disable).",
+                        "With OpenYSM or LegacyYSM this option mirrors ModernYSM's UseGpuRenderer toggle and, like",
+                        "ModernYSM, is auto-disabled when the GPU path is unavailable at runtime.",
+                        "The Epic Fight compute-shader path is used as the fallback automatically.")
                 .define("enableGpuRender", true);
 
         LAZY_MODEL_CACHE_SIZE = builder

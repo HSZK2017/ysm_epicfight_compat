@@ -53,6 +53,16 @@ public final class YsmGpuMesh {
     public final int[] jointOfPart;
     public final ByteBuffer perFrameBoneBuffer;
 
+    /**
+     * Cached SSBO section for the mesh parts (indices jointCount..). In Epic
+     * Fight battle mode the parts carry no runtime transforms (all identity
+     * deltas) and their hidden flags are static, so this section is uploaded to
+     * the GPU only once and only the joint matrices change per frame.
+     */
+    private final ByteBuffer partSectionCache;
+    private final boolean[] cachedPartHidden;
+    private boolean partSectionValid = false;
+
     private boolean disposed = false;
 
     private YsmGpuMesh(int vao, int vbo, int boneSsbo, int vertexCount, int boneCount,
@@ -64,6 +74,24 @@ public final class YsmGpuMesh {
         this.boneCount = boneCount;
         this.jointOfPart = jointOfPart;
         this.perFrameBoneBuffer = perFrameBoneBuffer;
+        this.partSectionCache = MemoryUtil.memAlloc(jointOfPart.length * BONE_STRIDE).order(ByteOrder.nativeOrder());
+        this.cachedPartHidden = new boolean[jointOfPart.length];
+    }
+
+    public ByteBuffer partSectionCache() {
+        return partSectionCache;
+    }
+
+    public boolean[] cachedPartHidden() {
+        return cachedPartHidden;
+    }
+
+    public boolean partSectionValid() {
+        return partSectionValid;
+    }
+
+    public void markPartSectionValid() {
+        this.partSectionValid = true;
     }
 
     /**
@@ -203,5 +231,6 @@ public final class YsmGpuMesh {
         GlStateManager._glDeleteBuffers(boneSsbo);
         GL30.glDeleteVertexArrays(vao);
         MemoryUtil.memFree(perFrameBoneBuffer);
+        MemoryUtil.memFree(partSectionCache);
     }
 }
