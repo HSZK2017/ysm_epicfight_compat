@@ -36,10 +36,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class OpenYsmPlayerRenderMixin {
 
     @Inject(method = "onRenderPlayerPre(Lnet/minecraftforge/client/event/RenderPlayerEvent$Pre;)V",
-            at = @At("HEAD"), cancellable = true)
+            at = @At("HEAD"), cancellable = true, require = 0)
     private static void ysmef$suppressOpenYsmPlayerRenderInBattleMode(RenderPlayerEvent.Pre event, CallbackInfo ci) {
-        if (YSMBattleMode.isBattleMode(event.getEntity())) {
-            ci.cancel();
-        }
+        if (YSMBattleMode.isBattleMode(event.getEntity())) { ci.cancel(); }
     }
 }

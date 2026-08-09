@@ -75,6 +75,22 @@ public final class YSMRuntimeModel {
 
     private final Map<UUID, YSMPlayerAnimator> animators = new ConcurrentHashMap<>();
 
+    /**
+     * Last tick each animator was used (entity.tickCount), used to sweep
+     * animators of players that left the world / stopped being rendered, so a
+     * big model's per-player evaluator state (hundreds of KB for large models)
+     * does not accumulate for every player that ever used it (ModernYSM keeps
+     * per-entity state in weak references; the sweep gives the same liveness).
+     */
+    private final Map<UUID, Integer> animatorLastTick = new ConcurrentHashMap<>();
+
+    /** Sweep cadence: scan at most every 15 s. */
+    private static final int ANIMATOR_SWEEP_INTERVAL_TICKS = 300;
+    /** Drop animators unused for more than 60 s. */
+    private static final int ANIMATOR_TTL_TICKS = 1200;
+    private static volatile int lastSweepTick = -1;
+    private static final java.util.concurrent.atomic.AtomicBoolean SWEEP_IN_PROGRESS = new java.util.concurrent.atomic.AtomicBoolean(false);
+
     private YSMRuntimeModel(String modelId, BoneRt[] bones, Map<String, Integer> boneIndex,
                             List<CompiledAnim> parallels, Map<String, CompiledAnim> states,
                             Map<String, CompiledAnim> conditionAnims, int channelCount, boolean tlmShowBackpack) {
@@ -89,19 +105,51 @@ public final class YSMRuntimeModel {
     }
 
     public YSMPlayerAnimator animatorFor(LivingEntity entity) {
-        return animators.computeIfAbsent(entity.getUUID(), id -> new YSMPlayerAnimator(this));
+        UUID uuid = entity.getUUID();
+        int tick = entity.tickCount;
+        animatorLastTick.put(uuid, tick);
+        YSMPlayerAnimator animator = animators.get(uuid);
+        if (animator == null) {
+            animator = new YSMPlayerAnimator(this);
+            animators.put(uuid, animator);
+        }
+        sweepIfDue(tick);
+        return animator;
     }
 
-    // [decommissioned] dead method: never called; per-player animators are kept
-    // per UUID on purpose but are only cleared when the runtime model is dropped.
-    //
-    // public static void clearAnimators() {
-    //     synchronized (CACHE) {
-    //         for (YSMRuntimeModel model : CACHE.values()) {
-    //             model.animators.clear();
-    //         }
-    //     }
-    // }
+    /** Periodically drop stale per-player animators (see {@link #ANIMATOR_TTL_TICKS}). */
+    private static void sweepIfDue(int tick) {
+        int last = lastSweepTick;
+        if (tick - last < ANIMATOR_SWEEP_INTERVAL_TICKS) {
+            return;
+        }
+        if (!SWEEP_IN_PROGRESS.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            lastSweepTick = tick;
+            java.util.List<YSMRuntimeModel> models;
+            synchronized (CACHE) {
+                models = new ArrayList<>(CACHE.values());
+            }
+            for (YSMRuntimeModel model : models) {
+                model.sweepAnimators(tick);
+            }
+        } finally {
+            SWEEP_IN_PROGRESS.set(false);
+        }
+    }
+
+    private void sweepAnimators(int nowTick) {
+        java.util.Iterator<Map.Entry<UUID, Integer>> it = animatorLastTick.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<UUID, Integer> entry = it.next();
+            if (nowTick - entry.getValue() > ANIMATOR_TTL_TICKS) {
+                it.remove();
+                animators.remove(entry.getKey());
+            }
+        }
+    }
 
     // ------------------------------------------------------------------
     // Default visibility (battle mode)

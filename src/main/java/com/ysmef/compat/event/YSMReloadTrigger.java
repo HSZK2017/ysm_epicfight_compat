@@ -75,6 +75,9 @@ public class YSMReloadTrigger {
         if (event.phase != TickEvent.Phase.END) {
             return;
         }
+        // ModernYSM-style delayed texture release: drop evicted textures only
+        // after a few ticks so the current frame's draws never lose them mid-frame
+        YSMMeshLibrary.processPendingTextureReleases();
         int pending = pendingRegenerateTicks;
         if (pending < 0) {
             return;

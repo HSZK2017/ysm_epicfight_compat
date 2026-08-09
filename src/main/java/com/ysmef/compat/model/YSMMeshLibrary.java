@@ -96,6 +96,21 @@ public class YSMMeshLibrary {
     /** textureRL string -> true once registered in the texture manager */
     private static final Map<String, Boolean> UPLOADED_TEXTURES = new ConcurrentHashMap<>();
 
+    /**
+     * ModernYSM-style texture pipeline (see UploadManager): image decoding runs
+     * on the background pool, and the GL uploads are drained on the render
+     * thread with a small per-frame time budget, so large textures no longer
+     * hitch the first draw. Texture releases are delayed a few ticks so a
+     * texture still referenced by the current frame is never dropped mid-frame.
+     */
+    private static final Set<String> PENDING_TEXTURE_DECODES = ConcurrentHashMap.newKeySet();
+    private static final java.util.Queue<TextureUploadTask> COMPLETED_UPLOADS = new java.util.concurrent.ConcurrentLinkedQueue<>();
+    private static final Map<String, Integer> PENDING_RELEASES = new ConcurrentHashMap<>();
+    private static final int RELEASE_DELAY_TICKS = 5;
+    private static final long TEXTURE_UPLOAD_BUDGET_NANOS = 10_000_000L;
+
+    private record TextureUploadTask(ResourceLocation location, NativeImage image) {}
+
     /** Models whose lazy conversion already failed; not retried until invalidateAll. */
     private static final Set<String> FAILED_MODELS = ConcurrentHashMap.newKeySet();
 
@@ -132,6 +147,15 @@ public class YSMMeshLibrary {
                 thread.setDaemon(true);
                 return thread;
             });
+
+    /**
+     * ModernYSM-style peak-memory control (preparedModelSlots): at most this
+     * many model conversions run at once - each conversion holds the decrypted
+     * package plus the parsed geometry/mesh arrays in memory, so converting
+     * several large models simultaneously could spike RAM by hundreds of MB.
+     * Further conversions queue on the pool instead of running concurrently.
+     */
+    private static final java.util.concurrent.Semaphore CONVERSION_SLOTS = new java.util.concurrent.Semaphore(2);
 
     /** Per-model conversion result produced by worker threads. */
     private record TextureEntry(String textureName, ResourceLocation location, byte[] data, int[] info,
@@ -288,6 +312,15 @@ public class YSMMeshLibrary {
     private static void convertModelAsync(String modelId) {
         int generation = LOAD_GENERATION.get();
         try {
+            CONVERSION_SLOTS.acquire();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            synchronized (YSMMeshLibrary.class) {
+                PENDING_MODELS.remove(modelId);
+            }
+            return;
+        }
+        try {
             ModelResult result = convertModel(modelId);
             synchronized (YSMMeshLibrary.class) {
                 if (generation != LOAD_GENERATION.get()) {
@@ -321,6 +354,8 @@ public class YSMMeshLibrary {
                 PENDING_MODELS.remove(modelId);
             }
             YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: lazy mesh conversion failed for '{}'", modelId, t);
+        } finally {
+            CONVERSION_SLOTS.release();
         }
     }
 
@@ -418,10 +453,9 @@ public class YSMMeshLibrary {
             TEXTURE_INFO.remove(key);
             UPLOADED_TEXTURES.remove(key);
             TEXTURE_TRANSLUCENT.remove(key);
-            try {
-                Minecraft.getInstance().getTextureManager().release(rl);
-            } catch (Throwable ignored) {
-            }
+            // delayed release: the texture may still be referenced by the current
+            // frame's draws; release it a few ticks later (see processPendingTextureReleases)
+            PENDING_RELEASES.put(key, RELEASE_DELAY_TICKS);
         }
         YSMRuntimeModel.invalidate(modelId);
         YSMEpicFightCompat.LOGGER.debug("YSM-EF Compat: evicted model '{}' ({} textures released)", modelId, toRelease.size());
@@ -657,6 +691,9 @@ public class YSMMeshLibrary {
         TEXTURE_TRANSLUCENT.clear();
         FAILED_MODELS.clear();
         PENDING_MODELS.clear();
+        PENDING_TEXTURE_DECODES.clear();
+        COMPLETED_UPLOADS.clear();
+        PENDING_RELEASES.clear();
         synchronized (ACCESS_ORDER) {
             ACCESS_ORDER.clear();
         }
@@ -1014,30 +1051,90 @@ public class YSMMeshLibrary {
     }
 
     /**
-     * Upload the texture bytes to the texture manager if not done yet.
-     * Must be called on the render thread.
+     * Upload the texture bytes to the texture manager if not done yet. The image
+     * decode runs on the background pool; the GL upload is drained on the render
+     * thread (see {@link #processPendingTextureUploads()}), so the first draw of
+     * a model no longer blocks on large PNG decodes (the texture may briefly
+     * render as missing for a frame or two, like ModernYSM's async uploads).
      */
     public static void ensureTextureUploaded(ResourceLocation rl) {
         if (rl == null || UPLOADED_TEXTURES.containsKey(rl.toString())) {
             return;
         }
-        byte[] data = TEXTURE_DATA.get(rl.toString());
+        String key = rl.toString();
+        byte[] data = TEXTURE_DATA.get(key);
         if (data == null) {
             return;
         }
-        try {
-            NativeImage image = decodeTexture(rl, data);
-            if (image == null) {
-                UPLOADED_TEXTURES.put(rl.toString(), Boolean.TRUE);
+        if (!PENDING_TEXTURE_DECODES.add(key)) {
+            return;
+        }
+        // a re-upload cancels any delayed release of the same resource location
+        PENDING_RELEASES.remove(key);
+        LAZY_POOL.submit(() -> {
+            try {
+                NativeImage image = decodeTexture(rl, data);
+                if (image == null) {
+                    UPLOADED_TEXTURES.put(key, Boolean.TRUE);
+                } else {
+                    COMPLETED_UPLOADS.add(new TextureUploadTask(rl, image));
+                    Minecraft.getInstance().execute(YSMMeshLibrary::processPendingTextureUploads);
+                }
+            } catch (Throwable t) {
+                YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to decode texture {}", rl, t);
+                UPLOADED_TEXTURES.put(key, Boolean.TRUE);
+            } finally {
+                PENDING_TEXTURE_DECODES.remove(key);
+            }
+        });
+    }
+
+    /**
+     * Drain the completed texture uploads on the render thread with a small
+     * per-frame time budget (ModernYSM UploadManager UPLOAD_TIME_LIMIT_MS).
+     * The DynamicTexture takes ownership of the decoded image.
+     */
+    public static void processPendingTextureUploads() {
+        long deadline = System.nanoTime() + TEXTURE_UPLOAD_BUDGET_NANOS;
+        while (true) {
+            TextureUploadTask task = COMPLETED_UPLOADS.poll();
+            if (task == null) {
                 return;
             }
-            // the GPU skinning path needs the model's translucency for its two-pass draw
-            TEXTURE_TRANSLUCENT.put(rl.toString(), hasTranslucentPixels(image));
-            Minecraft.getInstance().getTextureManager().register(rl, new DynamicTexture(image));
-            UPLOADED_TEXTURES.put(rl.toString(), Boolean.TRUE);
-        } catch (Throwable t) {
-            YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to upload texture {}", rl, t);
-            UPLOADED_TEXTURES.put(rl.toString(), Boolean.TRUE);
+            String key = task.location().toString();
+            PENDING_RELEASES.remove(key);
+            TEXTURE_TRANSLUCENT.put(key, hasTranslucentPixels(task.image()));
+            Minecraft.getInstance().getTextureManager().register(task.location(), new DynamicTexture(task.image()));
+            UPLOADED_TEXTURES.put(key, Boolean.TRUE);
+            if (System.nanoTime() > deadline) {
+                // leftover tasks stay queued: re-post the drain for the next frame
+                Minecraft.getInstance().execute(YSMMeshLibrary::processPendingTextureUploads);
+                return;
+            }
+        }
+    }
+
+    /**
+     * Release textures that were evicted a few ticks ago (delayed so a texture
+     * still referenced by the current frame's draws is not dropped mid-frame).
+     * Called from the client tick.
+     */
+    public static void processPendingTextureReleases() {
+        if (PENDING_RELEASES.isEmpty()) {
+            return;
+        }
+        for (java.util.Iterator<Map.Entry<String, Integer>> it = PENDING_RELEASES.entrySet().iterator(); it.hasNext(); ) {
+            Map.Entry<String, Integer> entry = it.next();
+            int left = entry.getValue() - 1;
+            if (left <= 0) {
+                it.remove();
+                try {
+                    Minecraft.getInstance().getTextureManager().release(ResourceLocation.parse(entry.getKey()));
+                } catch (Throwable ignored) {
+                }
+            } else {
+                entry.setValue(left);
+            }
         }
     }
 
