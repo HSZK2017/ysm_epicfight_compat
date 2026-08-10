@@ -33,6 +33,11 @@ public final class YSMRuntimeBridge {
         CURRENT_ENTITY.remove();
     }
 
+    /** The entity currently being drawn (null outside the mesh draw call). */
+    public static LivingEntity getCurrentEntity() {
+        return CURRENT_ENTITY.get();
+    }
+
     /**
      * Evaluate the YSM scripts for the entity currently being rendered and apply
      * the results (per-part hidden flags and transforms) to the mesh. No-op when

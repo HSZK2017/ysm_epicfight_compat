@@ -3,9 +3,11 @@ package com.ysmef.compat.model;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.ysmef.compat.gpu.YsmGpuRenderPath;
 import com.ysmef.compat.model.runtime.YSMRuntimeBridge;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.entity.LivingEntity;
 import yesman.epicfight.api.client.model.Mesh;
 import yesman.epicfight.api.client.model.MeshPart;
 import yesman.epicfight.api.client.model.MeshPartDefinition;
@@ -144,21 +146,85 @@ public class YSMMesh extends HumanoidMesh {
     public void draw(PoseStack poseStack, MultiBufferSource bufferSources, RenderType renderType,
                      Mesh.DrawingFunction drawingFunction, int packedLight, float r, float g, float b, float a,
                      int overlay, @Nullable Armature armature, OpenMatrix4f[] poses) {
+        boolean maidEntity = isMaidEntity();
+        if (Minecraft.getInstance().screen != null) {
+            logPreviewDrawOnce(maidEntity, renderType);
+        }
         YSMRuntimeBridge.apply(this, armature, poses);
         ResourceLocation texture = resolveTexture();
         logDrawDiagOnce(texture);
-        // ModernYSM-style direct GPU skinning path (bone SSBO + skinning shader):
-        // one glDrawArrays per model, vertex skinning fully on the GPU. Falls back
-        // to Epic Fight's compute-shader path automatically when unavailable.
-        if (texture != null && YsmGpuRenderPath.tryRender(this, poseStack, bufferSources, texture,
-                packedLight, r, g, b, a, overlay, armature, poses)) {
+        // EpicFight_TouhouLittleMaid renders maids through its MaidPatch with a
+        // built-in 0.8 model-matrix scale (MaidPatch#getModelMatrix), tuned for
+        // its own maid-sized meshes (~1.37 blocks tall). Our converted YSM meshes
+        // are authored at the model's native (player-sized) scale, so that same
+        // shrink would render a maid's YSM model noticeably too small compared to
+        // its non-battle YSM render. Counter the scale around the entity origin
+        // (feet) so battle mode shows the model at its native size again.
+        if (maidEntity) {
+            poseStack.pushPose();
+            poseStack.scale(MAID_SCALE_COMPENSATION, MAID_SCALE_COMPENSATION, MAID_SCALE_COMPENSATION);
+        }
+        try {
+            // ModernYSM-style direct GPU skinning path (bone SSBO + skinning shader):
+            // one glDrawArrays per model, vertex skinning fully on the GPU. Falls back
+            // to Epic Fight's compute-shader path automatically when unavailable.
+            if (texture != null && YsmGpuRenderPath.tryRender(this, poseStack, bufferSources, texture,
+                    packedLight, r, g, b, a, overlay, armature, poses)) {
+                return;
+            }
+            RenderType finalRenderType = texture != null
+                    ? EpicFightRenderTypes.replaceTexture(texture, renderType)
+                    : renderType;
+            drawWithPreferredPath(poseStack, bufferSources, finalRenderType, drawingFunction,
+                    packedLight, r, g, b, a, overlay, armature, poses);
+        } finally {
+            if (maidEntity) {
+                poseStack.popPose();
+            }
+        }
+    }
+
+    /**
+     * The inverse of EpicFight_TouhouLittleMaid's built-in maid scale
+     * (MaidPatch#getModelMatrix, 0.8F). Update this if EFTLM changes it.
+     */
+    private static final float MAID_SCALE_COMPENSATION = 1.0f / 0.8f;
+
+    private static volatile boolean PREVIEW_DIAG_LOGGED;
+
+    /** One-time diagnostic: what the mesh draws with while a GUI screen is open. */
+    private static void logPreviewDrawOnce(boolean maidEntity, RenderType renderType) {
+        if (PREVIEW_DIAG_LOGGED) {
             return;
         }
-        RenderType finalRenderType = texture != null
-                ? EpicFightRenderTypes.replaceTexture(texture, renderType)
-                : renderType;
-        drawWithPreferredPath(poseStack, bufferSources, finalRenderType, drawingFunction,
-                packedLight, r, g, b, a, overlay, armature, poses);
+        PREVIEW_DIAG_LOGGED = true;
+        LivingEntity entity = YSMRuntimeBridge.getCurrentEntity();
+        org.joml.Matrix4f proj = com.mojang.blaze3d.systems.RenderSystem.getProjectionMatrix();
+        com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
+                "YSM-EF Compat: [diag] mesh draw with screen open: entity={} maid={} projection=({},{},{},{}) m30={} m31={} renderType={}",
+                entity == null ? "null" : entity.getClass().getSimpleName(), maidEntity,
+                proj.m00(), proj.m11(), proj.m22(), proj.m33(), proj.m30(), proj.m31(),
+                renderType);
+    }
+
+    private static volatile Boolean TLM_PRESENT;
+
+    /**
+     * Whether the mesh is about to draw a Touhou Little Maid entity rendered by
+     * EpicFight_TouhouLittleMaid's patched renderer. Guarded by an isLoaded check
+     * so the EntityMaid reference is never resolved when TLM is absent.
+     */
+    private static boolean isMaidEntity() {
+        LivingEntity entity = YSMRuntimeBridge.getCurrentEntity();
+        if (entity == null) {
+            return false;
+        }
+        Boolean tlm = TLM_PRESENT;
+        if (tlm == null) {
+            tlm = net.minecraftforge.fml.ModList.get().isLoaded("touhou_little_maid");
+            TLM_PRESENT = tlm;
+        }
+        return tlm && entity instanceof com.github.tartaricacid.touhoulittlemaid.entity.passive.EntityMaid;
     }
 
     /**

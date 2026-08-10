@@ -559,7 +559,11 @@ public class YSMMeshLibrary {
                     }
                     Path cacheFile = textureCachePath(rl);
                     if (Files.isRegularFile(cacheFile)) {
-                        TEXTURE_DATA.put(rl.toString(), Files.readAllBytes(cacheFile));
+                        byte[] bytes = Files.readAllBytes(cacheFile);
+                        TEXTURE_DATA.put(rl.toString(), bytes);
+                        writePackTexture(rl, bytes, format != 0
+                                ? new int[]{tex.has("w") ? tex.get("w").getAsInt() : 0,
+                                tex.has("h") ? tex.get("h").getAsInt() : 0, format} : null);
                     }
                 }
             }
@@ -805,6 +809,7 @@ public class YSMMeshLibrary {
                 int[] info = pkg.textureInfo.get(entry.getKey());
                 byte[] data = entry.getValue();
                 writeTextureCache(rl, data);
+                writePackTexture(rl, data, info);
                 textures.add(new TextureEntry(entry.getKey(), rl, data, info, sha256Hex(data), data.length));
             }
             String defaultTextureRL = defaultTextureOf(modelId, pkg);
@@ -872,6 +877,45 @@ public class YSMMeshLibrary {
         }
     }
 
+    /**
+     * Write the texture into the generated resource pack folder
+     * (assets/&lt;ns&gt;/&lt;path&gt;), so the texture resolves through the
+     * ResourceManager. The DynamicTexture registration alone is not enough:
+     * Epic Fight's compute-shader path (and GeckoLib's AnimatableTexture
+     * wrapper) bind textures by resource location and fail with a
+     * FileNotFoundException when only a DynamicTexture exists, rendering the
+     * converted mesh with a garbage/missing texture (red edges).
+     *
+     * PNG/JPEG payloads are copied verbatim (stb detects the format by magic
+     * bytes); legacy raw-RGBA payloads are re-encoded to PNG.
+     */
+    private static void writePackTexture(ResourceLocation rl, byte[] data, int[] info) {
+        try {
+            Path file = PACK_ROOT.resolve("assets").resolve(rl.getNamespace()).resolve(rl.getPath());
+            if (Files.isRegularFile(file) && Files.size(file) > 0) {
+                return;
+            }
+            Files.createDirectories(file.getParent());
+            boolean png = data.length >= 4 && (data[0] & 0xFF) == 0x89 && data[1] == 0x50
+                    && data[2] == 0x4E && data[3] == 0x47;
+            boolean jpeg = data.length >= 2 && (data[0] & 0xFF) == 0xFF && (data[1] & 0xFF) == 0xD8;
+            if (png || jpeg) {
+                Files.write(file, data);
+                return;
+            }
+            NativeImage image = readRawRgba(data, info != null ? info[0] : 0, info != null ? info[1] : 0);
+            if (image != null) {
+                try {
+                    image.writeToFile(file);
+                } finally {
+                    image.close();
+                }
+            }
+        } catch (Exception e) {
+            YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to write pack texture {}", rl);
+        }
+    }
+
     private static void writeManifest(JsonObject manifestModels) {
         try {
             JsonObject manifest = new JsonObject();
@@ -932,6 +976,22 @@ public class YSMMeshLibrary {
         }
         deleteStaleJsons(MESH_DIR, keepMeshIds);
         deleteStaleJsons(RUNTIME_DIR, keepMeshIds);
+        // stale textures in the generated pack (kept textures are tracked by
+        // their "textures/<...>.png" relative path)
+        Path packTextures = PACK_ROOT.resolve("assets").resolve(MESH_NAMESPACE).resolve("textures");
+        try (var stream = Files.walk(packTextures)) {
+            stream.filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().endsWith(".png"))
+                    .filter(path -> !keepTexturePaths.contains(
+                            "textures/" + packTextures.relativize(path).toString().replace('\\', '/')))
+                    .forEach(path -> {
+                        try {
+                            Files.deleteIfExists(path);
+                        } catch (IOException ignored) {
+                        }
+                    });
+        } catch (IOException ignored) {
+        }
         Path cacheRoot = TEXTURE_CACHE_DIR.resolve(MESH_NAMESPACE);
         try (var stream = Files.walk(TEXTURE_CACHE_DIR)) {
             stream.filter(Files::isRegularFile).forEach(path -> {

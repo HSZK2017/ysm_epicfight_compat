@@ -111,6 +111,17 @@ public final class YsmGpuRenderPath {
     private YsmGpuRenderPath() {}
 
     /**
+     * Whether the current projection is the GUI's orthographic one (set by
+     * GameRenderer before the GUI render: setOrtho(0, w, h, 0, n, f) has
+     * non-zero m30/m31), as opposed to the world camera's perspective matrix
+     * (m30 = m31 = 0).
+     */
+    private static boolean isGuiEntityProjection() {
+        org.joml.Matrix4f proj = com.mojang.blaze3d.systems.RenderSystem.getProjectionMatrix();
+        return proj.m30() != 0.0F || proj.m31() != 0.0F;
+    }
+
+    /**
      * Try to draw the mesh with the GPU skinning path. Returns true when the
      * draw happened; false lets the caller use Epic Fight's render path.
      */
@@ -132,6 +143,17 @@ public final class YsmGpuRenderPath {
             return false;
         }
         if (poses == null || armature == null || bufferSources instanceof OutlineBufferSource) {
+            return false;
+        }
+        if (isGuiEntityProjection()) {
+            // In-GUI entity previews (the YSM model selection screen's
+            // renderEntityInInventory) render with an orthographic projection and
+            // GUI-specific GL state. The GPU skinning path's light/overlay unit
+            // setup and uniform math are tuned for the world render and draw the
+            // converted mesh as a collapsed red rectangle over the preview;
+            // Epic Fight's compute-shader path renders correctly there (verified:
+            // the red box appears only when the bone-count gate lets the GPU path
+            // engage, i.e. a bare-handed maid, and disappears on the compute path).
             return false;
         }
         if (shaderPackInUse()) {

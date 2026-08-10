@@ -171,7 +171,7 @@
 - 产物：`build/libs/YSM_EpicFight_Compat-1.20.1-1.5.0-all.jar`（内嵌 `zstd-jni 1.5.6-3`，jar-in-jar）
 - 本机网络证书校验失败时可加 `-Dnet.minecraftforge.gradle.check.certs=false`
 - 依赖：Forge 1.20.1-47.4.16+、Epic Fight 20.14.17+（Modrinth）、YSM 2.6+（`libs/ysm-2.6.5.jar` 本地 flatDir）、zstd-jni（jarJar）；可选 TLM 1.5+ / ef_tlm 1.1+
-- 参考源码：`参考/` 目录下 `OpenYSM`（格式/网络协议）、`ModernYSM`（GPU 渲染/懒加载/内存优化）、`LgeacyYSM`（GeckoBuilder 约定）、`YSMParser`（C++ 加密交叉验证）、`EpicFight_TouhouLittleMaid`（补丁渲染器范例）
+- 参考源码： `OpenYSM`（格式/网络协议）、`ModernYSM`（GPU 渲染/懒加载/内存优化）、`LgeacyYSM`（GeckoBuilder 约定）、`YSMParser`（C++ 加密交叉验证）、`EpicFight_TouhouLittleMaid`（补丁渲染器范例）
 
 ---
 

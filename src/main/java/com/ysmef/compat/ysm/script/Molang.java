@@ -505,6 +505,18 @@ public final class Molang {
                 double n = advance().num();
                 return env -> n;
             }
+            if (current.type() == T_STR) {
+                // bare string literal (e.g. "ctrl.x != 'lit'"): no double can carry
+                // a string, so it evaluates to a per-string marker in a range no
+                // real molang value can reach. Comparisons then behave like YSM's
+                // string semantics: number == string is false, number != string is
+                // true (an unset ctrl.* query equals '' in the real YSM env, which
+                // differs from any non-empty literal), and string == string
+                // compares by marker identity. See {@link #stringMarker(String)}.
+                String str = advance().text();
+                double marker = stringMarker(str);
+                return env -> marker;
+            }
             if (isOp("(")) {
                 advance();
                 Expr e = parseStatements();
@@ -566,6 +578,21 @@ public final class Molang {
 
     private static double sanitize(double v) {
         return Double.isNaN(v) || Double.isInfinite(v) ? 0.0 : v;
+    }
+
+    /**
+     * Marker value of a string literal used as a bare operand. The interned id
+     * (0..n-1) is mapped into the -1e18 range, far below any real molang value
+     * (health/positions/rotation/scale magnitudes), so:
+     * - number == string -> false, number != string -> true
+     * - string == same string -> true, string == different string -> false
+     *
+     * Ids are spaced 4096 apart because a double at 1e18 has an ULP of 128
+     * (2^(59-52)); a spacing smaller than that would collapse distinct strings
+     * into the same marker.
+     */
+    private static double stringMarker(String value) {
+        return -1.0e18 - idOf(value) * 4096.0;
     }
 
     /** Per-thread scratch for function arguments (the eval threads are stable). */
