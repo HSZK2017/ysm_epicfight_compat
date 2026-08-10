@@ -18,7 +18,7 @@
 | **Molang 运行时** | 每玩家脚本求值：平行（变体可见性）、状态（idle/walk/...）、条件（hold/use/vehicle）动画，LOD 距离降频，异步求值 |
 | **懒加载与 LRU** | 模型按需转换、验证缓存恢复、LRU 淘汰（GPU 缓冲/纹理/脚本整体释放）、世代废弃任务 |
 | **多人联机同步** | 独立通道同步玩家模型选择（专用服务器安装本模组） |
-| **TLM 女仆兼容** | Touhou Little Maid GEO 模型转换 + EpicFight_TouhouLittleMaid 渲染挂钩（可选） |
+| **TLM 女仆兼容** | 女仆 YSM 模型渲染挂钩（EpicFight_TouhouLittleMaid 可选）。TLM 自带 GEO 模型包由 EFTLM 模组自行处理 |
 
 ---
 
@@ -74,7 +74,7 @@
 | `YSMJointMapper` | YSM 骨骼名 → EF biped 关节 ID 映射 (Root=0..Elbow_L=19) |
 | `YSMMesh` | EF `HumanoidMesh` 子类——贴图替换、运行时模型 ID、按部件序号的运行时变换注入（O(1) 数组访问） |
 | `YSMMeshLibrary` | 网格/贴图注册中心 + 懒转换门禁 + **LRU 淘汰**（见性能节）。manifest 记录输出 SHA-256 与大小，缓存恢复前逐文件校验；原子写 |
-| `TlmModelLibrary` / `TlmGeoModelParser` | Touhou Little Maid GEO 模型转换（磁盘包 + jar 内置资源管理器读取） |
+| `YsmMaidMeshSupport` | 女仆 YSM 模型网格选择桥（`EntityMaid.isYsmModel()` → 转换后的 YSM 网格；仅 EFTLM 安装时生效） |
 
 ### 运行时脚本系统 (`com.ysmef.compat.model.runtime`)
 
@@ -168,7 +168,7 @@
 ./gradlew build
 ```
 
-- 产物：`build/libs/YSM_EpicFight_Compat-1.20.1-1.4.0-all.jar`（内嵌 `zstd-jni 1.5.6-3`，jar-in-jar）
+- 产物：`build/libs/YSM_EpicFight_Compat-1.20.1-1.5.0-all.jar`（内嵌 `zstd-jni 1.5.6-3`，jar-in-jar）
 - 本机网络证书校验失败时可加 `-Dnet.minecraftforge.gradle.check.certs=false`
 - 依赖：Forge 1.20.1-47.4.16+、Epic Fight 20.14.17+（Modrinth）、YSM 2.6+（`libs/ysm-2.6.5.jar` 本地 flatDir）、zstd-jni（jarJar）；可选 TLM 1.5+ / ef_tlm 1.1+
 - 参考源码：`参考/` 目录下 `OpenYSM`（格式/网络协议）、`ModernYSM`（GPU 渲染/懒加载/内存优化）、`LgeacyYSM`（GeckoBuilder 约定）、`YSMParser`（C++ 加密交叉验证）、`EpicFight_TouhouLittleMaid`（补丁渲染器范例）

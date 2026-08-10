@@ -1,7 +1,6 @@
 package com.ysmef.compat.event;
 
 import com.ysmef.compat.YSMEpicFightCompat;
-import com.ysmef.compat.model.TlmModelLibrary;
 import com.ysmef.compat.model.YSMMeshLibrary;
 import com.ysmef.compat.renderer.YSMModelAccess;
 import com.ysmef.compat.renderer.YSMPlayerRenderer;
@@ -91,14 +90,13 @@ public class YSMCompatClientEvents {
      * On resource reload (F3+T): drop the registered meshes, texture state and
      * compiled runtime models so the next mesh lookup re-validates and lazily
      * re-converts whatever changed (cheap for unchanged models: verified cache
-     * restore). TLM maid meshes are re-scanned lazily on the next maid render.
+     * restore).
      */
     @SubscribeEvent
     public static void onRegisterReloadListeners(RegisterClientReloadListenersEvent event) {
         event.registerReloadListener((ResourceManagerReloadListener) resourceManager -> {
             YSMModelAccess.clearCache();
             YSMMeshLibrary.invalidateAll();
-            TlmModelLibrary.resetLazyGeneration();
             YSMMeshLibrary.preparePackFolder();
         });
     }

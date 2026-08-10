@@ -88,7 +88,6 @@ public class YSMReloadTrigger {
                 try {
                     YSMEpicFightCompat.LOGGER.info("YSM-EF Compat: invalidating base meshes after YSM model reload");
                     YSMMeshLibrary.invalidateAll();
-                    com.ysmef.compat.model.TlmModelLibrary.resetLazyGeneration();
                     YSMMeshLibrary.preparePackFolder();
                     YSMModelAccess.clearCache();
                 } catch (Throwable t) {

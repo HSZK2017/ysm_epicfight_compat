@@ -211,31 +211,6 @@ public class YSMMeshLibrary {
     }
 
     /**
-     * The mesh file name used for TLM model-pack meshes: "namespace__path"
-     * (mirrors the naming in TlmModelLibrary, WITHOUT the extra hash suffix
-     * that {@link #sanitize} appends for characters like ':').
-     */
-    public static String tlmMeshIdOf(String modelId) {
-        net.minecraft.resources.ResourceLocation rl = net.minecraft.resources.ResourceLocation.tryParse(modelId);
-        if (rl == null) {
-            return null;
-        }
-        return tlmSanitize(rl.getNamespace()) + "__" + tlmSanitize(rl.getPath());
-    }
-
-    private static String tlmSanitize(String value) {
-        StringBuilder sb = new StringBuilder();
-        for (char c : value.toLowerCase().toCharArray()) {
-            if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '/' || c == '-') {
-                sb.append(c);
-            } else {
-                sb.append('_');
-            }
-        }
-        return sb.toString();
-    }
-
-    /**
      * Ensure the generated resource pack skeleton exists (called before the pack
      * repository is built).
      */
@@ -977,8 +952,6 @@ public class YSMMeshLibrary {
         try (var stream = Files.walk(dir)) {
             stream.filter(Files::isRegularFile)
                     .filter(path -> path.getFileName().toString().endsWith(".json"))
-                    .filter(path -> dir.relativize(path).getNameCount() == 0
-                            || !dir.relativize(path).getName(0).toString().equals("tlm"))
                     .filter(path -> !keepNames.contains(dir.relativize(path).toString().replace('\\', '/')))
                     .forEach(path -> {
                         try {

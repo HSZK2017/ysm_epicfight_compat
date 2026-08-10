@@ -4,7 +4,6 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.ysmef.compat.ysm.YsmModelPackage;
-import com.ysmef.compat.ysm.script.ScriptAnim;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 
@@ -82,26 +81,8 @@ public class EFMeshJsonWriter {
         if (quads < 0) {
             return -1;
         }
-        writeRuntimeJson(geoModel, pkg.scriptAnims, runtimeFile, true);
+        writeRuntimeJson(pkg, geoModel, runtimeFile);
         return quads;
-    }
-
-    /**
-     * Convert a TLM (Touhou Little Maid) bedrock maid model into an Epic Fight
-     * mesh JSON file. TLM models carry no molang runtime data, so no runtime
-     * script JSON is produced.
-     *
-     * @param geoModel the parsed TLM model (see TlmGeoModelParser / YSMGeoModel)
-     * @param scale    uniform render scale (MaidModelInfo#render_entity_scale)
-     * @param outFile  the target mesh JSON file
-     * @param textureRL the resource location of the model's texture
-     * @return the number of quads converted, or -1 if the model has no geometry
-     */
-    public static int writeTlmMesh(YSMGeoModel geoModel, float scale, Path outFile, String textureRL) throws IOException {
-        if (geoModel == null) {
-            return -1;
-        }
-        return writeMeshJson(geoModel, scale, scale, outFile, textureRL);
     }
 
     /**
@@ -169,16 +150,9 @@ public class EFMeshJsonWriter {
     /**
      * Writes the runtime script JSON consumed by YSMRuntimeModel: the bone table
      * (hierarchy, bind transforms, EF joint binding) plus the molang animations that
-     * drive the model's variant behavior. Used for YSM packages as well as TLM
-     * model-pack models that ship bedrock animation files.
-     *
-     * @param tlmShowBackpack for TLM model-pack models: whether the model entry's
-     *                        "show_backpack" allows the model's own backpack
-     *                        geometry (driven by the tlm.has_backpack query).
-     *                        Always true for YSM packages.
+     * drive YSM's model-changing behavior.
      */
-    public static void writeRuntimeJson(YSMGeoModel geoModel, Map<String, ScriptAnim> scriptAnims,
-                                        Path runtimeFile, boolean tlmShowBackpack) throws IOException {
+    private static void writeRuntimeJson(YsmModelPackage pkg, YSMGeoModel geoModel, Path runtimeFile) throws IOException {
         JsonObject root = new JsonObject();
 
         JsonArray bones = new JsonArray();
@@ -202,9 +176,7 @@ public class EFMeshJsonWriter {
         }
         root.add("bones", bones);
 
-        root.addProperty("tlm_show_backpack", tlmShowBackpack);
-
-        root.add("animations", com.ysmef.compat.ysm.script.ScriptJson.animationsToJson(scriptAnims));
+        root.add("animations", com.ysmef.compat.ysm.script.ScriptJson.animationsToJson(pkg.scriptAnims));
 
         writeFileAtomic(runtimeFile, new GsonBuilder().create().toJson(root).getBytes(StandardCharsets.UTF_8));
     }

@@ -66,13 +66,6 @@ public final class YSMRuntimeModel {
     /** Number of compiled keyframe channels; used to size per-animator cursor arrays. */
     final int channelCount;
 
-    /**
-     * TLM model-pack entries may forbid the model's own backpack geometry
-     * ("show_backpack": false); the tlm.has_backpack query is forced to 0 then.
-     * Always true for YSM packages.
-     */
-    public final boolean tlmShowBackpack;
-
     private final Map<UUID, YSMPlayerAnimator> animators = new ConcurrentHashMap<>();
 
     /**
@@ -93,7 +86,7 @@ public final class YSMRuntimeModel {
 
     private YSMRuntimeModel(String modelId, BoneRt[] bones, Map<String, Integer> boneIndex,
                             List<CompiledAnim> parallels, Map<String, CompiledAnim> states,
-                            Map<String, CompiledAnim> conditionAnims, int channelCount, boolean tlmShowBackpack) {
+                            Map<String, CompiledAnim> conditionAnims, int channelCount) {
         this.modelId = modelId;
         this.bones = bones;
         this.boneIndex = boneIndex;
@@ -101,7 +94,6 @@ public final class YSMRuntimeModel {
         this.states = states;
         this.conditionAnims = conditionAnims;
         this.channelCount = channelCount;
-        this.tlmShowBackpack = tlmShowBackpack;
     }
 
     public YSMPlayerAnimator animatorFor(LivingEntity entity) {
@@ -397,7 +389,7 @@ public final class YSMRuntimeModel {
     }
 
     private static YSMRuntimeModel loadAndCompile(String modelId) {
-        Path file = runtimeFileOf(modelId);
+        Path file = YSMMeshLibrary.getRuntimeFile(YSMMeshLibrary.meshIdOf(modelId));
         try {
             String json = Files.readString(file);
             return compile(modelId, JsonParser.parseString(json).getAsJsonObject());
@@ -405,37 +397,6 @@ public final class YSMRuntimeModel {
             YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to load runtime model '{}': {}", modelId, e.toString());
             return null;
         }
-    }
-
-    /**
-     * Resolves the runtime file of a model id. TLM model-pack meshes keep their
-     * runtime scripts under the tlm/ subdir and are named "namespace__path"
-     * (tlmMeshIdOf); TLM's extra-texture variants (model_id + "_" + md5(texturePath))
-     * share the base model's runtime file. YSM model ids use the plain sanitize
-     * name at the top level.
-     */
-    private static Path runtimeFileOf(String modelId) {
-        List<Path> candidates = new ArrayList<>();
-        addRuntimeCandidates(candidates, YSMMeshLibrary.meshIdOf(modelId));
-        String tlmId = YSMMeshLibrary.tlmMeshIdOf(modelId);
-        if (tlmId != null && !tlmId.equals(YSMMeshLibrary.meshIdOf(modelId))) {
-            addRuntimeCandidates(candidates, tlmId);
-        }
-        if (tlmId != null && tlmId.length() > 33 && tlmId.matches(".*_[0-9a-f]{32}")) {
-            // TLM extra-texture variant: reuse the base model's runtime file
-            addRuntimeCandidates(candidates, tlmId.substring(0, tlmId.length() - 33));
-        }
-        for (Path candidate : candidates) {
-            if (Files.isRegularFile(candidate)) {
-                return candidate;
-            }
-        }
-        return candidates.get(0);
-    }
-
-    private static void addRuntimeCandidates(List<Path> out, String meshId) {
-        out.add(YSMMeshLibrary.getRuntimeFile(meshId));
-        out.add(YSMMeshLibrary.getRuntimeFile("tlm/" + meshId));
     }
 
     /** Forget one cached runtime model (called after its mesh was (re)converted). */
@@ -532,8 +493,7 @@ public final class YSMRuntimeModel {
         // pre_parallel* first, then parallel*, each in numeric order
         parallels.sort(Comparator.comparing((CompiledAnim a) -> a.name.startsWith("pre_parallel") ? 0 : 1)
                 .thenComparing(a -> a.name));
-        boolean tlmShowBackpack = !root.has("tlm_show_backpack") || root.get("tlm_show_backpack").getAsBoolean();
-        return new YSMRuntimeModel(modelId, bones, boneIndex, parallels, states, conditions, nextChannelId, tlmShowBackpack);
+        return new YSMRuntimeModel(modelId, bones, boneIndex, parallels, states, conditions, nextChannelId);
     }
 
     /**
