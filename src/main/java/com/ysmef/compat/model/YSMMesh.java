@@ -146,6 +146,14 @@ public class YSMMesh extends HumanoidMesh {
     public void draw(PoseStack poseStack, MultiBufferSource bufferSources, RenderType renderType,
                      Mesh.DrawingFunction drawingFunction, int packedLight, float r, float g, float b, float a,
                      int overlay, @Nullable Armature armature, OpenMatrix4f[] poses) {
+        // 防御：EntitySnapshot（残影/特效快照）捕获时的 poseMatrices 基于当时的
+        // armature 生成；若女仆在战斗中切换武器（EFTLM 按物品切换 armature），
+        // 渲染时 armature 关节数变小，poses 比关节多，Epic Fight 的 compute 路径
+        // 会因 searchJointById(i) 返回 null 而崩溃。这里将 poses 裁剪到当前
+        // armature 的关节数（同时保证 YSMRuntimeBridge 与 compute 路径拿到一致数据）。
+        if (armature != null && poses != null && poses.length > armature.getJointNumber()) {
+            poses = java.util.Arrays.copyOf(poses, armature.getJointNumber());
+        }
         boolean maidEntity = isMaidEntity();
         if (Minecraft.getInstance().screen != null) {
             logPreviewDrawOnce(maidEntity, renderType);
