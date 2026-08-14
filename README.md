@@ -129,7 +129,7 @@
 
 ### 事件与 Mixin
 
-主配置 `ysm_epicfight_compat.mixins.json`（22 个客户端 mixin）：`ModernYsm*`（3）、`OpenYsm*`（4，含配置界面）、`YsmUnobf*`（4）、混淆版 `Ysm*`（8）、`PPlayerRendererMixin`、`RenderSystemAccessorMixin`（着色器光照方向）、`SkinnedMeshCpuRenderMixin`（EF drawPosed 回退拦截 → 本模组 CPU 蒙皮路径）；可选配置 `ysm_epicfight_compat.eftlm.mixins.json`（TLM 女仆渲染挂钩）。
+主配置 `ysm_epicfight_compat.mixins.json`（23 个客户端 mixin）：`ModernYsm*`（3）、`OpenYsm*`（4，含配置界面）、`YsmUnobf*`（4）、混淆版 `Ysm*`（8）、`PPlayerRendererMixin`、`RenderSystemAccessorMixin`（着色器光照方向）、`SkinnedMeshCpuRenderMixin`（EF drawPosed 回退拦截 → 本模组 CPU 蒙皮路径）、`YsmExtraPlayerOverlayMixin`（战斗模式抑制纸娃娃，见配置 `disableExtraPlayerInBattleMode`）；可选配置 `ysm_epicfight_compat.eftlm.mixins.json`（TLM 女仆渲染挂钩）。
 
 ### 多人联机模型同步 (`com.ysmef.compat.network`)
 
@@ -170,6 +170,7 @@
 | `enableGpuRender` | true | GPU 蒙皮路径开关。ModernYSM 加载时忽略本项（联动其 `UseGpuRenderer`）；OpenYSM/LegacyYSM 下生效，可在 YSM 模型选择界面勾选，GPU 路径不可用时自动置为 false（仿 ModernYSM） |
 | `lazyModelCacheSize` | 64 | LRU 模型缓存上限（8-512） |
 | `scriptAsyncEval` | true | 非本地玩家脚本异步求值 |
+| `disableExtraPlayerInBattleMode` | true | 战斗模式下抑制 YSM 左上角"额外玩家渲染"（纸娃娃）——纸娃娃每帧经实体渲染分发器触发第二次完整 EF 补丁渲染管线（实测 100+ 帧 → 20-30 帧的元凶）；战斗模式中模型已可见于世界内，默认关闭纸娃娃 |
 
 调试/验证系统属性（JVM 参数，不需要改配置文件）：
 

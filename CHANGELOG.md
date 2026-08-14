@@ -13,9 +13,12 @@
 
 #### 修复
 
+- **修复战斗模式下帧率骤降（100+ 帧 → 20-30 帧）**：YSM 左上角"额外玩家渲染"（纸娃娃）在战斗模式下通过实体渲染分发器每帧触发**第二次完整 EF 补丁渲染管线**（骨骼姿态采样、补丁图层、网格绘制）；现战斗模式下默认自动抑制纸娃娃（新增 `YsmExtraPlayerOverlayMixin`，配置 `disableExtraPlayerInBattleMode` 默认 true），帧率恢复至与关闭该选项一致
 - **修复 CPU 路径缺面（根因）**：EF `EpicFightRenderTypes.replaceTexture` 与 `getTriangulated` 共享渲染类型缓存，QUADS 模式实体渲染类型污染缓存，导致 `getTriangulated` 返回未三角化的渲染类型；drawPosed 把 688 个三角形顶点按"每 4 顶点一个 quad"重新分组绘制 → 视觉缺面。现改用缓存无关的 `makeTriangulated`，EF 原始 drawPosed 路径本身也渲染完整
 - **消除"计算着色器不可用即缺面"**：无计算着色器 GPU 上的渲染不再缺面（此前 CPU 回退告警 "converted meshes may render incompletely" 的根因已修复，且默认改走本模组 CPU 蒙皮路径）
 - 修复 CPU 蒙皮法线未归一化导致的光照不一致（EF drawPosed 不归一化法线；本模组 CPU 路径对蒙皮后法线归一化）
+- **诊断日志默认关闭**：所有 [diag] 日志（路径跳过原因、逐实体渲染追踪、逐帧计时）默认静默（`-Dysm_ef_compat.diag=true` 开启），消除战斗/纸娃娃场景下每秒十几条的 log4j 刷屏
+- **GPU 路径不可用场景改走 CPU 顶点管线**：GUI 预览、TLM 女仆（poseStack 缺实体-相机平移）等 GPU 路径门控拦截的绘制，由轻量 CPU 蒙皮路径接管（无 compute 调度/输出 SSBO 往返/管线屏障），对核显更友好；CPU 蒙皮热路径内联优化（~2.4ms → ~1.6ms/1.15 万顶点）
 
 #### 兼容性
 
@@ -35,9 +38,12 @@
 
 #### Fixed
 
+- **Fixed the battle-mode FPS collapse (100+ FPS -> 20-30 FPS)**: YSM's extra player render (the corner paperdoll) dispatches through the entity render dispatcher every frame, which in battle mode runs a SECOND full Epic Fight patched render pipeline per frame (armature pose sampling, patched layers, mesh draw); the paperdoll is now suppressed by default in battle mode (new `YsmExtraPlayerOverlayMixin`, config `disableExtraPlayerInBattleMode` default true), restoring the FPS to match the option-disabled state
 - **Fixed the CPU-path missing faces (root cause)**: EF's `EpicFightRenderTypes.replaceTexture` and `getTriangulated` share a render-type cache; QUADS-mode entity render types pollute that cache, so `getTriangulated` returned a non-triangulated render type and drawPosed regrouped 688 triangle vertices as "4 vertices per quad" → visually missing faces. The fallback now uses the cache-independent `makeTriangulated`, so Epic Fight's original drawPosed path also renders completely
 - **No more "missing faces whenever compute shaders are unavailable"**: rendering on compute-less GPUs is now complete (the root cause behind the old "converted meshes may render incompletely" warning is fixed, and the default is now this mod's CPU skinning path)
 - Fixed CPU-skinning lighting inconsistency from unnormalized normals (EF's drawPosed does not normalize; this mod's CPU path normalizes the skinned normals)
+- **Diagnostic logs off by default**: all "[diag]" logs (render-path skip reasons, per-entity render tracing, per-frame timings) are silent unless `-Dysm_ef_compat.diag=true` is set, eliminating the multi-line-per-second log4j spam in battle / paperdoll scenarios
+- **CPU vertex pipeline for GPU-path-declined cases**: GUI previews, TLM maids (poseStack lacking the entity-camera translation) and other draws blocked by the GPU path's gates now use the lightweight CPU skinning path (no compute dispatch, no output-SSBO round trip, no pipeline barrier) - friendlier to integrated GPUs; the CPU skinning hot path is inlined (~2.4 ms -> ~1.6 ms per 11.5k vertices)
 
 #### Compatibility
 

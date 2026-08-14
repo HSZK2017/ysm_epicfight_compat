@@ -23,6 +23,7 @@
     "YsmArmaturePoseMixin",
     "YsmArmRenderMixin",
     "YsmBackgroundHandMixin",
+    "YsmExtraPlayerOverlayMixin",
     "YsmLegacyConfigScreenMixin",
     "YsmPlayerRenderMixin",
     "YsmProjectileRenderMixin",

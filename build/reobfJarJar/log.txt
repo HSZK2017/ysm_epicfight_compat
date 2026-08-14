@@ -287,6 +287,7 @@ Writing Output: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\reo
   com/ysmef/compat/mixin/YsmArmRenderMixin.class
   com/ysmef/compat/mixin/YsmArmaturePoseMixin.class
   com/ysmef/compat/mixin/YsmBackgroundHandMixin.class
+  com/ysmef/compat/mixin/YsmExtraPlayerOverlayMixin.class
   com/ysmef/compat/mixin/YsmFishingHookRenderMixin.class
   com/ysmef/compat/mixin/YsmLegacyConfigScreenMixin.class
   com/ysmef/compat/mixin/YsmPlayerRenderMixin.class
