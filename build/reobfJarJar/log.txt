@@ -244,6 +244,7 @@ Writing Output: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\reo
   com/ysmef/
   com/ysmef/compat/
   com/ysmef/compat/YSMEpicFightCompat.class
+  com/ysmef/compat/YsmDiag.class
   com/ysmef/compat/config/
   com/ysmef/compat/config/YSMCompatConfig.class
   com/ysmef/compat/cpu/

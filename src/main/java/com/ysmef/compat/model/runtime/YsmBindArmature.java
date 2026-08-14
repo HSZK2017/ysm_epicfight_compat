@@ -240,7 +240,7 @@ public final class YsmBindArmature {
         Map<String, Joint> jointMap = new HashMap<>();
         Joint newRoot = copyHierarchy(ref.rootJoint, new OpenMatrix4f(), pivots, jointMap, true);
         newRoot.initOriginTransform(new OpenMatrix4f());
-        if (DIAG_JOINTS_LOGGED.add(modelId)) {
+        if (DIAG_JOINTS_LOGGED.add(modelId) && com.ysmef.compat.YsmDiag.isEnabled()) {
             // Per-joint pivot diag: the exact world position every joint was
             // re-anchored to (Minecraft frame, up = +Y). A head that swings
             // around the chest instead of the neck is immediately visible here.
@@ -262,7 +262,7 @@ public final class YsmBindArmature {
             }
             YSMEpicFightCompat.LOGGER.info(sb.toString());
         }
-        if (DIAG_LOGGED.add(modelId)) {
+        if (DIAG_LOGGED.add(modelId) && com.ysmef.compat.YsmDiag.isEnabled()) {
             float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE, minZ = Float.MAX_VALUE;
             float maxX = -Float.MAX_VALUE, maxY = -Float.MAX_VALUE, maxZ = -Float.MAX_VALUE;
             for (OpenMatrix4f pivot : pivots.values()) {

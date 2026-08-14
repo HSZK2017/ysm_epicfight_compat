@@ -26,6 +26,9 @@ public abstract class RenderEngineEventsDiagMixin {
     @Inject(method = "renderLivingEvent(Lnet/minecraftforge/client/event/RenderLivingEvent$Pre;)V",
             at = @At("HEAD"), require = 0)
     private static void ysmef$diagRenderLivingEventHead(RenderLivingEvent.Pre<?, ?> event, CallbackInfo ci) {
+        if (!com.ysmef.compat.YsmDiag.isEnabled()) {
+            return;
+        }
         net.minecraft.world.entity.LivingEntity entity = event.getEntity();
         String key = entity.getClass().getName();
         int count = COUNTS.merge(key, 1, Integer::sum);

@@ -181,6 +181,7 @@ public final class YSMPlayerAnimator implements Molang.Env {
      * render thread is only the mesh push (O(parts), no molang).
      */
     public void apply(YSMMesh mesh, LivingEntity entity, OpenMatrix4f[] poses, float partialTick) {
+        long t0 = com.ysmef.compat.YsmDiag.isEnabled() ? System.nanoTime() : 0L;
         double now = (entity.tickCount + partialTick) / 20.0;
         if (shouldFullEval(entity)) {
             EvalInputs inputs = captureEvalInputs(entity);
@@ -192,6 +193,7 @@ public final class YSMPlayerAnimator implements Molang.Env {
             }
         }
         pushToMesh(mesh);
+        com.ysmef.compat.YsmDiag.addNanos(com.ysmef.compat.YsmDiag.SLOT_SCRIPT_EVAL, System.nanoTime() - t0);
     }
 
     private boolean useAsyncEval(LivingEntity entity) {
@@ -526,7 +528,7 @@ public final class YSMPlayerAnimator implements Molang.Env {
     private boolean animatorDiagLogged = false;
 
     private void logAnimatorDiagOnce(Matrix4f[] chain) {
-        if (animatorDiagLogged) {
+        if (animatorDiagLogged || !com.ysmef.compat.YsmDiag.isEnabled()) {
             return;
         }
         animatorDiagLogged = true;

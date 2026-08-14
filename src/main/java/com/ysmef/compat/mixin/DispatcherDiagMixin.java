@@ -31,6 +31,9 @@ public abstract class DispatcherDiagMixin {
             at = @At("HEAD"), require = 0)
     private void ysmef$diagDispatcherHead(Entity entity, double x, double y, double z, float yaw, float partialTicks,
                                           PoseStack poseStack, MultiBufferSource buffer, int light, CallbackInfo ci) {
+        if (!com.ysmef.compat.YsmDiag.isEnabled()) {
+            return;
+        }
         String key = entity.getClass().getName();
         if (!LOGGED.add(key)) {
             return;
@@ -57,6 +60,9 @@ public abstract class DispatcherDiagMixin {
             require = 0)
     private void ysmef$diagDispatcherBeforeRender(Entity entity, double x, double y, double z, float yaw, float partialTicks,
                                                   PoseStack poseStack, MultiBufferSource buffer, int light, CallbackInfo ci) {
+        if (!com.ysmef.compat.YsmDiag.isEnabled()) {
+            return;
+        }
         String key = entity.getClass().getName();
         if (!BEFORE_LOGGED.add(key)) {
             return;
@@ -85,6 +91,9 @@ public abstract class DispatcherDiagMixin {
             require = 0)
     private void ysmef$diagDispatcherAfterTranslate(Entity entity, double x, double y, double z, float yaw, float partialTicks,
                                                     PoseStack poseStack, MultiBufferSource buffer, int light, CallbackInfo ci) {
+        if (!com.ysmef.compat.YsmDiag.isEnabled()) {
+            return;
+        }
         String key = entity.getClass().getName();
         if (!AFTER_TRANSLATE_LOGGED.add(key)) {
             return;

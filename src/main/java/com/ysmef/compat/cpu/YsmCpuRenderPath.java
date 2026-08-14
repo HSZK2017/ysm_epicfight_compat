@@ -84,6 +84,7 @@ public final class YsmCpuRenderPath {
     // Epic Fight's own drawPosed uses for its static scratch vectors.
     private static OpenMatrix4f[] TOTAL = allocateScratch(32);
     private static final OpenMatrix4f jointScratch = new OpenMatrix4f();
+    private static final OpenMatrix4f partScratch = new OpenMatrix4f();
     private static final Vec4f POS4 = new Vec4f();
     private static final Vec4f NRM4 = new Vec4f();
     private static final Vec4f ACC4 = new Vec4f();
@@ -103,6 +104,9 @@ public final class YsmCpuRenderPath {
     private static final Map<YSMMesh, String> CPU_SKIP_DIAG = new ConcurrentHashMap<>();
 
     private static void cpuSkipDiag(YSMMesh mesh, String reason) {
+        if (!com.ysmef.compat.YsmDiag.isEnabled()) {
+            return;
+        }
         String prev = CPU_SKIP_DIAG.put(mesh, reason);
         if (!reason.equals(prev)) {
             YSMEpicFightCompat.LOGGER.info(
@@ -158,6 +162,7 @@ public final class YsmCpuRenderPath {
     public static boolean tryRender(YSMMesh mesh, PoseStack poseStack, Mesh.DrawingFunction drawingFunction,
                                     int packedLight, float r, float g, float b, float a, int overlay,
                                     @Nullable Armature armature, @Nullable OpenMatrix4f[] poses) {
+        long t0 = com.ysmef.compat.YsmDiag.isEnabled() ? System.nanoTime() : 0L;
         // The CPU path replicates NEW_ENTITY semantics (position/color/uv/overlay/
         // light/normal); other drawing functions write different vertex layouts.
         if (drawingFunction != Mesh.DrawingFunction.NEW_ENTITY) {
@@ -226,6 +231,7 @@ public final class YsmCpuRenderPath {
         }
 
         logCpuActiveOnce(mesh, writtenCount);
+        com.ysmef.compat.YsmDiag.addNanos(com.ysmef.compat.YsmDiag.SLOT_CPU_PATH, System.nanoTime() - t0);
         return true;
     }
 
@@ -281,9 +287,19 @@ public final class YsmCpuRenderPath {
                 continue;
             }
             OpenMatrix4f delta = mesh.getPartTransform(partIdx);
-            for (VertexBuilder vb : part.getVertices()) {
-                skinVertex(buf, vb, positions, normals, uvs, jointCounts, jointIndices, weightIndices,
-                        weights, total, jointCount, delta, pose, normalMat);
+            if (tryPrecomputePartMatrix(part, jointCounts, jointIndices, weightIndices, weights,
+                    total, jointCount, delta, partScratch)) {
+                // Rigid single-joint part: the final skinning matrix is constant
+                // for the whole part - one inline transform per vertex.
+                for (VertexBuilder vb : part.getVertices()) {
+                    skinVertexRigid(buf, vb, positions, normals, uvs, partScratch, pose, normalMat);
+                }
+            } else {
+                // Multi-joint or partially corrupt part: per-vertex weighted loop.
+                for (VertexBuilder vb : part.getVertices()) {
+                    skinVertexWeighted(buf, vb, positions, normals, uvs, jointCounts, jointIndices, weightIndices,
+                            weights, total, jointCount, delta, pose, normalMat);
+                }
             }
             partIdx++;
         }
@@ -291,11 +307,114 @@ public final class YsmCpuRenderPath {
         return buf.limit() / YsmCpuMesh.VERTEX_STRIDE;
     }
 
-    /** Skin one vertex, apply the poseStack, and append it (pos 3f, uv 2f, packed normal) to the buffer. */
-    private static void skinVertex(ByteBuffer buf, VertexBuilder vb, float[] positions, float[] normals,
-                                   float[] uvs, int[] jointCounts, int[][] jointIndices, int[][] weightIndices,
-                                   float[] weights, OpenMatrix4f[] total, int jointCount,
-                                   @Nullable OpenMatrix4f delta, Matrix4f pose, Matrix3f normalMat) {
+    /**
+     * Precompute the per-part skinning matrix (pose_j x toOrigin_j x partDelta)
+     * when every vertex of the part is rigidly bound to the SAME joint with
+     * weight ~1 - the layout the converted YSM meshes always use. Returns false
+     * when the part needs the per-vertex weighted path.
+     */
+    private static boolean tryPrecomputePartMatrix(SkinnedMeshPart part, int[] jointCounts, int[][] jointIndices,
+                                                   int[][] weightIndices, float[] weights, OpenMatrix4f[] total,
+                                                   int jointCount, @Nullable OpenMatrix4f delta,
+                                                   OpenMatrix4f out) {
+        int joint = -1;
+        for (VertexBuilder vb : part.getVertices()) {
+            int posIdx = vb.position;
+            if (posIdx >= jointCounts.length || posIdx >= jointIndices.length || posIdx >= weightIndices.length
+                    || jointCounts[posIdx] != 1 || jointIndices[posIdx].length < 1 || weightIndices[posIdx].length < 1) {
+                return false;
+            }
+            int j = jointIndices[posIdx][0];
+            int wi = weightIndices[posIdx][0];
+            float w = wi < weights.length ? weights[wi] : 0.0F;
+            if (j < 0 || j >= jointCount || w < 0.999f) {
+                return false;
+            }
+            if (joint < 0) {
+                joint = j;
+            } else if (joint != j) {
+                return false;
+            }
+        }
+        if (joint < 0) {
+            // empty part (the converted meshes carry empty base parts like
+            // head/torso): nothing to skin, let the vertex loop do nothing
+            return false;
+        }
+        out.load(total[joint]);
+        if (delta != null) {
+            out.mulBack(delta);
+        }
+        return true;
+    }
+
+    /**
+     * Skin one rigidly-bound vertex with the precomputed part matrix and append
+     * it (pos 3f, uv 2f, packed normal) to the buffer. The transform is inlined
+     * with the OpenMatrix4f row-vector storage convention (same formula as
+     * OpenMatrix4f.transform) - the hot path for every vertex of a converted
+     * YSM mesh.
+     */
+    private static void skinVertexRigid(ByteBuffer buf, VertexBuilder vb, float[] positions, float[] normals,
+                                        float[] uvs, OpenMatrix4f m, Matrix4f pose, Matrix3f normalMat) {
+        int posIdx = vb.position;
+        int normIdx = vb.normal;
+        int uvIdx = vb.uv;
+
+        if (posIdx * 3 + 2 >= positions.length || normIdx * 3 + 2 >= normals.length
+                || uvIdx * 2 + 1 >= uvs.length) {
+            // Corrupt index triple: drop only this vertex (the rest of the model
+            // keeps rendering; Epic Fight's CPU path would crash or draw garbage).
+            return;
+        }
+
+        float x0 = positions[posIdx * 3];
+        float y0 = positions[posIdx * 3 + 1];
+        float z0 = positions[posIdx * 3 + 2];
+        float px = m.m00 * x0 + m.m10 * y0 + m.m20 * z0 + m.m30;
+        float py = m.m01 * x0 + m.m11 * y0 + m.m21 * z0 + m.m31;
+        float pz = m.m02 * x0 + m.m12 * y0 + m.m22 * z0 + m.m32;
+
+        float nx0 = normals[normIdx * 3];
+        float ny0 = normals[normIdx * 3 + 1];
+        float nz0 = normals[normIdx * 3 + 2];
+        // w = 0: the translation row drops out
+        float nx = m.m00 * nx0 + m.m10 * ny0 + m.m20 * nz0;
+        float ny = m.m01 * nx0 + m.m11 * ny0 + m.m21 * nz0;
+        float nz = m.m02 * nx0 + m.m12 * ny0 + m.m22 * nz0;
+
+        if (Float.isNaN(px) || Float.isNaN(py) || Float.isNaN(pz)
+                || Float.isNaN(nx) || Float.isNaN(ny) || Float.isNaN(nz)) {
+            // A NaN part transform would make this whole part vanish on every
+            // render path; drop the vertex to keep the frame stable.
+            return;
+        }
+
+        // Apply the poseStack on the CPU (same contract as Epic Fight's drawPosed:
+        // the vertex arrives at the shader in camera space, so the shader only
+        // applies the plain RenderSystem proj/modelView like the vanilla entity
+        // shader does).
+        POS4J.set(px, py, pz, 1.0F);
+        POS4J.mul(pose);
+        NRM3.set(nx, ny, nz);
+        NRM3.mul(normalMat);
+
+        float nlen = NRM3.x * NRM3.x + NRM3.y * NRM3.y + NRM3.z * NRM3.z;
+        float inv = nlen > 1.0e-12F ? (float) (1.0 / Math.sqrt(nlen)) : 0.0F;
+
+        buf.putFloat(POS4J.x);
+        buf.putFloat(POS4J.y);
+        buf.putFloat(POS4J.z);
+        buf.putFloat(uvs[uvIdx * 2]);
+        buf.putFloat(uvs[uvIdx * 2 + 1]);
+        buf.putInt(packNormal(NRM3.x * inv, NRM3.y * inv, NRM3.z * inv));
+    }
+
+    /** Skin one multi-joint vertex with the general weighted loop and append it to the buffer. */
+    private static void skinVertexWeighted(ByteBuffer buf, VertexBuilder vb, float[] positions, float[] normals,
+                                           float[] uvs, int[] jointCounts, int[][] jointIndices, int[][] weightIndices,
+                                           float[] weights, OpenMatrix4f[] total, int jointCount,
+                                           @Nullable OpenMatrix4f delta, Matrix4f pose, Matrix3f normalMat) {
         int posIdx = vb.position;
         int normIdx = vb.normal;
         int uvIdx = vb.uv;
@@ -372,16 +491,6 @@ public final class YsmCpuRenderPath {
         float nx = ACC4.x;
         float ny = ACC4.y;
         float nz = ACC4.z;
-        float len = (float) Math.sqrt(nx * nx + ny * ny + nz * nz);
-        if (len < 1.0e-6F || Float.isNaN(len)) {
-            nx = 0.0F;
-            ny = 0.0F;
-            nz = 1.0F;
-        } else {
-            nx /= len;
-            ny /= len;
-            nz /= len;
-        }
 
         if (Float.isNaN(px) || Float.isNaN(py) || Float.isNaN(pz)
                 || Float.isNaN(nx) || Float.isNaN(ny) || Float.isNaN(nz)) {
@@ -398,26 +507,16 @@ public final class YsmCpuRenderPath {
         POS4J.mul(pose);
         NRM3.set(nx, ny, nz);
         NRM3.mul(normalMat);
-        nx = NRM3.x;
-        ny = NRM3.y;
-        nz = NRM3.z;
-        len = (float) Math.sqrt(nx * nx + ny * ny + nz * nz);
-        if (len < 1.0e-6F || Float.isNaN(len)) {
-            nx = 0.0F;
-            ny = 0.0F;
-            nz = 1.0F;
-        } else {
-            nx /= len;
-            ny /= len;
-            nz /= len;
-        }
+
+        float nlen = NRM3.x * NRM3.x + NRM3.y * NRM3.y + NRM3.z * NRM3.z;
+        float inv = nlen > 1.0e-12F ? (float) (1.0 / Math.sqrt(nlen)) : 0.0F;
 
         buf.putFloat(POS4J.x);
         buf.putFloat(POS4J.y);
         buf.putFloat(POS4J.z);
         buf.putFloat(uvs[uvIdx * 2]);
         buf.putFloat(uvs[uvIdx * 2 + 1]);
-        buf.putInt(packNormal(nx, ny, nz));
+        buf.putInt(packNormal(NRM3.x * inv, NRM3.y * inv, NRM3.z * inv));
     }
 
     /** Pack a normal into the GL_INT_2_10_10_10_REV layout (same unpack as cpu_skin.vsh). */

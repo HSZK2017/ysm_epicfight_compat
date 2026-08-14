@@ -32,6 +32,9 @@ public abstract class PatchedLivingRenderDiagMixin {
     private void ysmef$diagRenderHead(LivingEntity entity, LivingEntityPatch<?> entitypatch,
                                       LivingEntityRenderer<?, ?> renderer, MultiBufferSource buffer,
                                       PoseStack poseStack, int packedLight, float partialTicks, CallbackInfo ci) {
+        if (!com.ysmef.compat.YsmDiag.isEnabled()) {
+            return;
+        }
         String key = entity.getClass().getName();
         int count = COUNTS.merge(key, 1, Integer::sum);
         if (count > 3) {

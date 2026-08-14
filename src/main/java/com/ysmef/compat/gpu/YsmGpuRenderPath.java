@@ -75,6 +75,9 @@ public final class YsmGpuRenderPath {
     private static final Map<YSMMesh, String> GPU_SKIP_DIAG = new ConcurrentHashMap<>();
 
     private static void gpuSkipDiag(YSMMesh mesh, String reason) {
+        if (!com.ysmef.compat.YsmDiag.isEnabled()) {
+            return;
+        }
         String prev = GPU_SKIP_DIAG.put(mesh, reason);
         if (!reason.equals(prev)) {
             com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
@@ -94,6 +97,9 @@ public final class YsmGpuRenderPath {
      */
     private static void logGpuInputDiagOnce(YSMMesh mesh, YsmGpuMesh gpu, PoseStack poseStack,
                                             Armature armature, OpenMatrix4f[] poses) {
+        if (!com.ysmef.compat.YsmDiag.isEnabled()) {
+            return;
+        }
         if (GPU_INPUT_DIAG.putIfAbsent(mesh, "logged") != null) {
             return;
         }
@@ -308,7 +314,7 @@ public final class YsmGpuRenderPath {
 
         boolean sound = Math.abs(len - dist) <= Math.max(0.1, 0.05 * dist);
 
-        if (!sound && !TRANSLATION_GATE_DIAG_LOGGED) {
+        if (!sound && !TRANSLATION_GATE_DIAG_LOGGED && com.ysmef.compat.YsmDiag.isEnabled()) {
             TRANSLATION_GATE_DIAG_LOGGED = true;
             com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
                     "YSM-EF Compat: [diag] GPU translation gate rejected a draw: entity={} renderPos=({},{},{}) cameraPos=({},{},{}) dist={} poseStackTranslationLen={} pose=(m03={},m13={},m23={})",
@@ -328,6 +334,7 @@ public final class YsmGpuRenderPath {
     public static boolean tryRender(YSMMesh mesh, PoseStack poseStack, MultiBufferSource bufferSources,
                                     ResourceLocation texture, int packedLight, float r, float g, float b, float a,
                                     int overlay, @Nullable Armature armature, @Nullable OpenMatrix4f[] poses) {
+        long t0 = com.ysmef.compat.YsmDiag.isEnabled() ? System.nanoTime() : 0L;
         // Linked to the loaded YSM fork's own GPU toggle: ModernYSM's UseGpuRenderer
         // (kept in sync), or this mod's enableGpuRender config for OpenYSM/LegacyYSM.
         if (!YsmGpuRenderEnable.isEnabled()) {
@@ -513,6 +520,7 @@ public final class YsmGpuRenderPath {
         mc.gameRenderer.lightTexture().turnOffLightLayer();
 
         logGpuActiveOnce(mesh, gpu);
+        com.ysmef.compat.YsmDiag.addNanos(com.ysmef.compat.YsmDiag.SLOT_GPU_PATH, System.nanoTime() - t0);
         return true;
     }
 

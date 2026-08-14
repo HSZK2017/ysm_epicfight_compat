@@ -51,6 +51,9 @@ public final class YSMMeshSelector {
     private static final Map<java.util.UUID, String> DIAG_NO_MODEL = new ConcurrentHashMap<>();
 
     private static void logNoModelDiagOnce(AbstractClientPlayer player) {
+        if (!com.ysmef.compat.YsmDiag.isEnabled()) {
+            return;
+        }
         String prev = DIAG_NO_MODEL.put(player.getUUID(), "noModel");
         if (prev == null) {
             YSMEpicFightCompat.LOGGER.info(

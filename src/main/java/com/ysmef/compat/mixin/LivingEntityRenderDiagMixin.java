@@ -27,6 +27,9 @@ public abstract class LivingEntityRenderDiagMixin {
             at = @At("HEAD"), require = 0)
     private void ysmef$diagLivingRenderHead(LivingEntity entity, float yaw, float partialTicks,
                                             PoseStack poseStack, MultiBufferSource buffer, int light, CallbackInfo ci) {
+        if (!com.ysmef.compat.YsmDiag.isEnabled()) {
+            return;
+        }
         String key = entity.getClass().getName();
         if (!LOGGED.add(key)) {
             return;

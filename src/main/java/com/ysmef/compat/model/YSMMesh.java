@@ -205,6 +205,7 @@ public class YSMMesh extends HumanoidMesh {
             if (texture != null && YsmGpuRenderPath.tryRender(this, poseStack, bufferSources, texture,
                     packedLight, r, g, b, a, overlay, armature, poses)) {
                 logDrawDiagOnce(runtimeModelId, armature, poses, rebindApplied, maidEntity, "gpu", poseStack);
+                com.ysmef.compat.YsmDiag.onMeshDrawEnd();
                 return;
             }
             RenderType finalRenderType = texture != null
@@ -218,6 +219,7 @@ public class YSMMesh extends HumanoidMesh {
                 poseStack.popPose();
             }
         }
+        com.ysmef.compat.YsmDiag.onMeshDrawEnd();
     }
 
     /** Once per model: which render path draws it and with which armature/pose data. */
@@ -225,6 +227,9 @@ public class YSMMesh extends HumanoidMesh {
 
     private static void logDrawDiagOnce(String modelId, Armature armature, OpenMatrix4f[] poses,
                                         boolean rebindApplied, boolean maidEntity, String path, PoseStack poseStack) {
+        if (!com.ysmef.compat.YsmDiag.isEnabled()) {
+            return;
+        }
         String key = (modelId == null ? "n/a" : modelId) + "|" + path + "|" + maidEntity;
         if (!DIAG_MESH_DRAW.add(key)) {
             return;
@@ -309,6 +314,17 @@ public class YSMMesh extends HumanoidMesh {
      * (CPU skin -> dynamic VBO -> cpu_skin shader) - see YsmCpuRenderPath. The
      * ysm_ef_compat.force_cpu_render system property skips the compute shader
      * even when available, so the CPU path can be verified on capable hardware.
+     *
+     * Routing preference: when the GPU skinning path could not take this draw
+     * (GUI previews, TLM maids whose poseStack lacks the entity-camera
+     * translation, ...), the CPU skinning path is preferred over Epic Fight's
+     * compute shader: it is a plain vertex-pipeline draw (no compute dispatch,
+     * no output-SSBO round trip, no pipeline barrier), which is cheaper on weak
+     * / integrated GPUs (measured ~0.5 ms per draw for the compute path on the
+     * render thread alone - the iGPU work comes on top). The compute path only
+     * takes the draw when the CPU path declines (shader packs, no resolved
+     * texture, ...). Outline passes are never taken over (the compute path
+     * renders the outline state correctly; the CPU path has no outline pass).
      */
     private void drawWithPreferredPath(PoseStack poseStack, MultiBufferSource bufferSources, RenderType renderType,
                                        Mesh.DrawingFunction drawingFunction, int packedLight,
@@ -316,8 +332,15 @@ public class YSMMesh extends HumanoidMesh {
                                        @Nullable Armature armature, OpenMatrix4f[] poses) {
         yesman.epicfight.client.renderer.shader.compute.ComputeShaderSetup setup = computeShaderSetup();
         if (setup != null && !com.ysmef.compat.cpu.YsmCpuRenderPath.isForced()) {
+            if (!(bufferSources instanceof net.minecraft.client.renderer.OutlineBufferSource)
+                    && com.ysmef.compat.cpu.YsmCpuRenderPath.tryRender(this, poseStack, drawingFunction,
+                            packedLight, r, g, b, a, overlay, armature, poses)) {
+                return;
+            }
+            long t0 = com.ysmef.compat.YsmDiag.isEnabled() ? System.nanoTime() : 0L;
             setup.drawWithShader(this, poseStack, bufferSources, renderType,
                     packedLight, r, g, b, a, overlay, armature, poses);
+            com.ysmef.compat.YsmDiag.addNanos(com.ysmef.compat.YsmDiag.SLOT_COMPUTE_PATH, System.nanoTime() - t0);
             return;
         }
         logCpuFallbackOnce();

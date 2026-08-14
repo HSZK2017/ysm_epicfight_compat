@@ -71,7 +71,7 @@ public class YSMPlayerRenderer extends PHumanoidRenderer<AbstractClientPlayer, A
 
     @Override
     public AssetAccessor<HumanoidMesh> getMeshProvider(AbstractClientPlayerPatch<AbstractClientPlayer> entitypatch) {
-        if (meshProviderDiagCount < 3) {
+        if (meshProviderDiagCount < 3 && com.ysmef.compat.YsmDiag.isEnabled()) {
             meshProviderDiagCount++;
             com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
                     "YSM-EF Compat: [diag] YSMPlayerRenderer#getMeshProvider: entity={} patch={} battleMode={}",
