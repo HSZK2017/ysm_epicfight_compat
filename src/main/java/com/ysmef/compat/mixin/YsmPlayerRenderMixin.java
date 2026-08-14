@@ -21,8 +21,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  *
  * Skipping the handler entirely in battle mode lets the vanilla PlayerRenderer
  * proceed; its own RenderLivingEvent.Pre is then intercepted at HIGHEST by
- * YSMRenderHook with the vanilla renderer, whose layers include PlayerItemInHandLayer
- * -> PatchedItemInHandLayer, so Epic Fight's weapon rendering is restored.
+ * YSMRenderHook, which draws the player through Epic Fight's pipeline with the
+ * vanilla renderer, whose layers include PlayerItemInHandLayer ->
+ * PatchedItemInHandLayer, so Epic Fight's weapon rendering is restored. (Epic
+ * Fight's own handler never runs for the canceled event: it is registered with
+ * the default receiveCanceled=false.)
  *
  * The target is YSM's ReplacePlayerRenderEvent#onRenderPlayerPre. YSM's release jar
  * is obfuscated, so the obfuscated class/method names are used; they can be
@@ -33,7 +36,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class YsmPlayerRenderMixin {
 
     @Inject(method = "Oo0Oo0o00O00Oo0OOoOOoooo(Lnet/minecraftforge/client/event/RenderPlayerEvent$Pre;)V",
-            at = @At("HEAD"), cancellable = true)
+            at = @At("HEAD"), cancellable = true, require = 0)
     private static void ysmef$suppressYsmPlayerRenderInBattleMode(RenderPlayerEvent.Pre event, CallbackInfo ci) {
         if (YSMBattleMode.isBattleMode(event.getEntity())) {
             ci.cancel();

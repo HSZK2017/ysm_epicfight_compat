@@ -4,9 +4,6 @@ import com.ysmef.compat.YSMEpicFightCompat;
 import com.ysmef.compat.config.YSMCompatConfig;
 import net.minecraftforge.fml.ModList;
 
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
-
 /**
  * Gates the compat mod's GPU skinning path depending on which YSM fork is loaded:
  *
@@ -123,19 +120,73 @@ public final class YsmGpuRenderEnable {
     // ModernYSM toggle linkage (reflective)
     // ------------------------------------------------------------------
 
+    /** Cached reflective handles (resolved once) + a short TTL for the boolean
+     * result: the old implementation called getField()/get() per drawn player
+     * per frame, allocating a Field/Method object every call. The toggles only
+     * change via ModernYSM's config screen, so a 250 ms TTL (mirroring the
+     * Iris shader-pack check) makes the per-frame cost a volatile read. */
+    private static volatile java.lang.reflect.Field MODERN_GPU_FIELD;
+    private static volatile java.lang.reflect.Field MODERN_COMPAT_FIELD;
+    private static volatile java.lang.reflect.Method BOOLEAN_VALUE_GET;
+    private static volatile boolean modernLookupFailed = false;
+    private static long modernToggleCheckedAtNanos = 0;
+    private static boolean modernGpuEnabledCache = true;
+
     private static boolean modernGpuEnabled() {
-        boolean gpuOn = boolOf(fieldOf(MODERN_GENERAL_CONFIG, "USE_GPU_RENDERER"), true);
-        boolean compatOn = boolOf(fieldOf(MODERN_GENERAL_CONFIG, "USE_COMPATIBILITY_RENDERER"), false);
+        long now = System.nanoTime();
+        if (now - modernToggleCheckedAtNanos < 250_000_000L) {
+            return modernGpuEnabledCache;
+        }
+        modernToggleCheckedAtNanos = now;
+        modernGpuEnabledCache = readModernGpuEnabled();
+        return modernGpuEnabledCache;
+    }
+
+    private static boolean readModernGpuEnabled() {
+        java.lang.reflect.Field gpuField = MODERN_GPU_FIELD;
+        java.lang.reflect.Field compatField = MODERN_COMPAT_FIELD;
+        java.lang.reflect.Method getMethod = BOOLEAN_VALUE_GET;
+        if (modernLookupFailed) {
+            return true;
+        }
+        if (gpuField == null || compatField == null || getMethod == null) {
+            synchronized (YsmGpuRenderEnable.class) {
+                if (modernLookupFailed) {
+                    return true;
+                }
+                gpuField = MODERN_GPU_FIELD;
+                compatField = MODERN_COMPAT_FIELD;
+                getMethod = BOOLEAN_VALUE_GET;
+                if (gpuField == null || compatField == null || getMethod == null) {
+                    try {
+                        Class<?> configClass = Class.forName(MODERN_GENERAL_CONFIG, false, YsmGpuRenderEnable.class.getClassLoader());
+                        gpuField = configClass.getField("USE_GPU_RENDERER");
+                        compatField = configClass.getField("USE_COMPATIBILITY_RENDERER");
+                        getMethod = gpuField.get(null).getClass().getMethod("get");
+                        MODERN_GPU_FIELD = gpuField;
+                        MODERN_COMPAT_FIELD = compatField;
+                        BOOLEAN_VALUE_GET = getMethod;
+                    } catch (Throwable t) {
+                        modernLookupFailed = true;
+                        YSMEpicFightCompat.LOGGER.warn(
+                                "YSM-EF Compat: cannot read ModernYSM's GPU renderer toggles, assuming GPU rendering enabled", t);
+                        return true;
+                    }
+                }
+            }
+        }
+        boolean gpuOn = boolOf(fieldValue(gpuField, null), true);
+        boolean compatOn = boolOf(fieldValue(compatField, null), false);
         return gpuOn && !compatOn;
     }
 
-    private static Object fieldOf(String className, String fieldName) {
+    /** Read a static toggle field's value; null on failure (boolOf applies the fallback). */
+    private static Object fieldValue(java.lang.reflect.Field field, Object fallback) {
         try {
-            Class<?> cls = Class.forName(className, false, YsmGpuRenderEnable.class.getClassLoader());
-            Field field = cls.getField(fieldName);
-            return field.get(null);
+            Object value = field.get(null);
+            return value == null ? fallback : value;
         } catch (Throwable t) {
-            return null;
+            return fallback;
         }
     }
 
@@ -145,7 +196,9 @@ public final class YsmGpuRenderEnable {
             return fallback;
         }
         try {
-            Method get = toggle.getClass().getMethod("get");
+            java.lang.reflect.Method get = BOOLEAN_VALUE_GET != null
+                    ? BOOLEAN_VALUE_GET
+                    : toggle.getClass().getMethod("get");
             Object value = get.invoke(toggle);
             return value instanceof Boolean b ? b : fallback;
         } catch (Throwable t) {

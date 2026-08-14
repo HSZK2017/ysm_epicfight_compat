@@ -24,8 +24,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  *
  * Skipping the handler entirely in battle mode lets the vanilla PlayerRenderer
  * proceed; its own RenderLivingEvent.Pre is then intercepted at HIGHEST by
- * YSMRenderHook with the vanilla renderer, whose layers include PlayerItemInHandLayer
- * -> PatchedItemInHandLayer, so Epic Fight's weapon rendering is restored.
+ * YSMRenderHook, which draws the player through Epic Fight's pipeline with the
+ * vanilla renderer, whose layers include PlayerItemInHandLayer ->
+ * PatchedItemInHandLayer, so Epic Fight's weapon rendering is restored. (Epic
+ * Fight's own handler never runs for the canceled event: it is registered with
+ * the default receiveCanceled=false.)
  *
  * The target is referenced by string because the OpenYSM jar is not on the compile
  * classpath (the obfuscated release jar is). The string target is safe under the

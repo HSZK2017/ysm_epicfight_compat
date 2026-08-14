@@ -229,6 +229,17 @@ public class EFMeshJsonWriter {
                     float py = pos.y() * scaleH;
                     float pz = pos.z() * scaleW;
 
+                    // Non-uniform (width != height) player scales squash the
+                    // vertices anisotropically; the normals must follow the
+                    // inverse-transpose (1/s per axis), otherwise Epic Fight's
+                    // lighting (compute and GPU paths) shades the model wrong.
+                    if (Math.abs(scaleW - scaleH) > 1e-6f && scaleW > 1e-6f && scaleH > 1e-6f) {
+                        normal.x /= scaleW;
+                        normal.y /= scaleH;
+                        normal.z /= scaleW;
+                        normal.normalize();
+                    }
+
                     VertexKey key = keyOf(new Vector3f(px, py, pz), normal, quad.uvs[i][0], quad.uvs[i][1], jointId);
                     Integer index = dedup.get(key);
                     if (index == null) {

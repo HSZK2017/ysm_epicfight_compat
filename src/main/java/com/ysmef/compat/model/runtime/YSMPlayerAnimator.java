@@ -119,6 +119,12 @@ public final class YSMPlayerAnimator implements Molang.Env {
      * thread consumes the last completed result (double-buffered, see
      * chainDeltaBuf/effMinScaleBuf). The first evaluation of each animator stays
      * synchronous so the mesh never starts in an un-evaluated state.
+     *
+     * Minecraft / gameRenderer / camera state is never read on this pool: those
+     * values are captured on the render thread when the evaluation is submitted
+     * (see EvalInputs). Only entity state (positions, held items, pose, ...) is
+     * read by the worker - at worst one tick stale, which matches ModernYSM's
+     * own async evaluator semantics.
      */
     private static final java.util.concurrent.ExecutorService SCRIPT_POOL = java.util.concurrent.Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "ysm-ef-script");
@@ -131,9 +137,6 @@ public final class YSMPlayerAnimator implements Molang.Env {
 
     /** Global switch: disabled permanently after the first off-thread failure. */
     private static volatile boolean ASYNC_EVAL_FAILED = false;
-
-    private long lastDiagLogNanos = 0;
-    private long diagFrameCounter = 0;
 
     public YSMPlayerAnimator(YSMRuntimeModel model) {
         this.model = model;
@@ -180,15 +183,15 @@ public final class YSMPlayerAnimator implements Molang.Env {
     public void apply(YSMMesh mesh, LivingEntity entity, OpenMatrix4f[] poses, float partialTick) {
         double now = (entity.tickCount + partialTick) / 20.0;
         if (shouldFullEval(entity)) {
+            EvalInputs inputs = captureEvalInputs(entity);
             if (!evaluatedOnce || !useAsyncEval(entity)) {
-                evaluate(entity, partialTick, now);
+                evaluate(entity, partialTick, now, inputs);
                 evaluatedOnce = true;
             } else {
-                submitAsyncEval(entity, partialTick, now);
+                submitAsyncEval(entity, partialTick, now, inputs);
             }
         }
         pushToMesh(mesh);
-        logDiagPeriodic(mesh);
     }
 
     private boolean useAsyncEval(LivingEntity entity) {
@@ -197,17 +200,38 @@ public final class YSMPlayerAnimator implements Molang.Env {
     }
 
     /**
+     * Render-thread-only evaluation inputs, captured when the evaluation is
+     * scheduled. The script pool must never read Minecraft / gameRenderer /
+     * camera state: those are updated by the render loop every frame and an
+     * off-thread read would race with it (the camera entity's position and the
+     * frame time are plain non-volatile fields).
+     */
+    private record EvalInputs(double cameraDistance, float frameTime, boolean firstPerson) {}
+
+    private static EvalInputs captureEvalInputs(LivingEntity entity) {
+        Minecraft mc = Minecraft.getInstance();
+        double cameraDistance = -1.0;
+        if (mc.gameRenderer != null && mc.gameRenderer.getMainCamera() != null) {
+            cameraDistance = mc.gameRenderer.getMainCamera().getPosition().distanceTo(entity.position());
+        }
+        return new EvalInputs(cameraDistance, mc.getFrameTime(),
+                mc.options.getCameraType() == CameraType.FIRST_PERSON);
+    }
+
+    /**
      * Submit one evaluation to the script pool (deduped: at most one in flight
      * per animator). Runs the same evaluate() as the synchronous path; the
      * double-buffered result state is published via the volatile readyBuffer.
+     * The inputs were captured on the render thread, so the worker never
+     * touches Minecraft/render-system state.
      */
-    private void submitAsyncEval(LivingEntity entity, float partialTick, double now) {
+    private void submitAsyncEval(LivingEntity entity, float partialTick, double now, EvalInputs inputs) {
         if (!evalPending.compareAndSet(false, true)) {
             return;
         }
         SCRIPT_POOL.execute(() -> {
             try {
-                evaluate(entity, partialTick, now);
+                evaluate(entity, partialTick, now, inputs);
                 evaluatedOnce = true;
             } catch (Throwable t) {
                 // never leave the render path broken: fall back to synchronous evaluation
@@ -250,20 +274,22 @@ public final class YSMPlayerAnimator implements Molang.Env {
      * per-bone chain deltas and effective visibility scales into the currently
      * unused buffer and publish it (volatile readyBuffer). Entity reads
      * (held items, position delta, ...) happen here, so the whole evaluation is
-     * self-contained and can run on the script pool.
+     * self-contained and can run on the script pool; render-thread-only state
+     * (camera distance, frame time, perspective) arrives pre-captured via
+     * {@link EvalInputs}.
      */
-    private void evaluate(LivingEntity entity, float partialTick, double now) {
+    private void evaluate(LivingEntity entity, float partialTick, double now, EvalInputs inputs) {
         writeBuf = readyBuffer < 0 ? 0 : 1 - readyBuffer;
         mainHand = entity.getItemInHand(InteractionHand.MAIN_HAND);
         offHand = entity.getItemInHand(InteractionHand.OFF_HAND);
         updatePosDelta(entity);
-        String state = resolveState(entity);
+        String state = resolveState(entity, inputs.frameTime());
         if (!state.equals(currentState)) {
             currentState = state;
             animStart.put(state, now);
             animLastT.remove(state);
         }
-        fillQueries(entity, partialTick, now);
+        fillQueries(entity, partialTick, now, inputs);
 
         activeAnims.clear();
         activeAnims.addAll(model.parallels);
@@ -283,44 +309,6 @@ public final class YSMPlayerAnimator implements Molang.Env {
 
         compose();
         readyBuffer = writeBuf;
-    }
-
-    /**
-     * Periodic diagnostic dump (every 2 s per animator) of the script-evaluated
-     * state: the locomotion state, the bone parts currently hidden and how many
-     * bones carry a runtime transform. Used to compare identical-looking
-     * sessions across game directories.
-     */
-    private void logDiagPeriodic(YSMMesh mesh) {
-        long nowNs = System.nanoTime();
-        if (nowNs - lastDiagLogNanos < 2_000_000_000L) {
-            return;
-        }
-        lastDiagLogNanos = nowNs;
-        diagFrameCounter++;
-        StringBuilder hidden = new StringBuilder();
-        for (Map.Entry<String, MeshPart> entry : mesh.getPartEntrySetSafe()) {
-            String partName = entry.getKey();
-            if (partName.startsWith(EFMeshJsonWriter.BONE_PART_PREFIX) && entry.getValue().isHidden()) {
-                if (hidden.length() > 0) {
-                    hidden.append(',');
-                }
-                hidden.append(partName.substring(EFMeshJsonWriter.BONE_PART_PREFIX.length()));
-            }
-        }
-        int transformed = 0;
-        int ready = readyBuffer;
-        if (ready >= 0) {
-            Matrix4f[] chain = chainDeltaBuf[ready];
-            for (int i = 0; i < model.bones.length; i++) {
-                if (!isIdentity(chain[i])) {
-                    transformed++;
-                }
-            }
-        }
-        YSMEpicFightCompat.LOGGER.info(
-                "YSM-EF Compat: [diag] script model='{}' state='{}' hiddenBones=[{}] transformedBones={}",
-                model.modelId, currentState, hidden, transformed);
     }
 
     // ------------------------------------------------------------------
@@ -459,7 +447,11 @@ public final class YSMPlayerAnimator implements Molang.Env {
             evalValue(channel.post[left], out);
             return;
         }
-        float alpha = (t - t0) / (t1 - t0);
+        // clamp into the segment: right after a loop wrap t can briefly fall
+        // before the first keyframe (the cursor reset starts at the second
+        // key), which would otherwise extrapolate backwards below the first
+        // keyframe and produce a visible pop on looping animations
+        float alpha = Math.min(1.0f, Math.max(0.0f, (t - t0) / (t1 - t0)));
         evalValue(channel.post[left], evalL0);
         evalValue(channel.pre[right] != null ? channel.pre[right] : channel.post[right], evalR0);
         if (lerp == ScriptAnimKeyLerp.CATMULLROM && n >= 2) {
@@ -527,6 +519,33 @@ public final class YSMPlayerAnimator implements Molang.Env {
                 mesh.setRuntimeTransform(partEntries.get(i).getKey(), partMats[boneIdx]);
             }
         }
+        logAnimatorDiagOnce(chain);
+    }
+
+    /** Once per animator: bound of the pushed chain deltas, to spot a runaway transform. */
+    private boolean animatorDiagLogged = false;
+
+    private void logAnimatorDiagOnce(Matrix4f[] chain) {
+        if (animatorDiagLogged) {
+            return;
+        }
+        animatorDiagLogged = true;
+        float maxT = 0.0f;
+        float maxScale = 0.0f;
+        int nonIdentity = 0;
+        for (Matrix4f m : chain) {
+            if (m == null) {
+                continue;
+            }
+            if (!isIdentity(m)) {
+                nonIdentity++;
+            }
+            maxT = Math.max(maxT, Math.max(Math.abs(m.m30()), Math.max(Math.abs(m.m31()), Math.abs(m.m32()))));
+            maxScale = Math.max(maxScale, Math.max(Math.abs(m.m00()), Math.max(Math.abs(m.m11()), Math.abs(m.m22()))));
+        }
+        com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
+                "YSM-EF Compat: [diag] animator push: model={} bones={} nonIdentityDeltas={} maxTranslation={} maxScale={}",
+                model.modelId, chain.length, nonIdentity, maxT, maxScale);
     }
 
     /**
@@ -661,7 +680,7 @@ public final class YSMPlayerAnimator implements Molang.Env {
     // State machine (mirrors YSM's AnimationRegister predicates)
     // ------------------------------------------------------------------
 
-    private String resolveState(LivingEntity entity) {
+    private String resolveState(LivingEntity entity, float frameTime) {
         if (entity.isDeadOrDying()) {
             return "death";
         }
@@ -671,25 +690,25 @@ public final class YSMPlayerAnimator implements Molang.Env {
         if (entity.isSwimming()) {
             return "swim";
         }
-        if (entity.getPose() == Pose.SWIMMING && isMoving(entity)) {
+        if (entity.getPose() == Pose.SWIMMING && isMoving(entity, frameTime)) {
             return "climb";
         }
         if (entity.getPose() == Pose.SWIMMING) {
             return "climbing";
         }
         if (entity.isPassenger()) {
+            // resolve the vehicle condition anim for the CURRENT vehicle only:
+            // a previous ride's anim must never survive a vehicle change
             ResourceLocation vehicleId = ForgeRegistries.ENTITY_TYPES.getKey(entity.getVehicle().getType());
-            if (vehicleId != null) {
-                String vehicleAnim = "vehicle$" + vehicleId;
-                if (model.conditionAnims.containsKey(vehicleAnim)) {
-                    currentVehicleAnim = vehicleAnim;
-                }
-            }
+            String vehicleAnim = vehicleId != null ? "vehicle$" + vehicleId : null;
+            currentVehicleAnim = vehicleAnim != null && model.conditionAnims.containsKey(vehicleAnim)
+                    ? vehicleAnim : null;
             if (entity.getVehicle() instanceof net.minecraft.world.entity.vehicle.Boat) {
                 return "boat";
             }
             return model.states.containsKey("ride") ? "ride" : "sit";
         }
+        currentVehicleAnim = null;
         if (entity instanceof Player player && player.getAbilities().flying) {
             return "fly";
         }
@@ -699,7 +718,7 @@ public final class YSMPlayerAnimator implements Molang.Env {
         if (entity.isInWater()) {
             return "swim_stand";
         }
-        if (entity.onGround() && entity.getPose() == Pose.CROUCHING && isMoving(entity)) {
+        if (entity.onGround() && entity.getPose() == Pose.CROUCHING && isMoving(entity, frameTime)) {
             return "sneak";
         }
         if (entity.onGround() && entity.getPose() == Pose.CROUCHING) {
@@ -708,7 +727,7 @@ public final class YSMPlayerAnimator implements Molang.Env {
         if (entity.onGround() && entity.isSprinting()) {
             return "run";
         }
-        if (entity.onGround() && isMoving(entity)) {
+        if (entity.onGround() && isMoving(entity, frameTime)) {
             return "walk";
         }
         if (model.states.containsKey("idle")) {
@@ -719,8 +738,8 @@ public final class YSMPlayerAnimator implements Molang.Env {
 
     private String currentVehicleAnim = null;
 
-    private boolean isMoving(LivingEntity entity) {
-        return Math.abs(entity.walkAnimation.speed(Minecraft.getInstance().getFrameTime())) > MIN_SPEED;
+    private boolean isMoving(LivingEntity entity, float frameTime) {
+        return Math.abs(entity.walkAnimation.speed(frameTime)) > MIN_SPEED;
     }
 
     /**
@@ -965,9 +984,7 @@ public final class YSMPlayerAnimator implements Molang.Env {
         queriesById[id] = value;
     }
 
-    private void fillQueries(LivingEntity entity, float partialTick, double now) {
-        Minecraft mc = Minecraft.getInstance();
-
+    private void fillQueries(LivingEntity entity, float partialTick, double now, EvalInputs inputs) {
         float headYaw = entity.yHeadRotO + (entity.yHeadRot - entity.yHeadRotO) * partialTick;
         float bodyYaw = entity.yBodyRotO + (entity.yBodyRot - entity.yBodyRotO) * partialTick;
         float netHeadYaw = net.minecraft.util.Mth.wrapDegrees(headYaw - bodyYaw);
@@ -1009,7 +1026,7 @@ public final class YSMPlayerAnimator implements Molang.Env {
         setQuery("query.is_spectator", entity instanceof Player player && player.isSpectator() ? 1.0 : 0.0);
         setQuery("query.is_using_item", entity.isUsingItem() ? 1.0 : 0.0);
         setQuery("query.is_eating", entity.getUseItem().getUseAnimation() == net.minecraft.world.item.UseAnim.EAT ? 1.0 : 0.0);
-        setQuery("query.is_first_person", mc.options.getCameraType() == CameraType.FIRST_PERSON ? 1.0 : 0.0);
+        setQuery("query.is_first_person", inputs.firstPerson() ? 1.0 : 0.0);
         setQuery("query.item_in_use_duration", entity.getTicksUsingItem() / 20.0);
         setQuery("query.item_max_use_duration", entity.getUseItem().getUseDuration() / 20.0);
         setQuery("query.item_remaining_use_duration", entity.getUseItemRemainingTicks() / 20.0);
@@ -1026,8 +1043,8 @@ public final class YSMPlayerAnimator implements Molang.Env {
         setQuery("query.player_level", (double) (entity instanceof Player player ? player.experienceLevel : 0));
         setQuery("query.has_rider", entity.isVehicle() ? 1.0 : 0.0);
         setQuery("query.actor_count", 0.0);
-        if (mc.gameRenderer != null && mc.gameRenderer.getMainCamera() != null) {
-            setQuery("query.distance_from_camera", mc.gameRenderer.getMainCamera().getPosition().distanceTo(entity.position()));
+        if (inputs.cameraDistance() >= 0) {
+            setQuery("query.distance_from_camera", inputs.cameraDistance());
         }
 
         setQuery("ysm.head_yaw", (double) netHeadYaw);

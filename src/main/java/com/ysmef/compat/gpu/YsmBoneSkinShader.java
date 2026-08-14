@@ -23,6 +23,8 @@ public final class YsmBoneSkinShader {
 
     private static int program = 0;
     private static int locProj = -1;
+    private static int locMv = -1;
+    private static int locIvr = -1;
     private static int locColor = -1;
     private static int locOverlay = -1;
     private static int locFogStart = -1;
@@ -66,6 +68,8 @@ public final class YsmBoneSkinShader {
             }
 
             locProj = GL20.glGetUniformLocation(prog, "u_proj");
+            locMv = GL20.glGetUniformLocation(prog, "u_mv");
+            locIvr = GL20.glGetUniformLocation(prog, "u_ivr");
             locColor = GL20.glGetUniformLocation(prog, "u_color");
             locOverlay = GL20.glGetUniformLocation(prog, "u_packedOverlay");
             locFogStart = GL20.glGetUniformLocation(prog, "u_fogStart");
@@ -108,6 +112,14 @@ public final class YsmBoneSkinShader {
 
     public static int locProj() {
         return locProj;
+    }
+
+    public static int locMv() {
+        return locMv;
+    }
+
+    public static int locIvr() {
+        return locIvr;
     }
 
     public static int locColor() {

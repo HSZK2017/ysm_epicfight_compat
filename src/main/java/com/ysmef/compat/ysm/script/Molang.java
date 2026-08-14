@@ -140,6 +140,11 @@ public final class Molang {
             }
             return expr;
         } catch (RuntimeException e) {
+            // The failure is cached (CACHE.computeIfAbsent) so this logs once per
+            // source string; silent zeros made broken molang nearly impossible to
+            // diagnose (variant visibility just stopped working).
+            com.ysmef.compat.YSMEpicFightCompat.LOGGER.warn(
+                    "YSM-EF Compat: failed to compile molang '{}': {}", src, e.toString());
             return ZERO;
         }
     }
@@ -258,8 +263,11 @@ public final class Molang {
                 pos++;
                 return new Token(T_OP, String.valueOf(c), 0);
             }
-            pos++;
-            return next();
+            // Unknown characters (array brackets, double quotes, bitwise
+            // operators, ...) previously were silently skipped and the whole
+            // expression then fell back to a silent zero via "trailing tokens".
+            // Throw instead so the parse failure is logged (see parse()).
+            throw new IllegalStateException("unsupported character '" + c + "' at " + pos);
         }
 
         private static boolean isIdentStart(char c) {
@@ -372,8 +380,17 @@ public final class Molang {
             if (isOp("?")) {
                 advance();
                 Expr then = parseTernary();
-                expectOp(":");
-                Expr otherwise = parseTernary();
+                Expr otherwise;
+                if (isOp(":")) {
+                    advance();
+                    otherwise = parseTernary();
+                } else {
+                    // Bedrock shorthand: `a ? b` without a `:` evaluates to b
+                    // when a != 0 and to 0 otherwise. Used pervasively by YSM
+                    // models (e.g. 'q.ground_speed<=2?4'); requiring the colon
+                    // made every such expression silently evaluate to 0.
+                    otherwise = env -> 0.0;
+                }
                 return env -> cond.eval(env) != 0.0 ? then.eval(env) : otherwise.eval(env);
             }
             return cond;

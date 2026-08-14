@@ -51,15 +51,13 @@ public final class YsmConfigScreenHook {
             int y = (screen.height - 265) / 2;
             Object widget = new YsmGpuRenderCheckbox(x + 5, y + yOffset,
                     Component.translatable("gui.yes_steve_model.config." + GPU_RENDER_OPTION_KEY));
-            // Screen.addRenderableWidget is protected; SRG name at runtime (m_142416_).
-            Method addRenderableWidget = null;
-            for (Method method : Screen.class.getMethods()) {
-                if (method.getName().equals("m_142416_")) {
-                    addRenderableWidget = method;
-                    break;
-                }
-            }
+            // Screen.addRenderableWidget is protected in 1.20.1, so getMethods()
+            // (public methods only) never finds it - declared methods are needed.
+            // The runtime name is m_142416_ (SRG mappings); in a dev environment
+            // it is addRenderableWidget (official mappings), so both are matched.
+            Method addRenderableWidget = findAddRenderableWidget();
             if (addRenderableWidget == null) {
+                YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: cannot find Screen#addRenderableWidget, GPU render checkbox not added");
                 return;
             }
             addRenderableWidget.setAccessible(true);
@@ -114,6 +112,29 @@ public final class YsmConfigScreenHook {
         } catch (Throwable t) {
             YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to add the GPU render option to the OpenYSM config screen", t);
         }
+    }
+
+    /**
+     * Locate Screen#addRenderableWidget across the Screen hierarchy by declared
+     * methods (it is protected in 1.20.1) under either mapping scheme: the SRG
+     * name m_142416_ used in production jars or the official addRenderableWidget
+     * used in development environments. The single parameter must accept render
+     * widgets, so an unrelated overload is never picked.
+     */
+    private static Method findAddRenderableWidget() {
+        for (Class<?> cls = Screen.class; cls != null && cls != Object.class; cls = cls.getSuperclass()) {
+            for (Method method : cls.getDeclaredMethods()) {
+                if ((method.getName().equals("m_142416_") || method.getName().equals("addRenderableWidget"))
+                        && method.getParameterCount() == 1) {
+                    Class<?> parameterType = method.getParameterTypes()[0];
+                    if (net.minecraft.client.gui.components.Renderable.class.isAssignableFrom(parameterType)
+                            || net.minecraft.client.gui.components.events.GuiEventListener.class.isAssignableFrom(parameterType)) {
+                        return method;
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     private static Object readGroupsField(Screen screen) throws Exception {

@@ -19,7 +19,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class YsmVehiclePreviewMixin {
 
     @Inject(method = "Oo0Oo0o00O00Oo0OOoOOoooo(Lnet/minecraft/world/entity/Entity;Lcom/mojang/blaze3d/vertex/PoseStack;F)V",
-            at = @At("HEAD"), cancellable = true)
+            at = @At("HEAD"), cancellable = true, require = 0)
     private static void ysmef$suppressYsmVehiclePreviewInBattleMode(Entity entity, PoseStack poseStack, float partialTick,
                                                                     CallbackInfo ci) {
         for (Entity passenger : entity.getPassengers()) {

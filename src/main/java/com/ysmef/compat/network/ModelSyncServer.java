@@ -25,10 +25,12 @@ import java.util.concurrent.ConcurrentHashMap;
  *   every online player's current selection is streamed to it
  * - PlayerEvent.StartTracking pushes the tracked player's selection to the
  *   tracker (OpenYSM's onStartTracking)
- * - a periodic server tick diff (every 20 ticks, like OpenYSM's dirty-capability
- *   polling in onServerTick) detects model switches, texture switches and
- *   entity id changes (respawn, dimension change) and re-broadcasts them to
- *   tracking players + self (OpenYSM's sendToTrackingEntityAndSelf)
+ * - a periodic server tick diff (every 40 ticks, half OpenYSM's 20-tick
+ *   dirty-capability polling cadence - detecting a change requires
+ *   serializing the full player NBT, so the diff is the dominant server-side
+ *   cost) detects model switches, texture switches and entity id changes
+ *   (respawn, dimension change) and re-broadcasts them to tracking players +
+ *   self (OpenYSM's sendToTrackingEntityAndSelf)
  *
  * The selection itself is read from the serializable YSM ModelInfoCapability
  * NBT (model_id / select_texture) via YsmCapabilityReader, the same data
@@ -38,7 +40,16 @@ import java.util.concurrent.ConcurrentHashMap;
 @Mod.EventBusSubscriber(modid = YSMEpicFightCompat.MODID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public final class ModelSyncServer {
 
-    private static final int DIFF_INTERVAL_TICKS = 20;
+    /**
+     * Cadence of the change-detection diff (every 40 ticks / 2 s). Detecting a
+     * change requires serializing each player's full NBT (the capability class
+     * is obfuscated and can only be read through ForgeCaps serialization), so
+     * the cadence is a direct trade-off between server thread cost and
+     * change-propagation latency. Join, handshake and StartTracking push
+     * selections immediately, so the slower diff only delays picking up a
+     * model switch by up to 2 s.
+     */
+    private static final int DIFF_INTERVAL_TICKS = 40;
     private static final int VERSION_RETRY_TICKS = 200;
 
     private record Snapshot(int entityId, String modelId, String textureName) {}

@@ -22,7 +22,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class YsmBackgroundHandMixin {
 
     @Inject(method = "Oo0Oo0o00O00Oo0OOoOOoooo(Lnet/minecraftforge/client/event/RenderHandEvent;)V",
-            at = @At("HEAD"), cancellable = true)
+            at = @At("HEAD"), cancellable = true, require = 0)
     private static void ysmef$suppressYsmBackgroundHandInBattleMode(RenderHandEvent event, CallbackInfo ci) {
         LocalPlayer player = Minecraft.getInstance().player;
         if (player != null && YSMBattleMode.isBattleMode(player)) {

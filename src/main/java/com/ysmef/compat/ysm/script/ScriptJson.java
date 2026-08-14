@@ -63,13 +63,30 @@ public final class ScriptJson {
         anim.name = name;
         JsonElement loopEl = animJson.get("loop");
         if (loopEl != null) {
-            if (loopEl.isJsonPrimitive() && loopEl.getAsJsonPrimitive().isBoolean()) {
+            if (loopEl.isJsonObject()) {
+                // Bedrock "loop": { "time": <seconds> } - loop over a fixed
+                // window. ModernYSM itself throws on this form (getAsString on
+                // a JsonObject); treat it as a repeat loop over that window.
+                anim.loop = ScriptAnim.LOOP_REPEAT;
+                JsonObject loopObj = loopEl.getAsJsonObject();
+                if (loopObj.has("time") && loopObj.get("time").isJsonPrimitive()) {
+                    anim.length = loopObj.get("time").getAsFloat();
+                }
+            } else if (loopEl.isJsonPrimitive() && loopEl.getAsJsonPrimitive().isBoolean()) {
                 anim.loop = loopEl.getAsBoolean() ? ScriptAnim.LOOP_REPEAT : ScriptAnim.LOOP_ONCE;
-            } else if ("hold_on_last_frame".equals(loopEl.getAsString())) {
-                anim.loop = ScriptAnim.LOOP_HOLD;
+            } else if (loopEl.isJsonPrimitive() && loopEl.getAsJsonPrimitive().isString()) {
+                String loopStr = loopEl.getAsString();
+                if ("true".equals(loopStr)) {
+                    anim.loop = ScriptAnim.LOOP_REPEAT;
+                } else if ("hold_on_last_frame".equals(loopStr)) {
+                    anim.loop = ScriptAnim.LOOP_HOLD;
+                }
             }
+            // JsonNull / unknown forms keep LOOP_ONCE, like the reference
+            // (any unrecognized value maps to PLAY_ONCE).
         }
         if (animJson.has("animation_length")) {
+            // explicit length wins over the loop-object window
             anim.length = animJson.get("animation_length").getAsFloat();
         }
 

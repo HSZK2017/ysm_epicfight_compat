@@ -21,7 +21,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class YsmArmRenderMixin {
 
     @Inject(method = "Oo0Oo0o00O00Oo0OOoOOoooo(Lnet/minecraftforge/client/event/RenderArmEvent;)V",
-            at = @At("HEAD"), cancellable = true)
+            at = @At("HEAD"), cancellable = true, require = 0)
     private static void ysmef$suppressYsmArmInBattleMode(RenderArmEvent event, CallbackInfo ci) {
         if (YSMBattleMode.isBattleMode(event.getPlayer())) {
             ci.cancel();

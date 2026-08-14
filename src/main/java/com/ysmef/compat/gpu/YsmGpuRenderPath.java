@@ -55,6 +55,8 @@ public final class YsmGpuRenderPath {
 
     private static final float[] projScratch = new float[16];
     private static final Matrix4f projMVScratch = new Matrix4f();
+    private static final float[] mvScratch = new float[16];
+    private static final float[] ivrScratch = new float[9];
     private static final Vector3f[] currentLights = new Vector3f[2];
     private static final OpenMatrix4f jointScratch = new OpenMatrix4f();
 
@@ -68,6 +70,148 @@ public final class YsmGpuRenderPath {
     private static final Map<Armature, Integer> POSE_LENGTH_CACHE = new IdentityHashMap<>();
 
     private static boolean failureLogged = false;
+
+    /** Once per mesh + reason: why the GPU path was skipped (diagnostics, removable). */
+    private static final Map<YSMMesh, String> GPU_SKIP_DIAG = new ConcurrentHashMap<>();
+
+    private static void gpuSkipDiag(YSMMesh mesh, String reason) {
+        String prev = GPU_SKIP_DIAG.put(mesh, reason);
+        if (!reason.equals(prev)) {
+            com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
+                    "YSM-EF Compat: [diag] GPU path skip: model={} reason={}", mesh.getRuntimeModelId(), reason);
+        }
+    }
+
+    /** Once per mesh: the exact GPU-path inputs of the first draw (stretch diagnostics). */
+    private static final Map<YSMMesh, String> GPU_INPUT_DIAG = new ConcurrentHashMap<>();
+
+    /**
+     * One-time per mesh: log the full matrix state and a CPU-skinned sample of
+     * the first GPU draw, so a stretched/wrong render can be attributed to
+     * (a) the skinning data (model-space bounds blow up), (b) the GL camera
+     * state (clip-space bounds blow up with sane model-space bounds), or
+     * (c) the entity pose (poseStack differs from the compute path's).
+     */
+    private static void logGpuInputDiagOnce(YSMMesh mesh, YsmGpuMesh gpu, PoseStack poseStack,
+                                            Armature armature, OpenMatrix4f[] poses) {
+        if (GPU_INPUT_DIAG.putIfAbsent(mesh, "logged") != null) {
+            return;
+        }
+        try {
+            int jointCount = poses.length;
+            OpenMatrix4f[] toOrigin = toOriginOf(armature, jointCount);
+
+            // Joint matrices exactly as written into the SSBO (poses x toOrigin).
+            float maxJointTranslation = 0.0f;
+            float maxJointScaleDiff = 0.0f;
+            String worstJoint = "?";
+            float worstJointTranslation = 0.0f;
+            for (int j = 0; j < jointCount; j++) {
+                jointScratch.load(poses[j]);
+                jointScratch.mulBack(toOrigin[j]);
+                float t = maxTranslation(jointScratch);
+                if (t > maxJointTranslation) {
+                    maxJointTranslation = t;
+                }
+                maxJointScaleDiff = Math.max(maxJointScaleDiff, maxScaleDiff(jointScratch));
+                if (t > worstJointTranslation) {
+                    worstJointTranslation = t;
+                    yesman.epicfight.api.animation.Joint joint = armature.searchJointById(j);
+                    worstJoint = joint != null ? joint.getName() : ("#" + j);
+                }
+            }
+
+            // Model-space bounds of the skinned mesh (the compute path's output
+            // before the model-view matrix): a runaway value here means the
+            // pose/toOrigin/part data itself is wrong - the compute path would
+            // render exactly as broken, so this isolates the input side.
+            float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE, minZ = Float.MAX_VALUE;
+            float maxX = -Float.MAX_VALUE, maxY = -Float.MAX_VALUE, maxZ = -Float.MAX_VALUE;
+            int samples = 0;
+            int partIdx = 0;
+            float[] positions = mesh.positions();
+            for (var part : mesh.getAllParts()) {
+                var vertices = part.getVertices();
+                if (!vertices.isEmpty() && partIdx < gpu.jointOfPart.length) {
+                    yesman.epicfight.api.client.model.VertexBuilder vb = vertices.get(0);
+                    int p = vb.position * 3;
+                    if (p + 2 < positions.length) {
+                        int joint = gpu.jointOfPart[partIdx];
+                        jointScratch.load(poses[joint]);
+                        jointScratch.mulBack(toOrigin[joint]);
+                        OpenMatrix4f delta = mesh.getPartTransform(partIdx);
+                        if (delta != null) {
+                            jointScratch.mulBack(delta);
+                        }
+                        // skinning matrix x vertex position (point transform).
+                        // OpenMatrix4f is row-vector convention: the translation
+                        // lives in the last row (m30/m31/m32).
+                        OpenMatrix4f out = OpenMatrix4f.mul(jointScratch,
+                                OpenMatrix4f.ofTranslation(positions[p], positions[p + 1], positions[p + 2],
+                                        new OpenMatrix4f()),
+                                new OpenMatrix4f());
+                        minX = Math.min(minX, out.m30);
+                        maxX = Math.max(maxX, out.m30);
+                        minY = Math.min(minY, out.m31);
+                        maxY = Math.max(maxY, out.m31);
+                        minZ = Math.min(minZ, out.m32);
+                        maxZ = Math.max(maxZ, out.m32);
+                        samples++;
+                    }
+                }
+                partIdx++;
+            }
+
+            // GL camera state read by the GPU path (the compute path relies on
+            // the same state through the vanilla shader pass).
+            org.joml.Matrix4f proj = RenderSystem.getProjectionMatrix();
+            org.joml.Matrix4f mv = RenderSystem.getModelViewMatrix();
+            org.joml.Matrix4f pose = poseStack.last().pose();
+
+            com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
+                    "YSM-EF Compat: [diag] GPU input: model={} joints={} parts={} verts={} "
+                            + "jointMaxTranslation={} (worst={}:{}) jointMaxScaleDiff={} toOriginMaxTranslation={} "
+                            + "modelSpaceBounds=([{},{}],[{},{}],[{},{}]) samples={} "
+                            + "proj=(m00={},m11={},m22={},m33={},m30={},m31={}) "
+                            + "view=(m00={},m11={},m22={},m33={},m03={},m13={},m23={}) "
+                            + "pose=(m00={},m11={},m22={},m33={},m03={},m13={},m23={}) "
+                            + "armature={}",
+                    mesh.getRuntimeModelId(), jointCount, mesh.getPartCount(), gpu.vertexCount,
+                    maxJointTranslation, worstJoint, worstJointTranslation, maxJointScaleDiff,
+                    maxToOriginTranslation(toOrigin),
+                    minX, maxX, minY, maxY, minZ, maxZ, samples,
+                    proj.m00(), proj.m11(), proj.m22(), proj.m33(), proj.m30(), proj.m31(),
+                    mv.m00(), mv.m11(), mv.m22(), mv.m33(), mv.m03(), mv.m13(), mv.m23(),
+                    pose.m00(), pose.m11(), pose.m22(), pose.m33(), pose.m03(), pose.m13(), pose.m23(),
+                    armature != null ? armature.getClass().getName() : "null");
+        } catch (Throwable t) {
+            com.ysmef.compat.YSMEpicFightCompat.LOGGER.warn(
+                    "YSM-EF Compat: [diag] GPU input diagnostic failed for '{}'", mesh.getRuntimeModelId(), t);
+        }
+    }
+
+    private static float maxTranslation(OpenMatrix4f m) {
+        // OpenMatrix4f stores the translation in the last row (m30/m31/m32)
+        return Math.max(Math.abs(m.m30), Math.max(Math.abs(m.m31), Math.abs(m.m32)));
+    }
+
+    /** Max deviation of the diagonal scale components (non-uniform scale stretches the model). */
+    private static float maxScaleDiff(OpenMatrix4f m) {
+        float sx = Math.abs(m.m00), sy = Math.abs(m.m11), sz = Math.abs(m.m22);
+        float max = Math.max(sx, Math.max(sy, sz));
+        float min = Math.min(sx, Math.min(sy, sz));
+        return max <= 0.0f ? 0.0f : Math.max(max / Math.max(min, 1.0e-6f) - 1.0f, Math.abs(max - 1.0f));
+    }
+
+    private static float maxToOriginTranslation(OpenMatrix4f[] toOrigin) {
+        float max = 0.0f;
+        for (OpenMatrix4f m : toOrigin) {
+            if (m != null) {
+                max = Math.max(max, maxTranslation(m));
+            }
+        }
+        return max;
+    }
 
     /** Oculus/Iris API (reflective: the compat mod has no hard dependency on Oculus). */
     private static final Class<?> IRIS_API_CLASS = findIrisApiClass();
@@ -121,6 +265,62 @@ public final class YsmGpuRenderPath {
         return proj.m30() != 0.0F || proj.m31() != 0.0F;
     }
 
+    /** Once per session: the gate's measured values of the first rejected draw (diagnostics). */
+    private static volatile boolean TRANSLATION_GATE_DIAG_LOGGED = false;
+
+    /**
+     * Whether the poseStack handed to the mesh draw carries the entity -> camera
+     * translation, i.e. whether the GPU path's u_proj = proj x mv x poseStack
+     * reconstruction places the model at the entity instead of at the camera.
+     *
+     * The dispatcher normally translates the poseStack by the camera-relative
+     * entity offset, so the translation part of the top pose has the same LENGTH
+     * as the entity-camera distance (the camera rotation and entity yaw rotate
+     * it but preserve its length; uniform scales such as EFTLM's 0.8 maid scale
+     * and its 1.25 compensation do not touch the translation column). When the
+     * length does not match, the stack cannot position the model and the GPU
+     * path must fall back to Epic Fight's compute path.
+     */
+    private static boolean hasSoundWorldTranslation(PoseStack poseStack) {
+        net.minecraft.world.entity.LivingEntity entity = com.ysmef.compat.model.runtime.YSMRuntimeBridge.getCurrentEntity();
+        if (entity == null || entity.level() == null) {
+            return false;
+        }
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.gameRenderer == null || mc.gameRenderer.getMainCamera() == null) {
+            return false;
+        }
+        net.minecraft.world.phys.Vec3 cam = mc.gameRenderer.getMainCamera().getPosition();
+        // The dispatcher translates the poseStack by the INTERPOLATED render
+        // position (LevelRenderer.renderEntity lerps xOld -> x), so compare
+        // against that same interpolation, not the raw tick position.
+        float partialTick = mc.getFrameTime();
+        double px = net.minecraft.util.Mth.lerp(partialTick, entity.xOld, entity.getX());
+        double py = net.minecraft.util.Mth.lerp(partialTick, entity.yOld, entity.getY());
+        double pz = net.minecraft.util.Mth.lerp(partialTick, entity.zOld, entity.getZ());
+        double dx = px - cam.x;
+        double dy = py - cam.y;
+        double dz = pz - cam.z;
+        double dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        org.joml.Matrix4f pose = poseStack.last().pose();
+        float len = (float) Math.sqrt(
+                (double) pose.m03() * pose.m03() + (double) pose.m13() * pose.m13() + (double) pose.m23() * pose.m23());
+
+        boolean sound = Math.abs(len - dist) <= Math.max(0.1, 0.05 * dist);
+
+        if (!sound && !TRANSLATION_GATE_DIAG_LOGGED) {
+            TRANSLATION_GATE_DIAG_LOGGED = true;
+            com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
+                    "YSM-EF Compat: [diag] GPU translation gate rejected a draw: entity={} renderPos=({},{},{}) cameraPos=({},{},{}) dist={} poseStackTranslationLen={} pose=(m03={},m13={},m23={})",
+                    entity.getClass().getName(),
+                    String.format("%.2f", px), String.format("%.2f", py), String.format("%.2f", pz),
+                    String.format("%.2f", cam.x), String.format("%.2f", cam.y), String.format("%.2f", cam.z),
+                    String.format("%.2f", dist), String.format("%.2f", len),
+                    pose.m03(), pose.m13(), pose.m23());
+        }
+        return sound;
+    }
+
     /**
      * Try to draw the mesh with the GPU skinning path. Returns true when the
      * draw happened; false lets the caller use Epic Fight's render path.
@@ -131,18 +331,22 @@ public final class YsmGpuRenderPath {
         // Linked to the loaded YSM fork's own GPU toggle: ModernYSM's UseGpuRenderer
         // (kept in sync), or this mod's enableGpuRender config for OpenYSM/LegacyYSM.
         if (!YsmGpuRenderEnable.isEnabled()) {
+            gpuSkipDiag(mesh, "disabled-by-config");
             return false;
         }
         if (!YsmGpuCapability.isAvailable()) {
             YsmGpuRenderEnable.disableIfOwned();
             logUnavailableOnce();
+            gpuSkipDiag(mesh, "capability-unavailable");
             return false;
         }
         if (!YsmBoneSkinShader.ensureCompiled()) {
             YsmGpuRenderEnable.disableIfOwned();
+            gpuSkipDiag(mesh, "shader-compile-failed");
             return false;
         }
         if (poses == null || armature == null || bufferSources instanceof OutlineBufferSource) {
+            gpuSkipDiag(mesh, "no-poses-or-outline-pass");
             return false;
         }
         if (isGuiEntityProjection()) {
@@ -154,28 +358,57 @@ public final class YsmGpuRenderPath {
             // Epic Fight's compute-shader path renders correctly there (verified:
             // the red box appears only when the bone-count gate lets the GPU path
             // engage, i.e. a bare-handed maid, and disappears on the compute path).
+            gpuSkipDiag(mesh, "gui-projection");
             return false;
         }
         if (shaderPackInUse()) {
             // under a shader pack the custom program would bypass the pack's shaders:
             // use Epic Fight's compute path, which supports Iris/Oculus natively
+            gpuSkipDiag(mesh, "shader-pack-in-use");
+            return false;
+        }
+        if (!hasSoundWorldTranslation(poseStack)) {
+            // The GPU path draws with u_proj = proj x mv x poseStack. Some render
+            // chains (Touhou Little Maid maids through YSM's GeoReplacedEntityRenderer,
+            // and YSM's GUI previews) hand the mesh draw a poseStack whose top pose
+            // does not carry the entity -> camera translation (its m03/m13/m23 are 0
+            // while the entity is blocks away from the camera) and RenderSystem's
+            // model view matrix is identity during the entity pass. Drawing that
+            // reconstruction puts the model AT the camera: for maids a few blocks
+            // away this shows as the "stretched" artifact, for the local player it
+            // draws inside the camera and looks invisible. Epic Fight's own
+            // compute-shader path renders those cases correctly, so the GPU path
+            // must step aside whenever its reconstruction cannot be verified
+            // against the entity's actual world position.
+            gpuSkipDiag(mesh, "pose-translation-mismatch");
             return false;
         }
         if (UNSUPPORTED.contains(mesh)) {
+            gpuSkipDiag(mesh, "mesh-unsupported");
+            return false;
+        }
+        if (!YSMMeshLibrary.isTextureUploaded(texture)) {
+            // the texture's async decode/upload has not completed yet: its GL
+            // id is not ready, so binding it would draw an untextured (white)
+            // mesh for a frame or two - use Epic Fight's path until it is up
+            gpuSkipDiag(mesh, "texture-not-uploaded");
             return false;
         }
 
         YsmGpuMesh gpu = getOrBuild(mesh, poses.length);
         if (gpu == null) {
+            gpuSkipDiag(mesh, "build-failed");
             return false;
         }
         if (gpu.vertexCount == 0 || gpu.boneCount - mesh.getPartCount() != poses.length) {
             // the armature joint layout changed since the mesh was uploaded
+            gpuSkipDiag(mesh, "bone-count-mismatch(" + poses.length + "vs" + (gpu.boneCount - mesh.getPartCount()) + ")");
             return false;
         }
 
         try {
             fillBoneBuffer(gpu, mesh, poseStack, armature, poses, packedLight);
+            logGpuInputDiagOnce(mesh, gpu, poseStack, armature, poses);
         } catch (Throwable t) {
             // Matrix math failure must never break the entity render: fall back.
             YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: GPU skinning matrix fill failed, falling back", t);
@@ -214,6 +447,12 @@ public final class YsmGpuRenderPath {
         GlStateManager._glUseProgram(YsmBoneSkinShader.program());
         if (YsmBoneSkinShader.locProj() >= 0) {
             GL20.glUniformMatrix4fv(YsmBoneSkinShader.locProj(), false, projScratch);
+        }
+        if (YsmBoneSkinShader.locMv() >= 0) {
+            GL20.glUniformMatrix4fv(YsmBoneSkinShader.locMv(), false, mvScratch);
+        }
+        if (YsmBoneSkinShader.locIvr() >= 0) {
+            GL20.glUniformMatrix3fv(YsmBoneSkinShader.locIvr(), false, ivrScratch);
         }
         if (YsmBoneSkinShader.locColor() >= 0) {
             GL20.glUniform4f(YsmBoneSkinShader.locColor(), r, g, b, a);
@@ -304,8 +543,12 @@ public final class YsmGpuRenderPath {
      * Upload optimization: in Epic Fight battle mode the parts carry no runtime
      * transforms (identity deltas) and their hidden flags are static per model,
      * so the part section is uploaded to the GPU only once; only the joint
-     * matrices (a few KB) are re-uploaded every frame. The packed light is a
-     * uniform (u_packedLight), so the cached section never goes stale.
+     * matrices (a few KB) are re-uploaded every frame. Outside battle mode the
+     * section is re-uploaded when a transform appears/changes/disappears or a
+     * hidden flag flips - a transform fading back to identity is treated as a
+     * change so the GPU can never keep a stale non-identity delta. The packed
+     * light is a uniform (u_packedLight), so the cached section never goes
+     * stale.
      */
     private static void fillBoneBuffer(YsmGpuMesh gpu, YSMMesh mesh, PoseStack poseStack,
                                        Armature armature, OpenMatrix4f[] poses, int packedLight) {
@@ -322,6 +565,15 @@ public final class YsmGpuRenderPath {
         projMVScratch.mul(RenderSystem.getModelViewMatrix());
         projMVScratch.mul(poseMatrix);
         projMVScratch.get(projScratch);
+
+        // u_mv = modelView x entityPose and u_ivr = inverse view rotation: the
+        // same inputs Minecraft's entity shader feeds into fog_distance (the fog
+        // must be computed on the view-transformed position, not the model-space
+        // one - see bone_skin.vsh).
+        projMVScratch.set(RenderSystem.getModelViewMatrix());
+        projMVScratch.mul(poseMatrix);
+        projMVScratch.get(mvScratch);
+        RenderSystem.getInverseViewRotationMatrix().get(ivrScratch);
 
         ByteBuffer boneBuf = gpu.perFrameBoneBuffer;
         boneBuf.clear();
@@ -341,31 +593,41 @@ public final class YsmGpuRenderPath {
         partCache.position(0);
         boolean anyTransform = false;
         boolean hiddenChanged = false;
+        boolean identityChanged = false;
         boolean[] cachedHidden = gpu.cachedPartHidden();
+        boolean[] cachedIdentity = gpu.cachedPartIdentity();
         int partIdx = 0;
         for (var part : mesh.getAllParts()) {
             if (jointCount + partIdx >= gpu.boneCount) {
                 break;
             }
             OpenMatrix4f delta = mesh.getPartTransform(partIdx);
-            if (delta != null) {
-                anyTransform = true;
-            }
             boolean hidden = part.isHidden();
             if (hidden != cachedHidden[partIdx]) {
                 cachedHidden[partIdx] = hidden;
                 hiddenChanged = true;
             }
             if (delta != null) {
+                anyTransform = true;
+                if (cachedIdentity[partIdx]) {
+                    cachedIdentity[partIdx] = false;
+                    identityChanged = true;
+                }
                 storeMatrix(partCache, delta, packedLight, hidden);
             } else {
+                // a transform fading back to identity is a content change too:
+                // without this the GPU keeps the last non-identity delta forever
+                if (!cachedIdentity[partIdx]) {
+                    cachedIdentity[partIdx] = true;
+                    identityChanged = true;
+                }
                 storeIdentity(partCache, packedLight, hidden);
             }
             partIdx++;
         }
         partCache.position(0);
 
-        boolean uploadParts = !gpu.partSectionValid() || anyTransform || hiddenChanged;
+        boolean uploadParts = !gpu.partSectionValid() || anyTransform || hiddenChanged || identityChanged;
         if (uploadParts) {
             boneBuf.position(jointBytes);
             boneBuf.put(partCache);

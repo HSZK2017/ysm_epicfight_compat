@@ -41,15 +41,23 @@ public final class YsmModelPackage {
     public final float widthScale;
     public final float heightScale;
     public final String defaultTexture;
+    /** Precomputed content fingerprint of binary packages (see contentFingerprint), -1 for folder packages. */
+    public final long contentFingerprint;
 
     private YsmModelPackage(String modelId, YSMGeoModel geometry, Map<String, byte[]> textures,
                             Map<String, int[]> textureInfo, float widthScale, float heightScale, String defaultTexture) {
-        this(modelId, geometry, textures, textureInfo, java.util.Collections.emptyMap(), widthScale, heightScale, defaultTexture);
+        this(modelId, geometry, textures, textureInfo, java.util.Collections.emptyMap(), widthScale, heightScale, defaultTexture, -1L);
     }
 
     private YsmModelPackage(String modelId, YSMGeoModel geometry, Map<String, byte[]> textures,
                             Map<String, int[]> textureInfo, Map<String, com.ysmef.compat.ysm.script.ScriptAnim> scriptAnims,
                             float widthScale, float heightScale, String defaultTexture) {
+        this(modelId, geometry, textures, textureInfo, scriptAnims, widthScale, heightScale, defaultTexture, -1L);
+    }
+
+    private YsmModelPackage(String modelId, YSMGeoModel geometry, Map<String, byte[]> textures,
+                            Map<String, int[]> textureInfo, Map<String, com.ysmef.compat.ysm.script.ScriptAnim> scriptAnims,
+                            float widthScale, float heightScale, String defaultTexture, long contentFingerprint) {
         this.modelId = modelId;
         this.geometry = geometry;
         this.textures = textures;
@@ -58,6 +66,7 @@ public final class YsmModelPackage {
         this.widthScale = widthScale;
         this.heightScale = heightScale;
         this.defaultTexture = defaultTexture;
+        this.contentFingerprint = contentFingerprint;
     }
 
     /**
@@ -73,6 +82,11 @@ public final class YsmModelPackage {
             }
             return loadFolder(modelId);
         } catch (Exception e) {
+            // Previously silent: every failure (corrupted file hash, truncated
+            // package, buffer underflow in the parser, ...) surfaced only as
+            // "model unavailable" with no hint at the cause.
+            com.ysmef.compat.YSMEpicFightCompat.LOGGER.warn(
+                    "YSM-EF Compat: failed to load YSM model package '{}': {}", modelId, e.toString());
             return null;
         }
     }
@@ -170,7 +184,12 @@ public final class YsmModelPackage {
                             entry.getKey(), entry.getValue().getAsJsonObject()));
                 }
             }
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            // One broken animation file must not abort the whole package, but it
+            // must not be invisible either (it silently dropped every remaining
+            // animation of the file before).
+            com.ysmef.compat.YSMEpicFightCompat.LOGGER.warn(
+                    "YSM-EF Compat: failed to parse animation file '{}': {}", animPath.getFileName(), e.toString());
         }
     }
 
@@ -183,8 +202,12 @@ public final class YsmModelPackage {
             byte[] decrypted = YsmFileCrypto.decryptYsmFile(Files.readAllBytes(ysmFile));
             YsmBinaryReader.BinaryModel binary = YsmBinaryReader.read(decrypted);
             YSMGeoModel geometry = YSMGeoModel.fromBinary(binary);
+            // Compute the content fingerprint here while the decrypted payload
+            // is still in hand; the conversion caller needs it for the manifest
+            // and would otherwise decrypt the whole package a second time.
+            long contentFingerprint = contentFingerprintOfBinary(root, modelId, decrypted);
             return new YsmModelPackage(modelId, geometry, binary.textures, binary.textureInfo, binary.animations,
-                    binary.widthScale, binary.heightScale, binary.defaultTexture);
+                    binary.widthScale, binary.heightScale, binary.defaultTexture, contentFingerprint);
         }
         return null;
     }
@@ -282,6 +305,13 @@ public final class YsmModelPackage {
         }
     }
 
+    private static long contentFingerprintOfBinary(String root, String modelId, byte[] decrypted) {
+        long hash = 0xcbf29ce484222325L;
+        hash = fnv1a(hash, root + '/' + modelId);
+        hash = fnv1a(hash, Long.toString(decrypted.length));
+        return fnv1aBytes(hash, decrypted);
+    }
+
     /**
      * Content-based fingerprint of the model's source files (FNV-1a 64 over
      * relative paths and file contents; binary .ysm packages are decrypted
@@ -290,7 +320,9 @@ public final class YsmModelPackage {
      * the model really changed (including a "/ysm model reload" refresh).
      *
      * Slower than fingerprint(): reads (and for .ysm decrypts) every file, so
-     * use it only to confirm cheap-fingerprint mismatches.
+     * use it only to confirm cheap-fingerprint mismatches. YsmModelPackage
+     * instances loaded from binary packages carry this value precomputed (see
+     * the contentFingerprint field) so conversions do not decrypt twice.
      *
      * @return the fingerprint, or -1 if the package no longer exists locally
      */
@@ -300,11 +332,8 @@ public final class YsmModelPackage {
                 Path base = YSM_CONFIG.resolve(root).resolve(modelId);
                 if (modelId.endsWith(".ysm")) {
                     if (Files.isRegularFile(base)) {
-                        byte[] decrypted = YsmFileCrypto.decryptYsmFile(Files.readAllBytes(base));
-                        long hash = 0xcbf29ce484222325L;
-                        hash = fnv1a(hash, root + '/' + modelId);
-                        hash = fnv1a(hash, Long.toString(decrypted.length));
-                        return fnv1aBytes(hash, decrypted);
+                        return contentFingerprintOfBinary(root, modelId,
+                                YsmFileCrypto.decryptYsmFile(Files.readAllBytes(base)));
                     }
                     continue;
                 }

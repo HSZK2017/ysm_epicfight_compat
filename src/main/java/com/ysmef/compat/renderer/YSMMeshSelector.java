@@ -11,7 +11,7 @@ import yesman.epicfight.api.asset.AssetAccessor;
 import yesman.epicfight.api.client.model.Meshes;
 import yesman.epicfight.client.mesh.HumanoidMesh;
 
-import java.util.Set;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -24,8 +24,8 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class YSMMeshSelector {
 
-    private static final Set<String> LOGGED_MESH_USE = ConcurrentHashMap.newKeySet();
-    private static final Set<String> LOGGED_MESH_MISSING = ConcurrentHashMap.newKeySet();
+    private static final Map<java.util.UUID, String[]> LOGGED_MESH_USE = new ConcurrentHashMap<>();
+    private static final Map<java.util.UUID, String> LOGGED_MESH_MISSING = new ConcurrentHashMap<>();
 
     private YSMMeshSelector() {}
 
@@ -40,10 +40,23 @@ public final class YSMMeshSelector {
         }
         YSMModelAccess.YSMModelRef modelRef = YSMModelAccess.getCurrentModel(player);
         if (modelRef == null) {
+            logNoModelDiagOnce(player);
             return null;
         }
         return selectMeshForModel(player, modelRef.modelId(), modelRef.textureName(),
                 player.getGameProfile().getName());
+    }
+
+    /** Once per player: the selection cache resolved no YSM model (diagnostics). */
+    private static final Map<java.util.UUID, String> DIAG_NO_MODEL = new ConcurrentHashMap<>();
+
+    private static void logNoModelDiagOnce(AbstractClientPlayer player) {
+        String prev = DIAG_NO_MODEL.put(player.getUUID(), "noModel");
+        if (prev == null) {
+            YSMEpicFightCompat.LOGGER.info(
+                    "YSM-EF Compat: [diag] selectMesh: no YSM model ref for '{}' (battleMode={}, level={})",
+                    player.getGameProfile().getName(), YSMBattleMode.isBattleMode(player), player.level());
+        }
     }
 
     /**
@@ -102,20 +115,25 @@ public final class YSMMeshSelector {
 
     private static void logMeshUsedOnce(LivingEntity entity, String modelId, String textureName,
                                         ResourceLocation texture, String displayName) {
-        String key = entity.getUUID() + "|" + modelId + "|" + textureName;
-        if (LOGGED_MESH_USE.add(key)) {
-            YSMEpicFightCompat.LOGGER.info(
-                    "YSM-EF Compat: rendering '{}' with converted YSM base mesh (model='{}', texture='{}' -> {})",
-                    displayName, modelId, textureName, texture);
+        // Runs every frame per drawn player: compare against the cached pair
+        // instead of building a "uuid|modelId|texture" string every frame.
+        String[] prev = LOGGED_MESH_USE.get(entity.getUUID());
+        if (prev != null && prev[0].equals(modelId) && java.util.Objects.equals(prev[1], textureName)) {
+            return;
         }
+        LOGGED_MESH_USE.put(entity.getUUID(), new String[]{modelId, textureName});
+        YSMEpicFightCompat.LOGGER.info(
+                "YSM-EF Compat: rendering '{}' with converted YSM base mesh (model='{}', texture='{}' -> {})",
+                displayName, modelId, textureName, texture);
     }
 
     private static void logMeshMissingOnce(LivingEntity entity, String modelId, String textureName, String displayName) {
-        String key = entity.getUUID() + "|" + modelId;
-        if (LOGGED_MESH_MISSING.add(key)) {
-            YSMEpicFightCompat.LOGGER.warn(
-                    "YSM-EF Compat: no converted base mesh for model '{}' (entity '{}', texture '{}'). Falling back to Epic Fight default mesh. Available: {}",
-                    modelId, displayName, textureName, YSMMeshLibrary.availableModelIds());
+        String prev = LOGGED_MESH_MISSING.put(entity.getUUID(), modelId);
+        if (modelId.equals(prev)) {
+            return;
         }
+        YSMEpicFightCompat.LOGGER.warn(
+                "YSM-EF Compat: no converted base mesh for model '{}' (entity '{}', texture '{}'). Falling back to Epic Fight default mesh. Available: {}",
+                modelId, displayName, textureName, YSMMeshLibrary.availableModelIds());
     }
 }

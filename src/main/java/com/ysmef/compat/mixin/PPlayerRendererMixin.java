@@ -30,7 +30,10 @@ public abstract class PPlayerRendererMixin {
     @Inject(
             method = "getMeshProvider(Lyesman/epicfight/client/world/capabilites/entitypatch/player/AbstractClientPlayerPatch;)Lyesman/epicfight/api/asset/AssetAccessor;",
             at = @At("HEAD"),
-            cancellable = true
+            cancellable = true,
+            // Non-critical: if an Epic Fight version changes this signature the
+            // fallback biped mesh still renders (no YSM mesh substitution).
+            require = 0
     )
     private void ysmef$useYsmMesh(AbstractClientPlayerPatch<AbstractClientPlayer> entitypatch,
                                   CallbackInfoReturnable<AssetAccessor<HumanoidMesh>> cir) {

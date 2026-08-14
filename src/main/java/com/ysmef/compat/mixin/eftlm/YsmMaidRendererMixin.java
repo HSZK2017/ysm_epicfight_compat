@@ -27,7 +27,7 @@ import yesman.epicfight.client.mesh.HumanoidMesh;
 public abstract class YsmMaidRendererMixin {
 
     @Inject(method = "getMeshProvider(Lnet/EFTLM/EF/Capability/MaidPatch;)Lyesman/epicfight/api/asset/AssetAccessor;",
-            at = @At("HEAD"), cancellable = true, remap = false)
+            at = @At("HEAD"), cancellable = true, remap = false, require = 0)
     private void ysmef$useYsmMesh(MaidPatch<EntityMaid> maidPatch,
                                   CallbackInfoReturnable<AssetAccessor<MaidMesh>> cir) {
         EntityMaid maid = maidPatch.getOriginal();

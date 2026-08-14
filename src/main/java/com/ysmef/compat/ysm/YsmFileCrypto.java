@@ -22,6 +22,7 @@ public final class YsmFileCrypto {
 
     private static final long SEED_KEY_DERIVATION = 0xD017CBBA7B5D3581L;
     private static final long SEED_RES_VERIFICATION = 0xA62B1A2C43842BC3L;
+    private static final long SEED_FILE_VERIFICATION = 0x9E5599DB80C67C29L;
 
     private YsmFileCrypto() {}
 
@@ -42,6 +43,17 @@ public final class YsmFileCrypto {
         int tailOffset = fileData.length - 64;
         byte[] key = Arrays.copyOfRange(fileData, tailOffset, tailOffset + 32);
         byte[] iv = Arrays.copyOfRange(fileData, tailOffset + 32, tailOffset + 56);
+
+        // File integrity check (mirrors YsmCrypt#decryptYsmFile): the writer
+        // hashes everything before the trailing 8 bytes with
+        // SEED_FILE_VERIFICATION. Without this a corrupted/truncated package
+        // silently decrypts into garbage and only fails much later in the zstd
+        // or binary parse stage, which is much harder to diagnose.
+        long fileHash = ByteBuffer.wrap(fileData, tailOffset + 56, 8).order(ByteOrder.LITTLE_ENDIAN).getLong();
+        long calculatedHash = new CityHash().hash64WithSeed(fileData, 0, fileData.length - 8, SEED_FILE_VERIFICATION);
+        if (calculatedHash != fileHash) {
+            throw new IllegalArgumentException("Invalid YSM file: file hash mismatch (corrupted or truncated file?)");
+        }
 
         int ptrBinaryData = headerLength + 1;
         int crypto = ByteBuffer.wrap(fileData, ptrBinaryData, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();

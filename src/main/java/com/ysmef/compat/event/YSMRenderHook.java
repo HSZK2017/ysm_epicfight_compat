@@ -1,7 +1,6 @@
 package com.ysmef.compat.event;
 
 import com.ysmef.compat.YSMEpicFightCompat;
-import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.entity.player.PlayerRenderer;
 import net.minecraft.world.entity.player.Player;
 import net.minecraftforge.api.distmarker.Dist;
@@ -17,22 +16,28 @@ import yesman.epicfight.world.capabilities.entitypatch.LivingEntityPatch;
 /**
  * Render-time bridge between YSM and Epic Fight.
  *
- * Problem: YSM replaces the vanilla player render by listening to RenderPlayerEvent.Pre
- * at NORMAL priority and drawing its own CustomPlayerRenderer. That renderer re-posts a
- * RenderLivingEvent.Pre from inside LivingEntityRenderer.render, which Epic Fight's
- * handler treats as a fresh render request - but with YSM's renderer, which crashes Epic
- * Fight's player-specific cast, and can lead to double rendering.
+ * YSM replaces the vanilla player render by listening to RenderPlayerEvent.Pre at
+ * NORMAL priority and drawing its own CustomPlayerRenderer. In Epic Fight battle
+ * mode that renderer is undesirable: it re-posts a RenderLivingEvent.Pre with a
+ * renderer whose layer list lacks PlayerItemInHandLayer, so Epic Fight's
+ * PatchedItemInHandLayer never runs on that path and the held weapon never renders
+ * (YsmPlayerRenderMixin / OpenYsmPlayerRenderMixin / ModernYsmPlayerRenderMixin
+ * suppress YSM's interception for the same reason).
  *
- * Fix: intercept the vanilla render of players at HIGHEST priority (both YSM's and Epic
- * Fight's handlers run at NORMAL). When Epic Fight will render the player anyway
- * (patch.overrideRender()), the armature render is performed right here through Epic
- * Fight's pipeline and the event is canceled, so neither the vanilla renderer nor YSM's
- * renderer runs for that frame. When Epic Fight does not take over rendering, the event
- * is left untouched and YSM renders normally.
+ * This handler therefore takes over the player draw at HIGHEST priority in battle
+ * mode: it draws the player through Epic Fight's pipeline (renderEntityArmatureModel)
+ * and cancels the event, so neither the vanilla model nor YSM's render path runs.
  *
- * Events fired with a non-PlayerRenderer (e.g. the nested event inside YSM's own
- * renderer) are left to Epic Fight's own handler; the registered YSMPlayerRenderer
- * tolerates those renderers safely.
+ * NOTE: the draw MUST happen here. Epic Fight's own RenderLivingEvent handler is
+ * registered with the default receiveCanceled=false, so once this handler cancels
+ * the event the bus skips it entirely - leaving the draw to it renders nothing
+ * (verified empirically: the player then has no body at all). Drawing here and
+ * canceling yields exactly one draw, because Epic Fight's handler never runs for
+ * the canceled event.
+ *
+ * The draw is skipped when Epic Fight has no patched renderer for the player
+ * (hasRendererFor), when the player's level is null (loading screen: Epic Fight's
+ * own render path bails there too) and in vanilla-model-debugging mode.
  */
 @Mod.EventBusSubscriber(
         modid = YSMEpicFightCompat.MODID,
@@ -54,7 +59,14 @@ public class YSMRenderHook {
         if (patch == null || !patch.overrideRender()) {
             return;
         }
-        if (ClientEngine.getInstance().isVanillaModelDebuggingMode()) {
+        if (player.level() == null) {
+            return;
+        }
+        ClientEngine clientEngine = ClientEngine.getInstance();
+        if (clientEngine.isVanillaModelDebuggingMode()) {
+            return;
+        }
+        if (!clientEngine.renderEngine.hasRendererFor(player)) {
             return;
         }
 
@@ -67,12 +79,12 @@ public class YSMRenderHook {
             float originalYRot = localPlayerPatch.getModelYRot();
             localPlayerPatch.setModelYRotInGui(player.getYRot());
             event.getPoseStack().translate(0.0D, 0.1D, 0.0D);
-            ClientEngine.getInstance().renderEngine.renderEntityArmatureModel(player, patch, event.getRenderer(),
+            clientEngine.renderEngine.renderEntityArmatureModel(player, patch, event.getRenderer(),
                     event.getMultiBufferSource(), event.getPoseStack(), event.getPackedLight(), partialTick);
             event.setCanceled(true);
             localPlayerPatch.disableModelYRotInGui(originalYRot);
         } else {
-            ClientEngine.getInstance().renderEngine.renderEntityArmatureModel(player, patch, event.getRenderer(),
+            clientEngine.renderEngine.renderEntityArmatureModel(player, patch, event.getRenderer(),
                     event.getMultiBufferSource(), event.getPoseStack(), event.getPackedLight(), partialTick);
             event.setCanceled(true);
         }

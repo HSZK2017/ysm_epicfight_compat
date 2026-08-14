@@ -33,6 +33,8 @@ layout(std430, binding = 0) readonly buffer BoneBlock {
 };
 
 uniform mat4 u_proj;
+uniform mat4 u_mv;
+uniform mat3 u_ivr;
 uniform vec4 u_color;
 uniform int  u_fogShape;
 uniform vec3 u_light0;
@@ -46,11 +48,16 @@ out vec4  v_color;
 out float v_vertexDistance;
 flat out int v_packedLight;
 
-float fogDistance(vec3 pos, int shape) {
+// Mirrors Minecraft's fog.glsl exactly: the distance must be computed on the
+// view-transformed position (u_mv), otherwise the model never enters the fog
+// (its model-space coordinates are only a few blocks from the entity origin).
+float fogDistance(mat4 modelViewMat, vec3 pos, int shape) {
     if (shape == 0) {
-        return length(pos);
+        return length((modelViewMat * vec4(pos, 1.0)).xyz);
     } else {
-        return max(length(pos.xz), abs(pos.y));
+        float lenXZ = length((modelViewMat * vec4(pos.x, 0.0, pos.z, 1.0)).xyz);
+        float lenY = length((modelViewMat * vec4(0.0, pos.y, 0.0, 1.0)).xyz);
+        return max(lenXZ, lenY);
     }
 }
 
@@ -84,7 +91,9 @@ void main() {
     v_uv = a_uv;
     v_normal = nrm;
     v_color = minecraft_mix_light(u_light0, u_light1, nrm, u_color);
-    v_vertexDistance = fogDistance(eyePos.xyz, u_fogShape);
+    // Same fog input as Minecraft's entity shader (IViewRotMat * Position with
+    // the model-view matrix); see fogDistance above.
+    v_vertexDistance = fogDistance(u_mv, u_ivr * eyePos.xyz, u_fogShape);
     v_packedLight = u_packedLight;
     v_cullable = a_cullable;
 }

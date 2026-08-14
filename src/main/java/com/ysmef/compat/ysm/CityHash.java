@@ -16,8 +16,14 @@ public class CityHash {
     public static final int c1 = 0xcc9e2d51;
     public static final int c2 = 0x1b873593;
 
+    /** Base offset applied to every array access; 0 for whole-array hashing. */
+    private int off = 0;
+
+    /** Explicit hash length; -1 means "rest of the array from off" (whole-array mode). */
+    private int len = -1;
+
     public long hash64(byte[] byteArray) {
-        int len = byteArray.length;
+        int len = this.len >= 0 ? this.len : byteArray.length - off;
         if (len <= 32) {
             if (len <= 16) {
                 return hashLen0to16(byteArray);
@@ -63,8 +69,27 @@ public class CityHash {
         return hash64WithSeeds(raw, k2, seed);
     }
 
+    /**
+     * Range variant: hash raw[offset, offset+length) with the given seed,
+     * without copying the array. Instances are per-use (see YsmFileCrypto), so
+     * mutating the offset for the duration of the call is safe.
+     */
+    public long hash64WithSeed(byte[] raw, int offset, int length, long seed) {
+        if (offset == 0 && length == raw.length) {
+            return hash64WithSeed(raw, seed);
+        }
+        this.off = offset;
+        this.len = length;
+        try {
+            return hash64WithSeed(raw, seed);
+        } finally {
+            this.off = 0;
+            this.len = -1;
+        }
+    }
+
     private long hashLen0to16(byte[] byteArray) {
-        int len = byteArray.length;
+        int len = this.len >= 0 ? this.len : byteArray.length - off;
         if (len >= 8) {
             long mul = k2 + len * 2;
             long a = fetch64(byteArray, 0) + k2;
@@ -79,9 +104,9 @@ public class CityHash {
             return hashLen16(len + (a << 3), fetch32(byteArray, len - 4) & 0xffffffffL, mul);
         }
         if (len > 0) {
-            int a = byteArray[0] & 0xff;
-            int b = byteArray[len >>> 1] & 0xff;
-            int c = byteArray[len - 1] & 0xff;
+            int a = byteArray[off] & 0xff;
+            int b = byteArray[off + (len >>> 1)] & 0xff;
+            int c = byteArray[off + len - 1] & 0xff;
             int y = a + (b << 8);
             int z = len + (c << 2);
             return shiftMix(y * k2 ^ z * k0) * k2;
@@ -90,7 +115,7 @@ public class CityHash {
     }
 
     private long hashLen17to32(byte[] byteArray) {
-        int len = byteArray.length;
+        int len = this.len >= 0 ? this.len : byteArray.length - off;
         long mul = k2 + len * 2;
         long a = fetch64(byteArray, 0) * k1;
         long b = fetch64(byteArray, 8);
@@ -101,7 +126,7 @@ public class CityHash {
     }
 
     private long hashLen33to64(byte[] byteArray) {
-        int len = byteArray.length;
+        int len = this.len >= 0 ? this.len : byteArray.length - off;
         long mul = k2 + len * 2;
         long a = fetch64(byteArray, 0) * k2;
         long b = fetch64(byteArray, 8);
@@ -145,11 +170,11 @@ public class CityHash {
     }
 
     private long fetch64(byte[] byteArray, final int start) {
-        return loadUnaligned64(byteArray, start);
+        return loadUnaligned64(byteArray, off + start);
     }
 
     private int fetch32(byte[] byteArray, final int start) {
-        return loadUnaligned32(byteArray, start);
+        return loadUnaligned32(byteArray, off + start);
     }
 
     private long rotate(long val, int shift) {

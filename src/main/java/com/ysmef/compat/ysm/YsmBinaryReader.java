@@ -152,7 +152,7 @@ public class YsmBinaryReader {
         }
 
         if (format > 9) {
-            skipAnimationControllers(r, format);
+            skipAnimationControllers(r, format, false);
             int animationControllerTableSize = r.readVarInt();
             for (int i = 0; i < animationControllerTableSize; ++i) {
                 r.readString();
@@ -259,7 +259,7 @@ public class YsmBinaryReader {
             readAnimations(r, format, model.animations);
         }
 
-        skipAnimationControllers(r, format);
+        skipAnimationControllers(r, format, true);
 
         int textureCount = r.readVarInt();
         for (int i = 0; i < textureCount; i++) {
@@ -391,6 +391,14 @@ public class YsmBinaryReader {
             }
         }
 
+        if (isNewVersionYsm == 0 && format <= 15) {
+            // Legacy pre-V16 packages without the new ysm.json end the data
+            // stream right after the metadata block (see YSMBinaryDeserializer#
+            // parseYsmJson). Reading further would overrun the buffer and fail
+            // the whole model load.
+            return;
+        }
+
         model.widthScale = r.readFloat();
         model.heightScale = r.readFloat();
 
@@ -501,10 +509,13 @@ public class YsmBinaryReader {
             r.readString();
             skipAnimations(r, format);
         }
-        int separator = r.readVarInt();
-        if (separator != 0) {
-            throw new IllegalStateException("Separator != 0");
-        }
+        // Sub-entity animation controllers: the count varint is followed by the
+        // controllers themselves (see YSMBinaryDeserializer#parseAnimationControllers
+        // with readName=false - for format > 15 only ONE hash string per controller,
+        // unlike the main entity's name+hash pair). Treating the count as a
+        // separator and requiring it to be 0 made every sub-entity with animation
+        // controllers fail to load.
+        skipAnimationControllers(r, format, false);
         r.readString();
         r.readByteArray();
         r.readVarInt();
@@ -524,8 +535,13 @@ public class YsmBinaryReader {
         r.readString();
         skipGeometry(r);
         if (format > 26) {
-            r.readVarInt();
-            r.readString();
+            // matchIds: count + N strings (YSMBinaryDeserializer#parseSubEntity);
+            // reading only one string misaligned every sub-entity with more than
+            // one match id.
+            int matchIdSize = r.readVarInt();
+            for (int j = 0; j < matchIdSize; j++) {
+                r.readString();
+            }
         }
     }
 
@@ -621,7 +637,10 @@ public class YsmBinaryReader {
         for (int animIndex = 0; animIndex < animationCount; ++animIndex) {
             com.ysmef.compat.ysm.script.ScriptAnim anim = new com.ysmef.compat.ysm.script.ScriptAnim();
             anim.name = r.readString();
-            anim.length = r.readFloat();
+            // The binary format stores the length in ticks (see YSMBinarySerializer's
+            // "writeFloat(anim.length * 20f) // 还原ticks"); the runtime evaluator works
+            // in seconds (like the keyframe times below), so convert here.
+            anim.length = r.readFloat() / 20.0f;
             int loopMode = r.readVarInt();
             anim.loop = switch (loopMode) {
                 case 1 -> com.ysmef.compat.ysm.script.ScriptAnim.LOOP_REPEAT;
@@ -741,13 +760,18 @@ public class YsmBinaryReader {
         }
     }
 
-    private static void skipAnimationControllers(Reader r, int format) {
+    private static void skipAnimationControllers(Reader r, int format, boolean readName) {
         int controllerCount = r.readVarInt();
         for (int i = 0; i < controllerCount; i++) {
             if (format <= 15) {
                 r.readVarInt();
             } else {
-                r.readString();
+                // The main entity's controllers carry a name + hash pair, the
+                // sub-entity ones only the hash (see the serializer's
+                // writeAnimationControllers with writeName=false).
+                if (readName) {
+                    r.readString();
+                }
                 r.readString();
             }
             int animationCount = r.readVarInt();

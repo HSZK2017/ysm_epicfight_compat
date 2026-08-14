@@ -25,12 +25,14 @@ import java.util.concurrent.ConcurrentHashMap;
  * obfuscated classes.
  *
  * The selection is therefore resolved from three sources, in order:
- * 1. the integrated server's player entities (which do carry the serializable
- *    capability) - covers single-player and self-hosted servers;
- * 2. the model-sync channel (see com.ysmef.compat.network): when the mod runs on the
+ * 1. the model-sync channel (see com.ysmef.compat.network): when the mod runs on the
  *    server too, every player's selection is streamed to the client over the network
  *    after a version handshake, following the OpenYSM/YSM 2.6.5 protocol - this covers
- *    dedicated servers for both remote players and the local player;
+ *    dedicated servers for both remote players and the local player. It is change-driven
+ *    and free to read, so it is preferred over serializing the full player NBT;
+ * 2. the integrated server's player entities (which do carry the serializable
+ *    capability) - covers single-player and self-hosted servers before the
+ *    handshake completes;
  * 3. the client capability NBT (normally absent, degrading to Epic Fight's biped mesh).
  *
  * The NBT snapshot is cached briefly per player to avoid serializing the full player
@@ -44,7 +46,18 @@ import java.util.concurrent.ConcurrentHashMap;
 @OnlyIn(Dist.CLIENT)
 public final class YSMModelAccess {
 
+    /** Cache TTL for players that resolved to a YSM model (1 s). */
     private static final long CACHE_TTL_TICKS = 20;
+
+    /**
+     * Cache TTL for players that resolved to "no model" (10 s). A null result
+     * can only change through a model-sync broadcast (which invalidates the
+     * entry early, see {@link #syncChangedSince}) or an integrated-server
+     * capability change, so serializing the full player NBT more often than
+     * every 10 s would be pure waste - this was the per-20-tick saveWithoutId
+     * cost for every model-less player.
+     */
+    private static final long CACHE_TTL_NULL_TICKS = 200;
 
     private record CacheEntry(Level level, YSMModelRef model, long gameTime) {}
 
@@ -65,8 +78,11 @@ public final class YSMModelAccess {
         long gameTime = level.getGameTime();
         UUID uuid = player.getUUID();
         CacheEntry entry = CACHE.get(uuid);
-        if (entry != null && entry.level() == level && gameTime - entry.gameTime() < CACHE_TTL_TICKS) {
-            return entry.model();
+        if (entry != null && entry.level() == level) {
+            long ttl = entry.model() == null ? CACHE_TTL_NULL_TICKS : CACHE_TTL_TICKS;
+            if (gameTime - entry.gameTime() < ttl && !syncChangedSince(uuid, entry.model())) {
+                return entry.model();
+            }
         }
 
         YSMModelRef model = readModel(player);
@@ -75,14 +91,37 @@ public final class YSMModelAccess {
         return model;
     }
 
+    /**
+     * Whether the server-synced selection differs from the cached result: a
+     * fresh sync broadcast invalidates the cache entry early, so a model
+     * change is picked up immediately instead of up to TTL ticks later (a
+     * model-less player whose model appears would otherwise stay cached as
+     * "no model" for the whole null-result TTL).
+     */
+    private static boolean syncChangedSince(UUID uuid, YSMModelRef cached) {
+        ModelSyncClient.SyncedModel synced = ModelSyncClient.getSyncedModel(uuid);
+        if (synced == null) {
+            return false;
+        }
+        if (synced.modelId().isEmpty()) {
+            return cached != null;
+        }
+        return cached == null
+                || !synced.modelId().equals(cached.modelId())
+                || !synced.textureName().equals(cached.textureName());
+    }
+
     private static YSMModelRef readModel(Player player) {
+        // The server-synced selection is change-driven and free to read: prefer
+        // it so the per-20-tick saveWithoutId of the fallback sources only runs
+        // before the first handshake completes (or on servers without the mod).
+        ModelSyncClient.SyncedModel synced = ModelSyncClient.getSyncedModel(player.getUUID());
+        if (synced != null) {
+            return synced.modelId().isEmpty() ? null : new YSMModelRef(synced.modelId(), synced.textureName());
+        }
         YSMModelRef fromServer = readFromIntegratedServer(player);
         if (fromServer != null) {
             return fromServer;
-        }
-        ModelSyncClient.SyncedModel synced = ModelSyncClient.getSyncedModel(player.getUUID());
-        if (synced != null) {
-            return new YSMModelRef(synced.modelId(), synced.textureName());
         }
         return readFromCapabilityNbt(player);
     }

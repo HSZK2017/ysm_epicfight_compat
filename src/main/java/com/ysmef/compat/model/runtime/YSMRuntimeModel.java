@@ -163,9 +163,34 @@ public final class YSMRuntimeModel {
     /**
      * Apply the default-form visibility to every per-bone part of the mesh.
      * Used in Epic Fight battle mode, where no script animation may run.
+     * The part -> bone-index mapping is captured once per mesh instance
+     * (see ensureDefaultPartMap): this runs every frame per drawn player, and
+     * the previous per-part substring + map lookup allocated a String per part
+     * per frame for meshes with hundreds of bone parts.
      */
     public void applyDefaultVisibility(YSMMesh mesh) {
+        ensureDefaultPartMap(mesh);
         boolean[] hidden = defaultHidden();
+        for (int i = 0; i < defaultBoneParts.size(); i++) {
+            int boneIdx = defaultPartBoneIdx[i];
+            // -1 = the part's bone is not in the runtime bone table: keep it
+            // visible (same semantics as before, only without the per-frame
+            // substring/lookup work).
+            defaultBoneParts.get(i).setHidden(boneIdx >= 0 && boneIdx < hidden.length && hidden[boneIdx]);
+        }
+    }
+
+    private YSMMesh defaultPartMapMesh;
+    private List<MeshPart> defaultBoneParts;
+    private int[] defaultPartBoneIdx;
+
+    private void ensureDefaultPartMap(YSMMesh mesh) {
+        if (defaultBoneParts != null && defaultPartMapMesh == mesh) {
+            return;
+        }
+        defaultPartMapMesh = mesh;
+        List<MeshPart> parts = new ArrayList<>();
+        List<Integer> idxs = new ArrayList<>();
         for (Map.Entry<String, MeshPart> entry : mesh.getPartEntrySetSafe()) {
             String partName = entry.getKey();
             if (!partName.startsWith(EFMeshJsonWriter.BONE_PART_PREFIX)) {
@@ -173,7 +198,13 @@ public final class YSMRuntimeModel {
             }
             String boneName = partName.substring(EFMeshJsonWriter.BONE_PART_PREFIX.length());
             Integer boneIdx = boneIndex.get(boneName);
-            entry.getValue().setHidden(boneIdx != null && boneIdx < hidden.length && hidden[boneIdx]);
+            parts.add(entry.getValue());
+            idxs.add(boneIdx != null ? boneIdx : -1);
+        }
+        defaultBoneParts = parts;
+        defaultPartBoneIdx = new int[idxs.size()];
+        for (int i = 0; i < idxs.size(); i++) {
+            defaultPartBoneIdx[i] = idxs.get(i);
         }
     }
 

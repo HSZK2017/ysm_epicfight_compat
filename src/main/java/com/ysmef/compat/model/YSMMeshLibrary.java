@@ -23,6 +23,7 @@ import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -76,21 +77,33 @@ public class YSMMeshLibrary {
      * Bumped whenever the conversion algorithm or the manifest format changes
      * in a way that invalidates previously generated meshes (forces a one-time
      * full regeneration).
+     *
+     * 5: binary animation length is now converted ticks -> seconds (YsmBinaryReader),
+     *    which changes the runtime JSON output of converted models.
      */
-    private static final int GENERATOR_VERSION = 4;
+    private static final int GENERATOR_VERSION = 5;
 
     private static final String MESH_NAMESPACE = YSMEpicFightCompat.MODID;
 
-    /** modelId -> registered mesh accessor */
-    private static final Map<String, Meshes.MeshAccessor<YSMMesh>> MESHES = new LinkedHashMap<>();
+    /**
+     * modelId -> registered mesh accessor. Read lock-free from the render
+     * thread (findMesh) while worker threads register conversion results, so
+     * it must be concurrent.
+     */
+    private static final Map<String, Meshes.MeshAccessor<YSMMesh>> MESHES = new ConcurrentHashMap<>();
 
-    /** textureRL string -> png bytes (registered into the texture manager on demand) */
-    private static final Map<String, byte[]> TEXTURE_DATA = new LinkedHashMap<>();
+    /** textureRL string -> png bytes (registered into the texture manager on demand). */
+    private static final Map<String, byte[]> TEXTURE_DATA = new ConcurrentHashMap<>();
 
-    /** textureRL string -> [width, height, format] (format: -1=raw RGBA, 2=PNG, 3=JPEG, 4=WEBP, 5=AVIF) */
-    private static final Map<String, int[]> TEXTURE_INFO = new LinkedHashMap<>();
+    /** textureRL string -> [width, height, format] (format: -1=raw RGBA, 2=PNG, 3=JPEG, 4=WEBP, 5=AVIF). */
+    private static final Map<String, int[]> TEXTURE_INFO = new ConcurrentHashMap<>();
 
-    /** modelId + '#' + textureName -> textureRL */
+    /**
+     * modelId + '#' + textureName -> textureRL. Kept as a lock-guarded
+     * LinkedHashMap: findTexture's fallback returns the model's first texture
+     * and relies on insertion order. Every access must hold the map's monitor -
+     * the render thread reads while worker threads register new models.
+     */
     private static final Map<String, ResourceLocation> TEXTURE_LOCATIONS = new LinkedHashMap<>();
 
     /** textureRL string -> true once registered in the texture manager */
@@ -109,7 +122,7 @@ public class YSMMeshLibrary {
     private static final int RELEASE_DELAY_TICKS = 5;
     private static final long TEXTURE_UPLOAD_BUDGET_NANOS = 10_000_000L;
 
-    private record TextureUploadTask(ResourceLocation location, NativeImage image) {}
+    private record TextureUploadTask(ResourceLocation location, NativeImage image, boolean translucent) {}
 
     /** Models whose lazy conversion already failed; not retried until invalidateAll. */
     private static final Set<String> FAILED_MODELS = ConcurrentHashMap.newKeySet();
@@ -239,11 +252,13 @@ public class YSMMeshLibrary {
      * Called lazily from the mesh selection path on the render thread:
      *
      * - already registered -> true
-     * - previously failed / currently converting -> false (Epic Fight biped fallback)
-     * - cached outputs (manifest entry + verified mesh/runtime/texture files) ->
-     *   registered from cache without decrypting the model package -> true
-     * - missing or outdated -> the conversion is submitted to the background pool
-     *   and false is returned; the mesh becomes available from the next frame on
+     * - previously failed / currently converting or restoring -> false
+     *   (Epic Fight biped fallback)
+     * - manifest entry present -> the on-disk cache is verified and the model
+     *   restored on the background pool; false until it is registered
+     * - missing or outdated -> the conversion is submitted to the background
+     *   pool and false is returned; the mesh becomes available from the next
+     *   frame on
      *
      * Returns true when the mesh accessor is available for {@link #findMesh}.
      *
@@ -265,12 +280,15 @@ public class YSMMeshLibrary {
         }
 
         JsonObject modelEntry = manifestEntry(modelId);
-        if (modelEntry != null && generatorVersionMatches()
-                && fingerprintMatches(modelId, modelEntry) && verifyModelOutputs(modelEntry)
-                && registerFromCache(modelId, modelEntry)) {
-            touch(modelId);
-            trimIfNeeded();
-            return true;
+        if (modelEntry != null) {
+            // Verify + restore from the on-disk cache on the background pool:
+            // hashing the mesh/runtime/texture outputs of a large model on the
+            // render thread caused a first-draw hitch of up to a second. Until
+            // the worker registers the accessor the caller falls back to the
+            // Epic Fight biped (same as the conversion path).
+            PENDING_MODELS.add(modelId);
+            LAZY_POOL.submit(() -> restoreModelAsync(modelId, modelEntry));
+            return false;
         }
 
         if (!YsmModelPackage.scanAvailableModels().containsKey(modelId)) {
@@ -281,6 +299,68 @@ public class YSMMeshLibrary {
         PENDING_MODELS.add(modelId);
         LAZY_POOL.submit(() -> convertModelAsync(modelId));
         return false;
+    }
+
+    /**
+     * Worker: verify the on-disk cache outputs of one model against the
+     * manifest and register the mesh from the verified cache (no decryption
+     * involved). Falls back to a full conversion when the cache does not
+     * verify (stale, broken or partially removed outputs).
+     */
+    private static void restoreModelAsync(String modelId, JsonObject modelEntry) {
+        int generation = LOAD_GENERATION.get();
+        boolean verified;
+        try {
+            verified = fingerprintMatches(modelId, modelEntry) && verifyModelOutputs(modelEntry);
+        } catch (Throwable t) {
+            verified = false;
+            YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: cache verification failed for '{}'", modelId, t);
+        }
+        // File I/O stays outside the class lock: reading the texture cache (and
+        // re-writing missing pack textures) can take tens of ms for large
+        // models, and the render thread takes the same lock in ensureModel.
+        Map<String, byte[]> textureBytes = new HashMap<>();
+        if (verified && modelEntry.has("textures") && modelEntry.get("textures").isJsonObject()) {
+            for (Map.Entry<String, JsonElement> texEntry : modelEntry.getAsJsonObject("textures").entrySet()) {
+                try {
+                    JsonObject tex = texEntry.getValue().getAsJsonObject();
+                    ResourceLocation rl = ResourceLocation.parse(tex.get("rl").getAsString());
+                    Path cacheFile = textureCachePath(rl);
+                    if (Files.isRegularFile(cacheFile)) {
+                        byte[] bytes = Files.readAllBytes(cacheFile);
+                        textureBytes.put(texEntry.getKey(), bytes);
+                        int format = tex.has("fmt") ? tex.get("fmt").getAsInt() : 0;
+                        writePackTexture(rl, bytes, format != 0
+                                ? new int[]{tex.has("w") ? tex.get("w").getAsInt() : 0,
+                                tex.has("h") ? tex.get("h").getAsInt() : 0, format} : null);
+                    }
+                } catch (Exception ignored) {
+                    // a missing/broken cached texture makes the registration skip
+                    // just that texture; the model itself still registers
+                }
+            }
+        }
+        synchronized (YSMMeshLibrary.class) {
+            if (generation != LOAD_GENERATION.get()) {
+                PENDING_MODELS.remove(modelId);
+                return;
+            }
+            if (verified && registerFromCache(modelId, modelEntry, textureBytes)) {
+                YSMRuntimeModel.invalidate(modelId);
+                touch(modelId);
+                trimIfNeeded();
+                PENDING_MODELS.remove(modelId);
+                return;
+            }
+            PENDING_MODELS.remove(modelId);
+        }
+        // Cache unusable: re-convert (queued like the lazy path).
+        if (YsmModelPackage.scanAvailableModels().containsKey(modelId)) {
+            PENDING_MODELS.add(modelId);
+            LAZY_POOL.submit(() -> convertModelAsync(modelId));
+        } else {
+            FAILED_MODELS.add(modelId);
+        }
     }
 
     /** Worker: convert one model off-thread and merge the result under the lock. */
@@ -393,7 +473,11 @@ public class YSMMeshLibrary {
      * Release everything of one model (mesh GL resources, uploaded textures,
      * compiled runtime scripts) and forget its registrations, so the next lookup
      * re-registers it from the verified cache. Returns true when something was
-     * released.
+     * released. The loaded mesh is also removed from Epic Fight's own private
+     * mesh cache (see {@link #takeFromEfMeshCache}) - it has no public removal
+     * API, so without this every evicted mesh instance (potentially several MB
+     * of vertex arrays) would stay referenced there until the next resource
+     * reload.
      */
     private static boolean evictModel(String modelId) {
         Meshes.MeshAccessor<YSMMesh> accessor = MESHES.remove(modelId);
@@ -401,14 +485,25 @@ public class YSMMeshLibrary {
             return false;
         }
         if (LOADED_MODELS.remove(modelId)) {
+            YSMMesh mesh;
             try {
-                YSMMesh mesh = accessor.get();
-                if (mesh != null) {
+                mesh = takeFromEfMeshCache(accessor);
+            } catch (Throwable t) {
+                YSMEpicFightCompat.LOGGER.warn(
+                        "YSM-EF Compat: Epic Fight mesh cache unreachable, releasing evicted model '{}' in place", modelId);
+                try {
+                    mesh = accessor.get();
+                } catch (Throwable ignored) {
+                    mesh = null;
+                }
+            }
+            if (mesh != null) {
+                try {
                     mesh.destroy();
                     com.ysmef.compat.gpu.YsmGpuRenderPath.disposeMesh(mesh);
+                } catch (Throwable t) {
+                    YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to release evicted model '{}'", modelId, t);
                 }
-            } catch (Throwable t) {
-                YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to release evicted model '{}'", modelId, t);
             }
         }
         java.util.List<ResourceLocation> toRelease = new java.util.ArrayList<>();
@@ -438,6 +533,36 @@ public class YSMMeshLibrary {
     }
 
     /**
+     * Remove the given accessor's loaded mesh instance from Epic Fight's private
+     * static mesh cache (Meshes#MESHES, keyed by the accessor with no public
+     * removal API) and return it, so the instance can be fully released. Returns
+     * null when the cache has no entry for the accessor (the mesh was already
+     * released by Epic Fight's own resource reload) and throws when the cache
+     * cannot be reached reflectively - the caller then falls back to destroying
+     * the mesh in place.
+     */
+    private static YSMMesh takeFromEfMeshCache(Meshes.MeshAccessor<?> accessor) {
+        java.lang.reflect.Field field;
+        try {
+            field = Meshes.class.getDeclaredField("MESHES");
+            field.setAccessible(true);
+        } catch (Throwable t) {
+            throw new IllegalStateException("Epic Fight mesh cache field unreachable", t);
+        }
+        Object map;
+        try {
+            map = field.get(null);
+        } catch (Throwable t) {
+            throw new IllegalStateException("Epic Fight mesh cache read failed", t);
+        }
+        if (!(map instanceof java.util.Map<?, ?>)) {
+            throw new IllegalStateException("Epic Fight mesh cache is not a map");
+        }
+        Object removed = ((java.util.Map<Object, Object>) map).remove(accessor);
+        return removed instanceof YSMMesh mesh ? mesh : null;
+    }
+
+    /**
      * The manifest entry of one model, or null when the manifest is missing,
      * predates the current generator version, or has no entry for the model.
      */
@@ -461,15 +586,6 @@ public class YSMMeshLibrary {
             return modelEntry;
         } catch (Exception e) {
             return null;
-        }
-    }
-
-    private static boolean generatorVersionMatches() {
-        try {
-            JsonObject manifest = JsonParser.parseString(Files.readString(MANIFEST, StandardCharsets.UTF_8)).getAsJsonObject();
-            return manifest.has("generator") && manifest.get("generator").getAsInt() == GENERATOR_VERSION;
-        } catch (Exception e) {
-            return false;
         }
     }
 
@@ -535,9 +651,12 @@ public class YSMMeshLibrary {
     /**
      * Register the mesh accessor and texture state of one model from the
      * verified cache (manifest entry + texture cache files), without touching
-     * the (encrypted) model packages.
+     * the (encrypted) model packages. In-memory only: the texture bytes were
+     * read (and the pack textures written) by the caller outside the class
+     * lock, so the render thread never blocks on file I/O while the lock is
+     * held by a worker.
      */
-    private static boolean registerFromCache(String modelId, JsonObject modelEntry) {
+    private static boolean registerFromCache(String modelId, JsonObject modelEntry, Map<String, byte[]> textureBytes) {
         try {
             String meshId = modelEntry.get("mesh").getAsString();
             Meshes.MeshAccessor<YSMMesh> accessor = Meshes.MeshAccessor.create(
@@ -549,7 +668,9 @@ public class YSMMeshLibrary {
                 for (Map.Entry<String, JsonElement> texEntry : modelEntry.getAsJsonObject("textures").entrySet()) {
                     JsonObject tex = texEntry.getValue().getAsJsonObject();
                     ResourceLocation rl = ResourceLocation.parse(tex.get("rl").getAsString());
-                    TEXTURE_LOCATIONS.put(modelId + "#" + texEntry.getKey(), rl);
+                    synchronized (TEXTURE_LOCATIONS) {
+                        TEXTURE_LOCATIONS.put(modelId + "#" + texEntry.getKey(), rl);
+                    }
                     int format = tex.has("fmt") ? tex.get("fmt").getAsInt() : 0;
                     if (format != 0) {
                         TEXTURE_INFO.put(rl.toString(), new int[]{
@@ -557,13 +678,9 @@ public class YSMMeshLibrary {
                                 tex.has("h") ? tex.get("h").getAsInt() : 0,
                                 format});
                     }
-                    Path cacheFile = textureCachePath(rl);
-                    if (Files.isRegularFile(cacheFile)) {
-                        byte[] bytes = Files.readAllBytes(cacheFile);
+                    byte[] bytes = textureBytes.get(texEntry.getKey());
+                    if (bytes != null) {
                         TEXTURE_DATA.put(rl.toString(), bytes);
-                        writePackTexture(rl, bytes, format != 0
-                                ? new int[]{tex.has("w") ? tex.get("w").getAsInt() : 0,
-                                tex.has("h") ? tex.get("h").getAsInt() : 0, format} : null);
                     }
                 }
             }
@@ -591,7 +708,9 @@ public class YSMMeshLibrary {
      */
     private static void registerModelResult(ModelResult result) {
         for (TextureEntry tex : result.textures()) {
-            TEXTURE_LOCATIONS.put(result.modelId() + "#" + tex.textureName(), tex.location());
+            synchronized (TEXTURE_LOCATIONS) {
+                TEXTURE_LOCATIONS.put(result.modelId() + "#" + tex.textureName(), tex.location());
+            }
             TEXTURE_DATA.put(tex.location().toString(), tex.data());
             if (tex.info() != null) {
                 TEXTURE_INFO.put(tex.location().toString(), tex.info());
@@ -635,8 +754,12 @@ public class YSMMeshLibrary {
     /**
      * Merge one model's manifest entry into the manifest on disk, preserving
      * every other model's entry (the lazy path converts models independently).
+     * Synchronized: restore workers (fingerprintMatches sig refreshes) and
+     * conversion workers (registerModelResult) rewrite the whole manifest and
+     * must not interleave; the lock is reentrant for callers already holding
+     * the YSMMeshLibrary monitor.
      */
-    private static void updateManifestModel(String modelId, JsonObject modelEntry) {
+    private static synchronized void updateManifestModel(String modelId, JsonObject modelEntry) {
         try {
             JsonObject manifestModels = new JsonObject();
             if (Files.isRegularFile(MANIFEST)) {
@@ -662,10 +785,33 @@ public class YSMMeshLibrary {
      */
     public static synchronized void invalidateAll() {
         LOAD_GENERATION.incrementAndGet();
+        // Release every loaded mesh from Epic Fight's own mesh cache too (its
+        // key is our accessor, which is dropped below): without this the mesh
+        // instances and their compute buffers stay referenced until Epic
+        // Fight's next resource reload - which never runs on "/ysm model
+        // reload" - so each invalidation would leak one mesh per loaded model.
+        // On F3+T this is idempotent with Epic Fight's own reload: whichever
+        // runs first removes the entry, the other finds nothing to release.
+        for (Meshes.MeshAccessor<YSMMesh> accessor : java.util.List.copyOf(MESHES.values())) {
+            YSMMesh mesh;
+            try {
+                mesh = takeFromEfMeshCache(accessor);
+            } catch (Throwable ignored) {
+                continue;
+            }
+            if (mesh != null) {
+                try {
+                    mesh.destroy();
+                } catch (Throwable ignored) {
+                }
+            }
+        }
         MESHES.clear();
         TEXTURE_DATA.clear();
         TEXTURE_INFO.clear();
-        TEXTURE_LOCATIONS.clear();
+        synchronized (TEXTURE_LOCATIONS) {
+            TEXTURE_LOCATIONS.clear();
+        }
         UPLOADED_TEXTURES.clear();
         TEXTURE_TRANSLUCENT.clear();
         FAILED_MODELS.clear();
@@ -679,6 +825,7 @@ public class YSMMeshLibrary {
         LOADED_MODELS.clear();
         com.ysmef.compat.gpu.YsmGpuRenderPath.disposeAll();
         YSMRuntimeModel.invalidateAll();
+        com.ysmef.compat.model.runtime.YsmBindArmature.invalidateAll();
     }
 
     /**
@@ -778,8 +925,10 @@ public class YSMMeshLibrary {
         TEXTURE_DATA.putAll(newTexData);
         TEXTURE_INFO.clear();
         TEXTURE_INFO.putAll(newTexInfo);
-        TEXTURE_LOCATIONS.clear();
-        TEXTURE_LOCATIONS.putAll(newTexLocations);
+        synchronized (TEXTURE_LOCATIONS) {
+            TEXTURE_LOCATIONS.clear();
+            TEXTURE_LOCATIONS.putAll(newTexLocations);
+        }
         UPLOADED_TEXTURES.clear();
 
         cleanupStaleFiles(manifestModels);
@@ -829,7 +978,11 @@ public class YSMMeshLibrary {
             long runtimeSize = Files.size(runtimeFile);
 
             return new ModelResult(modelId, meshId, quads, YsmModelPackage.fingerprint(modelId),
-                    YsmModelPackage.contentFingerprint(modelId), defaultTextureRL,
+                    // Precomputed during the package load (the same FNV-1a over
+                    // the decrypted payload) - avoid decrypting the whole package
+                    // a second time just for the manifest.
+                    pkg.contentFingerprint != -1L ? pkg.contentFingerprint : YsmModelPackage.contentFingerprint(modelId),
+                    defaultTextureRL,
                     meshHash, meshSize, runtimeHash, runtimeSize, textures);
         } catch (Exception e) {
             YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to convert model {}", modelId, e);
@@ -1072,15 +1225,17 @@ public class YSMMeshLibrary {
      */
     public static ResourceLocation findTexture(String modelId, String textureName) {
         ensureModel(modelId);
-        ResourceLocation rl = TEXTURE_LOCATIONS.get(modelId + "#" + textureName);
-        if (rl == null) {
-            for (Map.Entry<String, ResourceLocation> entry : TEXTURE_LOCATIONS.entrySet()) {
-                if (entry.getKey().startsWith(modelId + "#")) {
-                    return entry.getValue();
+        synchronized (TEXTURE_LOCATIONS) {
+            ResourceLocation rl = TEXTURE_LOCATIONS.get(modelId + "#" + textureName);
+            if (rl == null) {
+                for (Map.Entry<String, ResourceLocation> entry : TEXTURE_LOCATIONS.entrySet()) {
+                    if (entry.getKey().startsWith(modelId + "#")) {
+                        return entry.getValue();
+                    }
                 }
             }
+            return rl;
         }
-        return rl;
     }
 
     /**
@@ -1110,7 +1265,11 @@ public class YSMMeshLibrary {
                 if (image == null) {
                     UPLOADED_TEXTURES.put(key, Boolean.TRUE);
                 } else {
-                    COMPLETED_UPLOADS.add(new TextureUploadTask(rl, image));
+                    // The translucency scan runs here (decode worker thread), not
+                    // on the render thread: the per-frame upload drain has a small
+                    // time budget and must not spend it scanning millions of pixels.
+                    boolean translucent = hasTranslucentPixels(image);
+                    COMPLETED_UPLOADS.add(new TextureUploadTask(rl, image, translucent));
                     Minecraft.getInstance().execute(YSMMeshLibrary::processPendingTextureUploads);
                 }
             } catch (Throwable t) {
@@ -1136,7 +1295,7 @@ public class YSMMeshLibrary {
             }
             String key = task.location().toString();
             PENDING_RELEASES.remove(key);
-            TEXTURE_TRANSLUCENT.put(key, hasTranslucentPixels(task.image()));
+            TEXTURE_TRANSLUCENT.put(key, task.translucent());
             Minecraft.getInstance().getTextureManager().register(task.location(), new DynamicTexture(task.image()));
             UPLOADED_TEXTURES.put(key, Boolean.TRUE);
             if (System.nanoTime() > deadline) {
@@ -1172,6 +1331,17 @@ public class YSMMeshLibrary {
     }
 
     /**
+     * Whether the texture was fully uploaded to the texture manager (its GL
+     * texture id is valid). Textures still decoding/uploading asynchronously
+     * must not be bound by the GPU path - their GL id is not ready yet and
+     * binding it would draw the mesh untextured (white) for a frame or two;
+     * the caller falls back to Epic Fight's render path in the meantime.
+     */
+    public static boolean isTextureUploaded(ResourceLocation rl) {
+        return rl != null && UPLOADED_TEXTURES.containsKey(rl.toString());
+    }
+
+    /**
      * Whether the model texture has translucent pixels (any alpha below 253),
      * driving the GPU path's second (blended) draw pass. Unknown textures are
      * treated as opaque.
@@ -1183,18 +1353,18 @@ public class YSMMeshLibrary {
         return Boolean.TRUE.equals(TEXTURE_TRANSLUCENT.get(rl.toString()));
     }
 
-    /** One-time scan of the decoded texture for translucent pixels (alpha < 253). */
+    /**
+     * One-time full scan of the decoded texture for translucent pixels
+     * (alpha &lt; 253). Runs on the texture decode worker thread (see
+     * ensureTextureUploaded) - every pixel is checked, because a strided
+     * sampling misses small translucent regions (hair strands, gradients) and
+     * the GPU path's first pass then discards them (alphaMode == 1).
+     */
     private static boolean hasTranslucentPixels(NativeImage image) {
         int width = image.getWidth();
         int height = image.getHeight();
-        // large textures: sample a strided grid instead of every pixel
-        long pixels = (long) width * height;
-        int stride = 1;
-        if (pixels > 1_048_576) {
-            stride = (int) Math.ceil(Math.sqrt(pixels / 262_144.0));
-        }
-        for (int y = 0; y < height; y += stride) {
-            for (int x = 0; x < width; x += stride) {
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
                 if (((image.getPixelRGBA(x, y) >>> 24) & 0xFF) < 253) {
                     return true;
                 }

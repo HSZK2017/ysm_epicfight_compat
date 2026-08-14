@@ -57,10 +57,16 @@ public final class YsmGpuMesh {
      * Cached SSBO section for the mesh parts (indices jointCount..). In Epic
      * Fight battle mode the parts carry no runtime transforms (all identity
      * deltas) and their hidden flags are static, so this section is uploaded to
-     * the GPU only once and only the joint matrices change per frame.
+     * the GPU only once and only the joint matrices change per frame. Outside
+     * battle mode the section is re-uploaded when any part's transform or
+     * hidden flag changes - including a transform fading back to identity
+     * (cachedPartIdentity), so a finished animation cannot freeze the GPU on
+     * its last non-identity delta.
      */
     private final ByteBuffer partSectionCache;
     private final boolean[] cachedPartHidden;
+    /** Whether the part entry last uploaded to the SSBO was an identity transform. */
+    private final boolean[] cachedPartIdentity;
     private boolean partSectionValid = false;
 
     private boolean disposed = false;
@@ -76,6 +82,8 @@ public final class YsmGpuMesh {
         this.perFrameBoneBuffer = perFrameBoneBuffer;
         this.partSectionCache = MemoryUtil.memAlloc(jointOfPart.length * BONE_STRIDE).order(ByteOrder.nativeOrder());
         this.cachedPartHidden = new boolean[jointOfPart.length];
+        this.cachedPartIdentity = new boolean[jointOfPart.length];
+        java.util.Arrays.fill(this.cachedPartIdentity, true);
     }
 
     public ByteBuffer partSectionCache() {
@@ -84,6 +92,10 @@ public final class YsmGpuMesh {
 
     public boolean[] cachedPartHidden() {
         return cachedPartHidden;
+    }
+
+    public boolean[] cachedPartIdentity() {
+        return cachedPartIdentity;
     }
 
     public boolean partSectionValid() {

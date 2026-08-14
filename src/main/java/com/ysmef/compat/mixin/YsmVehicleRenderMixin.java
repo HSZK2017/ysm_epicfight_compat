@@ -21,7 +21,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 public abstract class YsmVehicleRenderMixin {
 
     @Inject(method = "Oo0Oo0o00O00Oo0OOoOOoooo(Lnet/minecraft/world/entity/Entity;FFLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;I)Z",
-            at = @At("HEAD"), cancellable = true)
+            at = @At("HEAD"), cancellable = true, require = 0)
     private static void ysmef$suppressYsmVehicleInBattleMode(Entity entity, float entityYaw, float partialTick,
                                                              PoseStack poseStack, MultiBufferSource buffer, int packedLight,
                                                              CallbackInfoReturnable<Boolean> cir) {

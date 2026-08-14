@@ -3,7 +3,7 @@ package com.ysmef.compat.model;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.ysmef.compat.gpu.YsmGpuRenderPath;
 import com.ysmef.compat.model.runtime.YSMRuntimeBridge;
-import net.minecraft.client.Minecraft;
+import com.ysmef.compat.model.runtime.YsmBindArmature;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.resources.ResourceLocation;
@@ -146,6 +146,27 @@ public class YSMMesh extends HumanoidMesh {
     public void draw(PoseStack poseStack, MultiBufferSource bufferSources, RenderType renderType,
                      Mesh.DrawingFunction drawingFunction, int packedLight, float r, float g, float b, float a,
                      int overlay, @Nullable Armature armature, OpenMatrix4f[] poses) {
+        // 体型适配：Epic Fight 的战斗动画围绕绑定姿势（Steve 体型）的关节旋转，
+        // 而转换后的 YSM 网格按自身关节轴心刚性蒙皮，挥砍时四肢会绕 Steve 的
+        // 关节位置旋转导致与身体分离。这里将动画姿势重新求值到该模型自己的
+        // YSM 绑定骨架（关节平移来自 YSM 骨骼 pivot，旋转帧与拓扑不变），使
+        // 旋转轴心落在模型的真实关节上；绑定姿势不变式（pose x toOrigin = I）
+        // 保证静止形态不受影响。仅当 poses 是当前 armature 的实时姿势矩阵时
+        // 才生效（EntitySnapshot 等快照路径传独立数组，保持原样）。
+        boolean rebindApplied = false;
+        if (this.runtimeModelId != null && armature != null && poses != null
+                && poses == armature.getPoseMatrices()) {
+            yesman.epicfight.api.animation.Pose captured = YsmBindArmature.findPose(armature);
+            if (captured != null) {
+                yesman.epicfight.model.armature.HumanoidArmature bind = YsmBindArmature.getArmature(this.runtimeModelId, this);
+                if (bind != null) {
+                    bind.setPose(captured);
+                    armature = bind;
+                    poses = bind.getPoseMatrices();
+                    rebindApplied = true;
+                }
+            }
+        }
         // 防御：EntitySnapshot（残影/特效快照）捕获时的 poseMatrices 基于当时的
         // armature 生成；若女仆在战斗中切换武器（EFTLM 按物品切换 armature），
         // 渲染时 armature 关节数变小，poses 比关节多，Epic Fight 的 compute 路径
@@ -155,12 +176,8 @@ public class YSMMesh extends HumanoidMesh {
             poses = java.util.Arrays.copyOf(poses, armature.getJointNumber());
         }
         boolean maidEntity = isMaidEntity();
-        if (Minecraft.getInstance().screen != null) {
-            logPreviewDrawOnce(maidEntity, renderType);
-        }
         YSMRuntimeBridge.apply(this, armature, poses);
         ResourceLocation texture = resolveTexture();
-        logDrawDiagOnce(texture);
         // EpicFight_TouhouLittleMaid renders maids through its MaidPatch with a
         // built-in 0.8 model-matrix scale (MaidPatch#getModelMatrix), tuned for
         // its own maid-sized meshes (~1.37 blocks tall). Our converted YSM meshes
@@ -178,6 +195,7 @@ public class YSMMesh extends HumanoidMesh {
             // to Epic Fight's compute-shader path automatically when unavailable.
             if (texture != null && YsmGpuRenderPath.tryRender(this, poseStack, bufferSources, texture,
                     packedLight, r, g, b, a, overlay, armature, poses)) {
+                logDrawDiagOnce(runtimeModelId, armature, poses, rebindApplied, maidEntity, "gpu", poseStack);
                 return;
             }
             RenderType finalRenderType = texture != null
@@ -185,6 +203,7 @@ public class YSMMesh extends HumanoidMesh {
                     : renderType;
             drawWithPreferredPath(poseStack, bufferSources, finalRenderType, drawingFunction,
                     packedLight, r, g, b, a, overlay, armature, poses);
+            logDrawDiagOnce(runtimeModelId, armature, poses, rebindApplied, maidEntity, "compute", poseStack);
         } finally {
             if (maidEntity) {
                 poseStack.popPose();
@@ -192,28 +211,61 @@ public class YSMMesh extends HumanoidMesh {
         }
     }
 
+    /** Once per model: which render path draws it and with which armature/pose data. */
+    private static final Set<String> DIAG_MESH_DRAW = ConcurrentHashMap.newKeySet();
+
+    private static void logDrawDiagOnce(String modelId, Armature armature, OpenMatrix4f[] poses,
+                                        boolean rebindApplied, boolean maidEntity, String path, PoseStack poseStack) {
+        String key = (modelId == null ? "n/a" : modelId) + "|" + path + "|" + maidEntity;
+        if (!DIAG_MESH_DRAW.add(key)) {
+            return;
+        }
+        // Bound of the pose translations feeding the skinning: a runaway value
+        // here (>> model height) is exactly what a "stretched" model looks like.
+        float maxPoseTranslation = 0.0f;
+        if (poses != null) {
+            for (OpenMatrix4f pose : poses) {
+                if (pose == null) {
+                    continue;
+                }
+                maxPoseTranslation = Math.max(maxPoseTranslation,
+                        Math.max(Math.abs(pose.m30), Math.max(Math.abs(pose.m31), Math.abs(pose.m32))));
+            }
+        }
+        // Translation state of the poseStack at the mesh draw vs the entity's real
+        // camera offset: the GPU path reconstructs the world transform from these,
+        // and a mismatch (poseStack translation 0 while the entity is blocks away)
+        // is exactly what renders the mesh at the camera - stretched/invisible.
+        net.minecraft.world.entity.LivingEntity entity = YSMRuntimeBridge.getCurrentEntity();
+        float poseStackTranslationLen = -1.0f;
+        double entityCameraDist = -1.0d;
+        if (poseStack != null) {
+            org.joml.Matrix4f top = poseStack.last().pose();
+            poseStackTranslationLen = (float) Math.sqrt(
+                    (double) top.m03() * top.m03() + (double) top.m13() * top.m13() + (double) top.m23() * top.m23());
+        }
+        if (entity != null && entity.level() != null && net.minecraft.client.Minecraft.getInstance().gameRenderer != null) {
+            net.minecraft.world.phys.Vec3 cam = net.minecraft.client.Minecraft.getInstance().gameRenderer.getMainCamera().getPosition();
+            double dx = entity.getX() - cam.x;
+            double dy = entity.getY() - cam.y;
+            double dz = entity.getZ() - cam.z;
+            entityCameraDist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        }
+        com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
+                "YSM-EF Compat: [diag] mesh draw: model={} path={} maid={} entity={} armature={} joints={} poses={} rebind={} maxPoseTranslation={} poseStackTranslationLen={} entityCameraDist={}",
+                modelId, path, maidEntity,
+                entity != null ? entity.getClass().getSimpleName() : "null",
+                armature != null ? armature.getClass().getName() : "null",
+                armature != null ? armature.getJointNumber() : -1,
+                poses != null ? poses.length : -1, rebindApplied, maxPoseTranslation,
+                String.format("%.2f", poseStackTranslationLen), String.format("%.2f", entityCameraDist));
+    }
+
     /**
      * The inverse of EpicFight_TouhouLittleMaid's built-in maid scale
      * (MaidPatch#getModelMatrix, 0.8F). Update this if EFTLM changes it.
      */
     private static final float MAID_SCALE_COMPENSATION = 1.0f / 0.8f;
-
-    private static volatile boolean PREVIEW_DIAG_LOGGED;
-
-    /** One-time diagnostic: what the mesh draws with while a GUI screen is open. */
-    private static void logPreviewDrawOnce(boolean maidEntity, RenderType renderType) {
-        if (PREVIEW_DIAG_LOGGED) {
-            return;
-        }
-        PREVIEW_DIAG_LOGGED = true;
-        LivingEntity entity = YSMRuntimeBridge.getCurrentEntity();
-        org.joml.Matrix4f proj = com.mojang.blaze3d.systems.RenderSystem.getProjectionMatrix();
-        com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
-                "YSM-EF Compat: [diag] mesh draw with screen open: entity={} maid={} projection=({},{},{},{}) m30={} m31={} renderType={}",
-                entity == null ? "null" : entity.getClass().getSimpleName(), maidEntity,
-                proj.m00(), proj.m11(), proj.m22(), proj.m33(), proj.m30(), proj.m31(),
-                renderType);
-    }
 
     private static volatile Boolean TLM_PRESENT;
 
@@ -293,27 +345,5 @@ public class YSMMesh extends HumanoidMesh {
         } catch (Throwable t) {
             return null;
         }
-    }
-
-    private static final Set<String> DIAG_DRAW_LOGGED = ConcurrentHashMap.newKeySet();
-
-    /** One-time per model: part counts and the resolved texture at first draw. */
-    private void logDrawDiagOnce(ResourceLocation texture) {
-        if (this.runtimeModelId == null || !DIAG_DRAW_LOGGED.add(this.runtimeModelId)) {
-            return;
-        }
-        int hidden = 0;
-        int boneParts = 0;
-        for (Map.Entry<String, MeshPart> entry : getPartEntrySetSafe()) {
-            if (entry.getKey().startsWith(EFMeshJsonWriter.BONE_PART_PREFIX)) {
-                boneParts++;
-                if (entry.getValue().isHidden()) {
-                    hidden++;
-                }
-            }
-        }
-        com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
-                "YSM-EF Compat: [diag] draw model='{}' boneParts={} hiddenAtFirstDraw={} texture='{}'",
-                this.runtimeModelId, boneParts, hidden, texture);
     }
 }

@@ -13,8 +13,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * (onRenderPlayerPre(Player, float, PoseStack, MultiBufferSource, int) -> boolean;
  * the Forge hook cancels the vanilla render when it returns true). In Epic
  * Fight battle mode the compat returns false, so the vanilla render proceeds
- * and the Epic Fight patched renderer (YSMPlayerRenderer / YSMRenderHook) draws
- * the converted YSM mesh instead of ModernYSM's own model renderer.
+ * and YSMRenderHook draws the converted YSM mesh through the Epic Fight
+ * pipeline (YSMPlayerRenderer) instead of ModernYSM's own model renderer.
  *
  * The old event-handler signature is handled by OpenYsmPlayerRenderMixin; both
  * injections are non-critical (require = 0), so only the signature the loaded
