@@ -11,14 +11,15 @@ import java.util.function.IntConsumer;
 import java.util.stream.Collectors;
 
 /**
- * GLSL compile/link helpers for the GPU skinning path (ported from ModernYSM's
- * ShaderUtil). Shaders live in the mod jar as classpath resources.
+ * GLSL compile/link helpers shared by the GPU skinning path (ported from
+ * ModernYSM's ShaderUtil) and the CPU skinning path. Shaders live in the mod
+ * jar as classpath resources.
  */
-final class GpuShaderUtil {
+public final class GpuShaderUtil {
 
     private GpuShaderUtil() {}
 
-    static String loadResource(String path) throws IOException {
+    public static String loadResource(String path) throws IOException {
         try (InputStream in = GpuShaderUtil.class.getResourceAsStream(path)) {
             if (in == null) {
                 throw new IOException("shader resource not found: " + path);
@@ -29,7 +30,7 @@ final class GpuShaderUtil {
         }
     }
 
-    static int compileShader(int glType, String src, String name) {
+    public static int compileShader(int glType, String src, String name) {
         int sh = GL20.glCreateShader(glType);
         GL20.glShaderSource(sh, src);
         GL20.glCompileShader(sh);
@@ -41,11 +42,11 @@ final class GpuShaderUtil {
         return sh;
     }
 
-    static int compileShaderFromResource(int glType, String resourcePath) throws IOException {
+    public static int compileShaderFromResource(int glType, String resourcePath) throws IOException {
         return compileShader(glType, loadResource(resourcePath), resourcePath);
     }
 
-    static int linkProgramWith(IntConsumer preLink, int... shaderIds) {
+    public static int linkProgramWith(IntConsumer preLink, int... shaderIds) {
         int prog = GL20.glCreateProgram();
         for (int sh : shaderIds) {
             GL20.glAttachShader(prog, sh);

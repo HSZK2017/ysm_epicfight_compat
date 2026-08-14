@@ -142,6 +142,15 @@ public class YSMMesh extends HumanoidMesh {
         return null;
     }
 
+    /**
+     * The texture this mesh draws with (the per-frame override, or the mesh
+     * JSON's render_properties texture). Used by the CPU skinning path to bind
+     * the model texture directly.
+     */
+    public ResourceLocation getResolvedTexture() {
+        return resolveTexture();
+    }
+
     @Override
     public void draw(PoseStack poseStack, MultiBufferSource bufferSources, RenderType renderType,
                      Mesh.DrawingFunction drawingFunction, int packedLight, float r, float g, float b, float a,
@@ -295,20 +304,37 @@ public class YSMMesh extends HumanoidMesh {
      * flipping use_compute_shader reproduces/removes the artifact). The
      * compute-shader path renders the same part data correctly, so it is used
      * whenever the mesh has a compute setup, regardless of the config. Without
-     * a compute setup (unsupported GPU) the CPU path is kept as a fallback.
+     * a compute setup (unsupported GPU) the drawPosed fallback is reached, where
+     * SkinnedMeshCpuRenderMixin substitutes this mod's CPU skinning render path
+     * (CPU skin -> dynamic VBO -> cpu_skin shader) - see YsmCpuRenderPath. The
+     * ysm_ef_compat.force_cpu_render system property skips the compute shader
+     * even when available, so the CPU path can be verified on capable hardware.
      */
     private void drawWithPreferredPath(PoseStack poseStack, MultiBufferSource bufferSources, RenderType renderType,
                                        Mesh.DrawingFunction drawingFunction, int packedLight,
                                        float r, float g, float b, float a, int overlay,
                                        @Nullable Armature armature, OpenMatrix4f[] poses) {
         yesman.epicfight.client.renderer.shader.compute.ComputeShaderSetup setup = computeShaderSetup();
-        if (setup != null) {
+        if (setup != null && !com.ysmef.compat.cpu.YsmCpuRenderPath.isForced()) {
             setup.drawWithShader(this, poseStack, bufferSources, renderType,
                     packedLight, r, g, b, a, overlay, armature, poses);
             return;
         }
         logCpuFallbackOnce();
-        this.drawPosed(poseStack, bufferSources.getBuffer(EpicFightRenderTypes.getTriangulated(renderType)),
+        // Root cause of the original CPU-path missing faces: EpicFightRenderTypes
+        // keeps ONE cache (TRIANGLED_RENDERTYPES_BY_NAME_TEXTURE) shared by
+        // getTriangulated / addRenderType / replaceTexture. replaceTexture writes
+        // the texture-replaced render type - with the ORIGINAL mode, QUADS for
+        // vanilla entity render types - into that cache (L552-553), and the later
+        // getTriangulated call hits the cache (L83-84) and returns the QUADS type
+        // as-is. drawPosed then writes triangle-triplet vertices into a QUADS-mode
+        // BufferBuilder, so the upload regroups every 4 vertices as a quad and
+        // faces scramble/disappear. The compute path is immune because it draws
+        // with a hardcoded glDrawArrays(TRIANGLES). makeTriangulated is the
+        // cache-independent triangulator (already-TRIANGLES types pass through),
+        // so the final Epic Fight drawPosed fallback receives a proper TRIANGLES
+        // render type and renders the converted meshes completely.
+        this.drawPosed(poseStack, bufferSources.getBuffer(EpicFightRenderTypes.makeTriangulated(renderType)),
                 drawingFunction, packedLight, r, g, b, a, overlay, armature, poses);
     }
 
@@ -317,7 +343,9 @@ public class YSMMesh extends HumanoidMesh {
     private static void logCpuFallbackOnce() {
         if (DIAG_CPU_FALLBACK_LOGGED.add("cpu-fallback")) {
             com.ysmef.compat.YSMEpicFightCompat.LOGGER.warn(
-                    "YSM-EF Compat: no compute shader setup available, falling back to the CPU skinning path (converted meshes may render incompletely)");
+                    "YSM-EF Compat: no compute shader setup available, using the CPU skinning path "
+                            + "(SkinnedMeshCpuRenderMixin substitutes this mod's CPU renderer; "
+                            + "Epic Fight's drawPosed remains the final fallback)");
         }
     }
 
