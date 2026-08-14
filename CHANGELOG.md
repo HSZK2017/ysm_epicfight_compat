@@ -1,5 +1,51 @@
 # 更新日志 / Changelog
 
+## v1.5.1 — 2026-08
+
+### 中文
+
+#### 新增
+
+- **CPU 蒙皮渲染路径（无需计算着色器）**：新增 `com.ysmef.compat.cpu` 渲染包——每帧 CPU 逐顶点蒙皮（蒙皮乘积 `(pose×toOrigin×partDelta)×bindPos` 与 EF 计算着色器 / GPU 路径逐项一致，并支持多关节加权，不限于刚性单关节顶点），poseStack 在 CPU 端应用（与 EF drawPosed 相同契约），顶点流式写入每网格复用的动态 VBO，整模型单次 `glDrawArrays(GL_TRIANGLES)` 绘制。桌面仅需 OpenGL 3.3、Android 仅需 OpenGL ES 3.0（无 SSBO、无计算着色器），低内存占用（每网格 24B/顶点 VBO + 复用缓冲，每帧零分配），适配 <2G 内存与老旧 GPU 等极端工况
+- **CPU 回退 mixin**：`SkinnedMeshCpuRenderMixin` 在 EF `SkinnedMesh#drawPosed` 入口拦截——EF 渲染管线回退到 CPU 渲染着色器时，YSM 转换网格改走本模组 CPU 蒙皮路径；路径不可用时（光影包激活等）原样执行 EF 原路径，不影响任何其他网格或渲染通道
+- **CPU 路径覆盖范围**：GUI 模型预览、TLM 女仆等 GPU 路径无法重建相机矩阵的场景同样由 CPU 路径接管（无 poseStack 平移门控）
+- **回退链验证开关**：系统属性 `-Dysm_ef_compat.force_cpu_render=true` 强制跳过 EF 计算着色器、始终走 CPU 蒙皮路径，便于在支持计算着色器的硬件上验证回退链
+
+#### 修复
+
+- **修复 CPU 路径缺面（根因）**：EF `EpicFightRenderTypes.replaceTexture` 与 `getTriangulated` 共享渲染类型缓存，QUADS 模式实体渲染类型污染缓存，导致 `getTriangulated` 返回未三角化的渲染类型；drawPosed 把 688 个三角形顶点按"每 4 顶点一个 quad"重新分组绘制 → 视觉缺面。现改用缓存无关的 `makeTriangulated`，EF 原始 drawPosed 路径本身也渲染完整
+- **消除"计算着色器不可用即缺面"**：无计算着色器 GPU 上的渲染不再缺面（此前 CPU 回退告警 "converted meshes may render incompletely" 的根因已修复，且默认改走本模组 CPU 蒙皮路径）
+- 修复 CPU 蒙皮法线未归一化导致的光照不一致（EF drawPosed 不归一化法线；本模组 CPU 路径对蒙皮后法线归一化）
+
+#### 兼容性
+
+- **旧 GPU / 集成显卡**：桌面 GL 3.3+ 或 OpenGL ES 3.0+ 即获得完整 CPU 蒙皮渲染；macOS（GL 4.1 无计算着色器）不再受限
+- **Iris / Oculus 光影包**：GPU 路径与 CPU 蒙皮路径让位 EF 计算路径（内建 Iris 支持）；计算着色器不可用时由三角化已修复的 drawPosed 兜底
+
+---
+
+### English
+
+#### Added
+
+- **CPU skinning render path (works without compute shaders)**: new `com.ysmef.compat.cpu` package — per-frame CPU vertex skinning (the `(pose×toOrigin×partDelta)×bindPos` product matches Epic Fight's compute shader / GPU path exactly, multi-joint weights supported beyond the rigid single-joint assumption), the poseStack applied on the CPU (same contract as EF's drawPosed), vertices streamed into a reused per-mesh dynamic VBO, the whole model drawn in one `glDrawArrays(GL_TRIANGLES)`. Needs only desktop OpenGL 3.3 / OpenGL ES 3.0 on Android (no SSBO, no compute shader), tiny memory footprint (24 B/vertex VBO + reused buffer per mesh, zero per-frame allocations) — suited for <2 GB RAM machines and old GPUs
+- **CPU fallback mixin**: `SkinnedMeshCpuRenderMixin` hooks the head of EF `SkinnedMesh#drawPosed` — whenever Epic Fight's pipeline falls back to its CPU rendering shader, converted YSM meshes take this mod's CPU skinning path instead; when the path declines (shader packs, ...) the original drawPosed runs unchanged, so no other mesh or render pass is affected
+- **CPU path coverage**: GUI model previews, TLM maids and other cases where the GPU path cannot rebuild the camera matrix are covered too (no poseStack translation gate)
+- **Fallback-chain test switch**: system property `-Dysm_ef_compat.force_cpu_render=true` skips Epic Fight's compute shader and always uses the CPU skinning path, for verifying the fallback chain on compute-capable hardware
+
+#### Fixed
+
+- **Fixed the CPU-path missing faces (root cause)**: EF's `EpicFightRenderTypes.replaceTexture` and `getTriangulated` share a render-type cache; QUADS-mode entity render types pollute that cache, so `getTriangulated` returned a non-triangulated render type and drawPosed regrouped 688 triangle vertices as "4 vertices per quad" → visually missing faces. The fallback now uses the cache-independent `makeTriangulated`, so Epic Fight's original drawPosed path also renders completely
+- **No more "missing faces whenever compute shaders are unavailable"**: rendering on compute-less GPUs is now complete (the root cause behind the old "converted meshes may render incompletely" warning is fixed, and the default is now this mod's CPU skinning path)
+- Fixed CPU-skinning lighting inconsistency from unnormalized normals (EF's drawPosed does not normalize; this mod's CPU path normalizes the skinned normals)
+
+#### Compatibility
+
+- **Old GPUs / integrated graphics**: complete CPU skinning on desktop GL 3.3+ or OpenGL ES 3.0+; macOS (GL 4.1, no compute shaders) is no longer restricted
+- **Iris / Oculus shader packs**: the GPU path and the CPU skinning path yield to Epic Fight's compute path (built-in Iris support); without compute shaders, the triangulation-fixed drawPosed takes over
+
+---
+
 ## v1.5.0 — 2026-08
 
 ### 中文

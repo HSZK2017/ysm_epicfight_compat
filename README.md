@@ -13,7 +13,7 @@
 | 特性 | 说明 |
 |---|---|
 | **运行时网格转换** | YSM Bedrock 几何（目录包 / 加密 .ysm 二进制包）→ EF SkinnedMesh JSON + 运行时脚本 JSON，懒转换（后台池），manifest 指纹 + SHA-256 校验缓存 |
-| **GPU 蒙皮渲染** | ModernYSM 风格骨骼蒙皮路径（骨 SSBO + 皮肤着色器，单次 draw call），自动回退 EF 计算着色器路径 / CPU 路径 |
+| **GPU 蒙皮渲染** | ModernYSM 风格骨骼蒙皮路径（骨 SSBO + 皮肤着色器，单次 draw call），自动回退 EF 计算着色器路径 / 本模组 CPU 蒙皮路径（无需计算着色器，无缺面） |
 | **GPU 开关联动** | ModernYSM 加载时链接其 `UseGpuRenderer`/`UseCompatibilityRenderer` 同步开关；OpenYSM/LegacyYSM 使用本模组配置，并可在 YSM 模型选择界面勾选 |
 | **Molang 运行时** | 每玩家脚本求值：平行（变体可见性）、状态（idle/walk/...）、条件（hold/use/vehicle）动画，LOD 距离降频，异步求值 |
 | **懒加载与 LRU** | 模型按需转换、验证缓存恢复、LRU 淘汰（GPU 缓冲/纹理/脚本整体释放）、世代废弃任务 |
@@ -47,9 +47,11 @@
                                            YSMMeshLibrary（懒转换 + 缓存恢复 + LRU）
                                                      │
                                                      ▼
-                                           渲染：YsmGpuRenderPath（GPU 蒙皮）
+                                           渲染：YsmGpuRenderPath（GPU 蒙皮，GL 4.3+ / GLES 3.1+）
                                              → EF 计算着色器路径（回退）
-                                             → CPU 路径（最后回退）
+                                             → YsmCpuRenderPath（CPU 蒙皮，GL 3.3+ / GLES 3.0+，
+                                               mixin 拦截 EF drawPosed 回退，无缺面）
+                                             → EF drawPosed（最后回退，三角化已修复）
 ```
 
 ---
@@ -94,6 +96,14 @@
 | `YsmGpuCapability` | GL 能力探测（桌面 SSBO/420pack/显式属性位置/2_10_10_10，**Android OpenGL ES 3.1**），失败自动回退 |
 | `YsmGpuRenderEnable` | **YSM 分支检测 + GPU 开关联动**（见下节） |
 
+### CPU 渲染 (`com.ysmef.compat.cpu`)
+
+| 类 | 职责 |
+|---|---|
+| `YsmCpuRenderPath` | CPU 蒙皮路径：每帧 CPU 逐顶点蒙皮（`(pose×toOrigin×partDelta)×bindPos` 加权和，与 EF 计算着色器逐项一致，支持多关节权重），poseStack 在 CPU 端应用（EF drawPosed 同款契约），顶点流式写入复用动态 VBO，整模型单次 `glDrawArrays(GL_TRIANGLES)`；隐藏部件跳过、索引/NaN 边界防御；由 `SkinnedMeshCpuRenderMixin` 在 EF 回退 CPU 渲染着色器（drawPosed）时接管，仅光影包激活等场景让位 |
+| `YsmCpuMesh` | 每网格动态 VBO（24B/顶点：pos+uv+2_10_10_10 法线）+ 复用 CPU 累积缓冲——低内存占用，每帧零分配（适配 <2G 内存工况） |
+| `YsmCpuSkinShader` | CPU 皮肤着色器（桌面 `cpu_skin.vsh/fsh` `#version 330` / Android `cpu_skin_es.vsh/fsh` `#version 300 es`）：顶点已是相机空间，着色器只应用普通 RenderSystem proj/mv（vanilla 实体着色器契约）；复刻 MC 光照/雾/overlay/光照贴图语义；半透明纹理双 Pass；**无需 SSBO / 计算着色器** |
+
 ### YSM 分支兼容（`YsmGpuRenderEnable` + mixin 族）
 
 | 分支 | 检测依据 | GPU 开关 | 渲染抑制 mixin |
@@ -119,7 +129,7 @@
 
 ### 事件与 Mixin
 
-主配置 `ysm_epicfight_compat.mixins.json`（21 个客户端 mixin）：`ModernYsm*`（3）、`OpenYsm*`（4，含配置界面）、`YsmUnobf*`（4）、混淆版 `Ysm*`（8）、`PPlayerRendererMixin`、`RenderSystemAccessorMixin`（着色器光照方向）；可选配置 `ysm_epicfight_compat.eftlm.mixins.json`（TLM 女仆渲染挂钩）。
+主配置 `ysm_epicfight_compat.mixins.json`（22 个客户端 mixin）：`ModernYsm*`（3）、`OpenYsm*`（4，含配置界面）、`YsmUnobf*`（4）、混淆版 `Ysm*`（8）、`PPlayerRendererMixin`、`RenderSystemAccessorMixin`（着色器光照方向）、`SkinnedMeshCpuRenderMixin`（EF drawPosed 回退拦截 → 本模组 CPU 蒙皮路径）；可选配置 `ysm_epicfight_compat.eftlm.mixins.json`（TLM 女仆渲染挂钩）。
 
 ### 多人联机模型同步 (`com.ysmef.compat.network`)
 
@@ -144,6 +154,7 @@
 | **异步脚本求值** | 非本地玩家的 Molang 求值在后台单线程池（双缓冲发布），渲染线程只做网格推送；LOD 距离降频（40/64 格 → 30/10Hz） |
 | **Molang 求值优化** | 查询/变量路径编译期内联为整数 ID（`double[]` 槽位替代 HashMap）；函数调用参数零分配（ThreadLocal 复用）；变量引用编译期预分类；纯数字表达式常量折叠 |
 | **GPU 路径** | 静态几何一次上传 + 每帧仅关节矩阵（战斗模式 ~3KB 而非 ~114KB）+ 单次 draw call；与 EF 计算路径数值等价（模拟验证） |
+| **CPU 蒙皮路径** | 无计算着色器/SSBO 设备的兜底渲染：逐顶点 CPU 蒙皮（大模型 ~1.2 万顶点/帧）写入复用缓冲，每帧零分配；每网格仅 24B/顶点动态 VBO（内存占用远低于计算/GPU 管线，适配 <2G 内存工况）；单次 draw call |
 | **纹理管线** | 图片解码移入后台池；GL 上传按每帧 10ms 预算分时排空（大纹理不再卡首绘）；淘汰纹理延迟释放防止闪烁 |
 | **关键帧增量游标** | 每通道摊销 O(1) 关键帧查找（循环回绕自动复位） |
 | **零分配矩阵合成** | `bindWorldInv` 预计算；`composeBone` 复用持久 scratch；逐帧无 Matrix4f/数组分配 |
@@ -160,6 +171,13 @@
 | `lazyModelCacheSize` | 64 | LRU 模型缓存上限（8-512） |
 | `scriptAsyncEval` | true | 非本地玩家脚本异步求值 |
 
+调试/验证系统属性（JVM 参数，不需要改配置文件）：
+
+| 属性 | 说明 |
+|---|---|
+| `-Dysm_ef_compat.force_cpu_render=true` | 强制跳过 EF 计算着色器、始终走本模组 CPU 蒙皮路径（在支持计算着色器的硬件上验证回退链） |
+| `-Dysm_ef_compat.disable_gpu=true` | 禁用 GPU 蒙皮路径（回退到 EF 计算着色器 / 本模组 CPU 蒙皮） |
+
 ---
 
 ## 构建
@@ -168,7 +186,7 @@
 ./gradlew build
 ```
 
-- 产物：`build/libs/YSM_EpicFight_Compat-1.20.1-1.5.0-all.jar`（内嵌 `zstd-jni 1.5.6-3`，jar-in-jar）
+- 产物：`build/libs/YSM_EpicFight_Compat-1.20.1-1.5.1-all.jar`（内嵌 `zstd-jni 1.5.6-3`，jar-in-jar）
 - 本机网络证书校验失败时可加 `-Dnet.minecraftforge.gradle.check.certs=false`
 - 依赖：Forge 1.20.1-47.4.16+、Epic Fight 20.14.17+（Modrinth）、YSM 2.6+（`libs/ysm-2.6.5.jar` 本地 flatDir）、zstd-jni（jarJar）；可选 TLM 1.5+ / ef_tlm 1.1+
 - 参考源码： `OpenYSM`（格式/网络协议）、`ModernYSM`（GPU 渲染/懒加载/内存优化）、`LgeacyYSM`（GeckoBuilder 约定）、`YSMParser`（C++ 加密交叉验证）、`EpicFight_TouhouLittleMaid`（补丁渲染器范例）
@@ -177,8 +195,8 @@
 
 ## 已知限制
 
-1. **GPU 路径要求 GL 4.3（或等价 ARB 扩展），Android 要求 OpenGL ES 3.1**：满足时使用 GPU 蒙皮路径（Android 上自动选择 GLES `#version 310 es` 着色器变体）；否则自动回退 EF 计算着色器路径；计算着色器不可用时回退 CPU 路径（CPU 蒙皮转换网格可能缺面，已告警）。macOS（GL 4.1）与旧 GPU 直接走回退链
-2. **Iris/Oculus 光影包**：光影包激活时 GPU 路径让位 EF 计算路径（其内建 Iris 支持），避免绕过光影着色器
+1. **渲染路径回退链**：GPU 蒙皮需 GL 4.3+（Android 需 OpenGL ES 3.1）；不满足时依次回退 EF 计算着色器 → 本模组 CPU 蒙皮（桌面 GL 3.3+ / OpenGL ES 3.0+，无缺面）→ EF drawPosed（三角化已修复，渲染完整）。macOS（GL 4.1 无计算着色器）走 CPU 蒙皮
+2. **Iris/Oculus 光影包**：光影包激活时 GPU 路径与 CPU 蒙皮路径均让位 EF 计算路径（其内建 Iris 支持），避免绕过光影着色器；计算着色器不可用时由三角化已修复的 drawPosed 兜底
 3. **懒转换首用延迟**：模型首次渲染若缓存未命中，后台转换期间短暂回退 EF biped（几帧）；异步纹理上传同理（纹理出现前 1-2 帧为缺失纹理）
 4. **多人联机同步要求专用服务器安装本模组**（服务端仅做 NBT 读取与广播）；未安装时回退 EF biped
 5. **远程玩家模型需本地可用**：模型包必须在 `config/yes_steve_model/{builtin,custom,auth}`；会话中途新下载的模型需 F3+T 或 `/ysm model reload` 触发重新生成
