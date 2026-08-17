@@ -583,27 +583,28 @@ public final class YSMPlayerAnimator implements Molang.Env {
     }
 
     /**
-     * OpenMatrix4f.importFromMojangMatrix without allocation: Epic Fight stores
-     * the matrix transposed relative to JOML (Mojang Matrix4f.get writes
-     * column-major, OpenMatrix4f.load reads row-major), so the field mapping is
-     * mXY <-> mYX.
+     * OpenMatrix4f.importFromMojangMatrix without allocation. Both JOML and
+     * Epic Fight's OpenMatrix4f address fields column-first (mRC = column c,
+     * row r; the translation is m30/m31/m32), so the conversion is a direct
+     * field copy. JOML Matrix4f.get(FloatBuffer) writes column-major order and
+     * OpenMatrix4f.load reads that same order.
      */
     private static void importInto(OpenMatrix4f om, Matrix4f m) {
         om.m00 = m.m00();
-        om.m01 = m.m10();
-        om.m02 = m.m20();
-        om.m03 = m.m30();
-        om.m10 = m.m01();
+        om.m01 = m.m01();
+        om.m02 = m.m02();
+        om.m03 = m.m03();
+        om.m10 = m.m10();
         om.m11 = m.m11();
-        om.m12 = m.m21();
-        om.m13 = m.m31();
-        om.m20 = m.m02();
-        om.m21 = m.m12();
+        om.m12 = m.m12();
+        om.m13 = m.m13();
+        om.m20 = m.m20();
+        om.m21 = m.m21();
         om.m22 = m.m22();
-        om.m23 = m.m32();
-        om.m30 = m.m03();
-        om.m31 = m.m13();
-        om.m32 = m.m23();
+        om.m23 = m.m23();
+        om.m30 = m.m30();
+        om.m31 = m.m31();
+        om.m32 = m.m32();
         om.m33 = m.m33();
     }
 

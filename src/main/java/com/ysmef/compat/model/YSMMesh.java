@@ -255,8 +255,9 @@ public class YSMMesh extends HumanoidMesh {
         double entityCameraDist = -1.0d;
         if (poseStack != null) {
             org.joml.Matrix4f top = poseStack.last().pose();
+            // JOML translation components are m30/m31/m32 (column-major field naming).
             poseStackTranslationLen = (float) Math.sqrt(
-                    (double) top.m03() * top.m03() + (double) top.m13() * top.m13() + (double) top.m23() * top.m23());
+                    (double) top.m30() * top.m30() + (double) top.m31() * top.m31() + (double) top.m32() * top.m32());
         }
         if (entity != null && entity.level() != null && net.minecraft.client.Minecraft.getInstance().gameRenderer != null) {
             net.minecraft.world.phys.Vec3 cam = net.minecraft.client.Minecraft.getInstance().gameRenderer.getMainCamera().getPosition();
@@ -280,6 +281,27 @@ public class YSMMesh extends HumanoidMesh {
      * (MaidPatch#getModelMatrix, 0.8F). Update this if EFTLM changes it.
      */
     private static final float MAID_SCALE_COMPENSATION = 1.0f / 0.8f;
+
+    /**
+     * Meshes at or below this many unique positions may use the CPU skinning
+     * path; larger meshes prefer Epic Fight's compute path so the render thread
+     * is not skinning hundreds of thousands of vertices per frame in
+     * many-model scenes.
+     */
+    private static final int CPU_PATH_MAX_VERTICES = 8192;
+
+    private static final Set<String> COMPUTE_PREFERRED_LOGGED = ConcurrentHashMap.newKeySet();
+
+    /** Once per model: the compute path took over because the mesh is too large for CPU skinning. */
+    private void logComputePreferredOnce(int positionCount) {
+        String key = this.runtimeModelId == null ? "n/a" : this.runtimeModelId;
+        if (COMPUTE_PREFERRED_LOGGED.add(key)) {
+            com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
+                    "YSM-EF Compat: model '{}' has {} unique vertices (>{}); using Epic Fight's compute path "
+                            + "instead of CPU skinning to keep the render thread bounded in many-model scenes",
+                    key, positionCount, CPU_PATH_MAX_VERTICES);
+        }
+    }
 
     private static volatile Boolean TLM_PRESENT;
 
@@ -318,13 +340,16 @@ public class YSMMesh extends HumanoidMesh {
      * Routing preference: when the GPU skinning path could not take this draw
      * (GUI previews, TLM maids whose poseStack lacks the entity-camera
      * translation, ...), the CPU skinning path is preferred over Epic Fight's
-     * compute shader: it is a plain vertex-pipeline draw (no compute dispatch,
-     * no output-SSBO round trip, no pipeline barrier), which is cheaper on weak
-     * / integrated GPUs (measured ~0.5 ms per draw for the compute path on the
-     * render thread alone - the iGPU work comes on top). The compute path only
-     * takes the draw when the CPU path declines (shader packs, no resolved
-     * texture, ...). Outline passes are never taken over (the compute path
-     * renders the outline state correctly; the CPU path has no outline pass).
+     * compute shader for small meshes: it is a plain vertex-pipeline draw (no
+     * compute dispatch, no output-SSBO round trip, no pipeline barrier), which
+     * is cheaper on weak / integrated GPUs (measured ~0.5 ms per draw for the
+     * compute path on the render thread alone - the iGPU work comes on top).
+     * Meshes above {@link #CPU_PATH_MAX_VERTICES} skip the CPU path and use the
+     * compute shader in world renders, so high-poly scenes do not pay per-vertex
+     * CPU skinning for every visible model. GUI entity previews keep the CPU
+     * path at any size (Epic Fight disables its compute pass there). Outline
+     * passes are never taken over (the compute path renders the outline state
+     * correctly; the CPU path has no outline pass).
      */
     private void drawWithPreferredPath(PoseStack poseStack, MultiBufferSource bufferSources, RenderType renderType,
                                        Mesh.DrawingFunction drawingFunction, int packedLight,
@@ -332,7 +357,22 @@ public class YSMMesh extends HumanoidMesh {
                                        @Nullable Armature armature, OpenMatrix4f[] poses) {
         yesman.epicfight.client.renderer.shader.compute.ComputeShaderSetup setup = computeShaderSetup();
         if (setup != null && !com.ysmef.compat.cpu.YsmCpuRenderPath.isForced()) {
-            if (!(bufferSources instanceof net.minecraft.client.renderer.OutlineBufferSource)
+            int positionCount = this.positions().length / 3;
+            // The CPU path skins every visible vertex on the render thread every
+            // frame. Large YSM models (10k+ faces, and 51-maid scenes in
+            // particular) would spend milliseconds per model there, so once a
+            // mesh passes this size the Epic Fight compute path is preferred:
+            // its vertex skinning runs on the GPU and its render-thread cost
+            // stays bounded no matter how many high-poly models are visible.
+            // GUI entity previews keep the CPU preference for every size: only
+            // one preview is drawn there, and Epic Fight itself switches its
+            // compute path off for those passes.
+            boolean guiEntityPreview = YsmGpuRenderPath.isGuiEntityProjection();
+            if (!guiEntityPreview && positionCount > CPU_PATH_MAX_VERTICES) {
+                logComputePreferredOnce(positionCount);
+            }
+            if ((guiEntityPreview || positionCount <= CPU_PATH_MAX_VERTICES)
+                    && !(bufferSources instanceof net.minecraft.client.renderer.OutlineBufferSource)
                     && com.ysmef.compat.cpu.YsmCpuRenderPath.tryRender(this, poseStack, drawingFunction,
                             packedLight, r, g, b, a, overlay, armature, poses)) {
                 return;

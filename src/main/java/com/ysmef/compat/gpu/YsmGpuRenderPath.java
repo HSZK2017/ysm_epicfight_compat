@@ -74,12 +74,23 @@ public final class YsmGpuRenderPath {
     /** Once per mesh + reason: why the GPU path was skipped (diagnostics, removable). */
     private static final Map<YSMMesh, String> GPU_SKIP_DIAG = new ConcurrentHashMap<>();
 
+    private static volatile boolean GPU_SKIP_FIRST_LOGGED = false;
+
     private static void gpuSkipDiag(YSMMesh mesh, String reason) {
-        if (!com.ysmef.compat.YsmDiag.isEnabled()) {
+        String prev = GPU_SKIP_DIAG.put(mesh, reason);
+        boolean changed = !reason.equals(prev);
+        if (!GPU_SKIP_FIRST_LOGGED) {
+            GPU_SKIP_FIRST_LOGGED = true;
+            // Always report the first GPU-path rejection so a high-poly model
+            // silently spending the whole session on the CPU path is visible in
+            // a normal log. Set ysm_ef_compat.diag for the per-reason trace.
+            com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
+                    "YSM-EF Compat: GPU skinning path skipped its first draw: model={} reason={} "
+                            + "(falling back; set ysm_ef_compat.diag=true for the full skip trace)",
+                    mesh.getRuntimeModelId(), reason);
             return;
         }
-        String prev = GPU_SKIP_DIAG.put(mesh, reason);
-        if (!reason.equals(prev)) {
+        if (changed && com.ysmef.compat.YsmDiag.isEnabled()) {
             com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
                     "YSM-EF Compat: [diag] GPU path skip: model={} reason={}", mesh.getRuntimeModelId(), reason);
         }
@@ -179,16 +190,16 @@ public final class YsmGpuRenderPath {
                             + "jointMaxTranslation={} (worst={}:{}) jointMaxScaleDiff={} toOriginMaxTranslation={} "
                             + "modelSpaceBounds=([{},{}],[{},{}],[{},{}]) samples={} "
                             + "proj=(m00={},m11={},m22={},m33={},m30={},m31={}) "
-                            + "view=(m00={},m11={},m22={},m33={},m03={},m13={},m23={}) "
-                            + "pose=(m00={},m11={},m22={},m33={},m03={},m13={},m23={}) "
+                            + "view=(m00={},m11={},m22={},m33={},m30={},m31={},m32={}) "
+                            + "pose=(m00={},m11={},m22={},m33={},m30={},m31={},m32={}) "
                             + "armature={}",
                     mesh.getRuntimeModelId(), jointCount, mesh.getPartCount(), gpu.vertexCount,
                     maxJointTranslation, worstJoint, worstJointTranslation, maxJointScaleDiff,
                     maxToOriginTranslation(toOrigin),
                     minX, maxX, minY, maxY, minZ, maxZ, samples,
                     proj.m00(), proj.m11(), proj.m22(), proj.m33(), proj.m30(), proj.m31(),
-                    mv.m00(), mv.m11(), mv.m22(), mv.m33(), mv.m03(), mv.m13(), mv.m23(),
-                    pose.m00(), pose.m11(), pose.m22(), pose.m33(), pose.m03(), pose.m13(), pose.m23(),
+                    mv.m00(), mv.m11(), mv.m22(), mv.m33(), mv.m30(), mv.m31(), mv.m32(),
+                    pose.m00(), pose.m11(), pose.m22(), pose.m33(), pose.m30(), pose.m31(), pose.m32(),
                     armature != null ? armature.getClass().getName() : "null");
         } catch (Throwable t) {
             com.ysmef.compat.YSMEpicFightCompat.LOGGER.warn(
@@ -266,26 +277,34 @@ public final class YsmGpuRenderPath {
      * non-zero m30/m31), as opposed to the world camera's perspective matrix
      * (m30 = m31 = 0).
      */
-    private static boolean isGuiEntityProjection() {
+    public static boolean isGuiEntityProjection() {
         org.joml.Matrix4f proj = com.mojang.blaze3d.systems.RenderSystem.getProjectionMatrix();
         return proj.m30() != 0.0F || proj.m31() != 0.0F;
     }
 
-    /** Once per session: the gate's measured values of the first rejected draw (diagnostics). */
+    /** Once per session: the gate's measured values of the first rejected draw. */
     private static volatile boolean TRANSLATION_GATE_DIAG_LOGGED = false;
 
     /**
-     * Whether the poseStack handed to the mesh draw carries the entity -> camera
-     * translation, i.e. whether the GPU path's u_proj = proj x mv x poseStack
-     * reconstruction places the model at the entity instead of at the camera.
+     * Whether the camera transform actually applied by the GPU path
+     * (u_proj = proj x mv x poseStack) places the model at the entity instead of
+     * at the camera.
      *
      * The dispatcher normally translates the poseStack by the camera-relative
-     * entity offset, so the translation part of the top pose has the same LENGTH
-     * as the entity-camera distance (the camera rotation and entity yaw rotate
-     * it but preserve its length; uniform scales such as EFTLM's 0.8 maid scale
-     * and its 1.25 compensation do not touch the translation column). When the
-     * length does not match, the stack cannot position the model and the GPU
-     * path must fall back to Epic Fight's compute path.
+     * entity offset and RenderSystem's model-view matrix only carries the camera
+     * rotation, so the translation of the COMBINED matrix (mv x poseStack) has
+     * the same length as the entity-camera distance: rotations preserve length,
+     * and uniform entity scales do not touch the translation column. Checking
+     * the poseStack alone is not enough - some render chains (TLM maids, GUI
+     * entity previews, YSM's model preview) put the entity translation in
+     * RenderSystem's model-view matrix instead, while others contaminate that
+     * matrix with an extra translation. Both cases are caught by comparing the
+     * combined translation against the interpolated entity render position.
+     * The combined 3x3 must also remain a rigid rotation times one uniform
+     * scale (a non-uniform camera/model matrix is what stretches a model while
+     * the camera moves). A contaminated matrix no longer reaches the GPU path,
+     * and a valid model-view-carried translation is no longer rejected just
+     * because the poseStack has none.
      */
     private static boolean hasSoundWorldTranslation(PoseStack poseStack) {
         net.minecraft.world.entity.LivingEntity entity = com.ysmef.compat.model.runtime.YSMRuntimeBridge.getCurrentEntity();
@@ -308,24 +327,68 @@ public final class YsmGpuRenderPath {
         double dy = py - cam.y;
         double dz = pz - cam.z;
         double dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
         org.joml.Matrix4f pose = poseStack.last().pose();
-        float len = (float) Math.sqrt(
-                (double) pose.m03() * pose.m03() + (double) pose.m13() * pose.m13() + (double) pose.m23() * pose.m23());
+        org.joml.Matrix4f modelView = RenderSystem.getModelViewMatrix();
+        // The exact matrix product the GPU path uploads as u_mv / u_proj.
+        org.joml.Matrix4f combined = projMVScratch.set(modelView).mul(pose);
 
-        boolean sound = Math.abs(len - dist) <= Math.max(0.1, 0.05 * dist);
+        // JOML field naming is column-major: the translation lives in
+        // m30/m31/m32 (column 3), not m03/m13/m23 (row 3).
+        float poseLen = translationLength(pose.m30(), pose.m31(), pose.m32());
+        float modelViewLen = translationLength(modelView.m30(), modelView.m31(), modelView.m32());
+        float combinedLen = translationLength(combined.m30(), combined.m31(), combined.m32());
 
-        if (!sound && !TRANSLATION_GATE_DIAG_LOGGED && com.ysmef.compat.YsmDiag.isEnabled()) {
+        // The combined 3x3 must stay a rigid rotation times one uniform scale.
+        // A non-uniform camera/model matrix is exactly what visually stretches
+        // a model while the camera moves; such draws belong on the fallback
+        // path (which is what the vanilla/EF pipeline was authored for).
+        // JOML field naming is column-first: mRC is column R, row C, so each
+        // column is (m?0, m?1, m?2).
+        float c0 = columnLength(combined.m00(), combined.m01(), combined.m02());
+        float c1 = columnLength(combined.m10(), combined.m11(), combined.m12());
+        float c2 = columnLength(combined.m20(), combined.m21(), combined.m22());
+        float minScale = Math.min(c0, Math.min(c1, c2));
+        float maxScale = Math.max(c0, Math.max(c1, c2));
+        boolean uniformScale = minScale > 1.0e-6f
+                && (maxScale / minScale - 1.0f) <= MAX_COMBINED_SCALE_DEVIATION;
+
+        boolean finite = Float.isFinite(poseLen) && Float.isFinite(modelViewLen) && Float.isFinite(combinedLen)
+                && Float.isFinite(minScale) && Float.isFinite(maxScale);
+        boolean sound = finite && uniformScale
+                && Math.abs(combinedLen - dist) <= Math.max(0.1, 0.05 * dist);
+
+        if (!sound && !TRANSLATION_GATE_DIAG_LOGGED) {
             TRANSLATION_GATE_DIAG_LOGGED = true;
+            // The first rejection is always logged (this is the exact evidence
+            // needed to attribute the maid GPU-stretch symptom); further
+            // rejections only produce per-mesh skip diagnostics when diag is on.
             com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
-                    "YSM-EF Compat: [diag] GPU translation gate rejected a draw: entity={} renderPos=({},{},{}) cameraPos=({},{},{}) dist={} poseStackTranslationLen={} pose=(m03={},m13={},m23={})",
+                    "YSM-EF Compat: GPU translation gate rejected a draw: entity={} renderPos=({},{},{}) cameraPos=({},{},{}) dist={} poseStackTranslationLen={} modelViewTranslationLen={} combinedTranslationLen={} combinedScale=({},{},{}) finite={} uniformScale={} pose=(m30={},m31={},m32={}) modelView=(m30={},m31={},m32={}) combined=(m30={},m31={},m32={})",
                     entity.getClass().getName(),
                     String.format("%.2f", px), String.format("%.2f", py), String.format("%.2f", pz),
                     String.format("%.2f", cam.x), String.format("%.2f", cam.y), String.format("%.2f", cam.z),
-                    String.format("%.2f", dist), String.format("%.2f", len),
-                    pose.m03(), pose.m13(), pose.m23());
+                    String.format("%.2f", dist), String.format("%.2f", poseLen),
+                    String.format("%.2f", modelViewLen), String.format("%.2f", combinedLen),
+                    String.format("%.3f", c0), String.format("%.3f", c1), String.format("%.3f", c2),
+                    finite, uniformScale,
+                    pose.m30(), pose.m31(), pose.m32(),
+                    modelView.m30(), modelView.m31(), modelView.m32(),
+                    combined.m30(), combined.m31(), combined.m32());
         }
         return sound;
     }
+
+    private static float translationLength(float x, float y, float z) {
+        return (float) Math.sqrt((double) x * x + (double) y * y + (double) z * z);
+    }
+
+    private static float columnLength(float x, float y, float z) {
+        return (float) Math.sqrt((double) x * x + (double) y * y + (double) z * z);
+    }
+
+    /** Max relative difference between the combined matrix's column scales. */
+    private static final float MAX_COMBINED_SCALE_DEVIATION = 0.05f;
 
     /**
      * Try to draw the mesh with the GPU skinning path. Returns true when the
@@ -378,16 +441,15 @@ public final class YsmGpuRenderPath {
             // The GPU path draws with u_proj = proj x mv x poseStack. Some render
             // chains (Touhou Little Maid maids through YSM's GeoReplacedEntityRenderer,
             // and YSM's GUI previews) hand the mesh draw a poseStack whose top pose
-            // does not carry the entity -> camera translation (its m03/m13/m23 are 0
-            // while the entity is blocks away from the camera) and RenderSystem's
-            // model view matrix is identity during the entity pass. Drawing that
+            // does not carry the entity -> camera translation; others put an extra
+            // translation in RenderSystem's model-view matrix. hasSoundWorldTranslation
+            // validates the product the GPU path will actually upload (mv x poseStack)
+            // against the entity's interpolated render position and rejects
+            // contaminated/non-uniform camera matrices. Drawing an unverified
             // reconstruction puts the model AT the camera: for maids a few blocks
             // away this shows as the "stretched" artifact, for the local player it
-            // draws inside the camera and looks invisible. Epic Fight's own
-            // compute-shader path renders those cases correctly, so the GPU path
-            // must step aside whenever its reconstruction cannot be verified
-            // against the entity's actual world position.
-            gpuSkipDiag(mesh, "pose-translation-mismatch");
+            // draws inside the camera and looks invisible.
+            gpuSkipDiag(mesh, "camera-transform-mismatch");
             return false;
         }
         if (UNSUPPORTED.contains(mesh)) {
@@ -524,17 +586,15 @@ public final class YsmGpuRenderPath {
         return true;
     }
 
-    private static boolean gpuActiveLogged = false;
+    private static final Set<YSMMesh> GPU_ACTIVE_LOGGED = ConcurrentHashMap.newKeySet();
 
-    /** One-time per session: confirm the GPU skinning path is drawing. */
+    /** Once per mesh: confirm that model actually goes through the GPU skinning path. */
     private static void logGpuActiveOnce(YSMMesh mesh, YsmGpuMesh gpu) {
-        if (gpuActiveLogged) {
-            return;
+        if (GPU_ACTIVE_LOGGED.add(mesh)) {
+            YSMEpicFightCompat.LOGGER.info(
+                    "YSM-EF Compat: GPU skinning path active (bone SSBO + skinning shader): model='{}', {} parts, {} vertices",
+                    mesh.getRuntimeModelId(), mesh.getPartCount(), gpu.vertexCount);
         }
-        gpuActiveLogged = true;
-        YSMEpicFightCompat.LOGGER.info(
-                "YSM-EF Compat: GPU skinning path active (bone SSBO + skinning shader): model='{}', {} parts, {} vertices",
-                mesh.getRuntimeModelId(), mesh.getPartCount(), gpu.vertexCount);
     }
 
     /**

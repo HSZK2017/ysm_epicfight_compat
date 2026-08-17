@@ -43,10 +43,10 @@ public abstract class PatchedLivingRenderDiagMixin {
         org.joml.Matrix4f pose = poseStack.last().pose();
         com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
                 "YSM-EF Compat: [diag] patchedLiving.render head: entity={} renderer={} "
-                        + "poseStack=(m00={},m11={},m22={},m03={},m13={},m23={}) "
+                        + "poseStack=(m00={},m11={},m22={},m30={},m31={},m32={}) "
                         + "stack4={} stack5={} stack6={}",
                 entity.getClass().getName(), renderer != null ? renderer.getClass().getName() : "null",
-                pose.m00(), pose.m11(), pose.m22(), pose.m03(), pose.m13(), pose.m23(),
+                pose.m00(), pose.m11(), pose.m22(), pose.m30(), pose.m31(), pose.m32(),
                 stackFrame(4), stackFrame(5), stackFrame(6));
     }
 

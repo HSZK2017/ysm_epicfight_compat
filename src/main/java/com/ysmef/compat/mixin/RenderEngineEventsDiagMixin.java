@@ -43,14 +43,14 @@ public abstract class RenderEngineEventsDiagMixin {
         net.minecraft.world.phys.Vec3 cpos = net.minecraft.client.Minecraft.getInstance().gameRenderer.getMainCamera().getPosition();
         com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
                 "YSM-EF Compat: [diag] EF renderLivingEvent: entity={} partialTick={} levelNull={} hasRenderer={} patch={} overrideRender={} canceled={} "
-                        + "poseStack=(m00={},m11={},m22={},m03={},m13={},m23={}) "
+                        + "poseStack=(m00={},m11={},m22={},m30={},m31={},m32={}) "
                         + "entityPos=({},{},{}) cameraPos=({},{},{}) delta=({},{},{}) "
                         + "stack0={} stack1={} stack2={} stack3={} stack4={} stack5={} stack6={} stack7={}",
                 entity.getClass().getName(), event.getPartialTick(), levelNull, hasRenderer,
                 patch != null ? patch.getClass().getName() : "null",
                 patch != null && patch.overrideRender(),
                 event.isCanceled(),
-                pose.m00(), pose.m11(), pose.m22(), pose.m03(), pose.m13(), pose.m23(),
+                pose.m00(), pose.m11(), pose.m22(), pose.m30(), pose.m31(), pose.m32(),
                 String.format("%.2f", epos.x), String.format("%.2f", epos.y), String.format("%.2f", epos.z),
                 String.format("%.2f", cpos.x), String.format("%.2f", cpos.y), String.format("%.2f", cpos.z),
                 String.format("%.2f", epos.x - cpos.x), String.format("%.2f", epos.y - cpos.y), String.format("%.2f", epos.z - cpos.z),

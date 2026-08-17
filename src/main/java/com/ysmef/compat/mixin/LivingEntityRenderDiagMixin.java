@@ -37,11 +37,11 @@ public abstract class LivingEntityRenderDiagMixin {
         org.joml.Matrix4f pose = poseStack.last().pose();
         com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
                 "YSM-EF Compat: [diag] livingRenderer.render head: entity={} yaw={} partialTicks={} "
-                        + "poseStackId={} poseStack=(m00={},m11={},m22={},m03={},m13={},m23={}) "
+                        + "poseStackId={} poseStack=(m00={},m11={},m22={},m30={},m31={},m32={}) "
                         + "stack6={} stack7={} stack8={} stack9={}",
                 entity.getClass().getName(), yaw, partialTicks,
                 Integer.toHexString(System.identityHashCode(poseStack)),
-                pose.m00(), pose.m11(), pose.m22(), pose.m03(), pose.m13(), pose.m23(),
+                pose.m00(), pose.m11(), pose.m22(), pose.m30(), pose.m31(), pose.m32(),
                 stackFrame(6), stackFrame(7), stackFrame(8), stackFrame(9));
     }
 

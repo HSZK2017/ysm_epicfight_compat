@@ -41,10 +41,10 @@ public abstract class DispatcherDiagMixin {
         org.joml.Matrix4f pose = poseStack.last().pose();
         com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
                 "YSM-EF Compat: [diag] dispatcher.render head: entity={} x={} y={} z={} "
-                        + "poseStackPre=(m00={},m11={},m22={},m03={},m13={},m23={})",
+                        + "poseStackPre=(m00={},m11={},m22={},m30={},m31={},m32={})",
                 entity.getClass().getName(),
                 String.format("%.2f", x), String.format("%.2f", y), String.format("%.2f", z),
-                pose.m00(), pose.m11(), pose.m22(), pose.m03(), pose.m13(), pose.m23());
+                pose.m00(), pose.m11(), pose.m22(), pose.m30(), pose.m31(), pose.m32());
     }
 
     /**
@@ -70,10 +70,10 @@ public abstract class DispatcherDiagMixin {
         org.joml.Matrix4f pose = poseStack.last().pose();
         com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
                 "YSM-EF Compat: [diag] dispatcher.render before-renderer-call: entity={} x={} y={} z={} "
-                        + "poseStackPost=(m00={},m11={},m22={},m03={},m13={},m23={})",
+                        + "poseStackPost=(m00={},m11={},m22={},m30={},m31={},m32={})",
                 entity.getClass().getName(),
                 String.format("%.2f", x), String.format("%.2f", y), String.format("%.2f", z),
-                pose.m00(), pose.m11(), pose.m22(), pose.m03(), pose.m13(), pose.m23());
+                pose.m00(), pose.m11(), pose.m22(), pose.m30(), pose.m31(), pose.m32());
     }
 
     private static final java.util.Set<String> BEFORE_LOGGED = java.util.concurrent.ConcurrentHashMap.newKeySet();
@@ -101,11 +101,11 @@ public abstract class DispatcherDiagMixin {
         org.joml.Matrix4f pose = poseStack.last().pose();
         com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
                 "YSM-EF Compat: [diag] dispatcher.render after-translate: entity={} x={} y={} z={} "
-                        + "poseStackId={} poseStack=(m00={},m11={},m22={},m03={},m13={},m23={})",
+                        + "poseStackId={} poseStack=(m00={},m11={},m22={},m30={},m31={},m32={})",
                 entity.getClass().getName(),
                 String.format("%.2f", x), String.format("%.2f", y), String.format("%.2f", z),
                 Integer.toHexString(System.identityHashCode(poseStack)),
-                pose.m00(), pose.m11(), pose.m22(), pose.m03(), pose.m13(), pose.m23());
+                pose.m00(), pose.m11(), pose.m22(), pose.m30(), pose.m31(), pose.m32());
     }
 
     private static final java.util.Set<String> AFTER_TRANSLATE_LOGGED = java.util.concurrent.ConcurrentHashMap.newKeySet();
