@@ -51,6 +51,13 @@ public class YSMRenderHook {
         if (!(event.getEntity() instanceof Player player)) {
             return;
         }
+        // This bridge is only for Epic Fight battle mode. Outside battle mode
+        // YSM must keep rendering its own GEO model; taking over there makes
+        // the converted EF mesh and YSM's renderer fight over the same entity
+        // (models with many animated variants, e.g. Wither2.3, visibly overlap).
+        if (!com.ysmef.compat.renderer.YSMBattleMode.isBattleMode(player)) {
+            return;
+        }
         if (!(event.getRenderer() instanceof PlayerRenderer)) {
             return;
         }

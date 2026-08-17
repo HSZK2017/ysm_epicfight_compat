@@ -3,6 +3,9 @@
     "com/ysmef/compat/mixin/RenderSystemAccessorMixin": {
       "shaderLightDirections": "shaderLightDirections:[Lorg/joml/Vector3f;"
     },
+    "com/ysmef/compat/mixin/MouseHandlerMixin": {
+      "onPress(JIII)V": "Lnet/minecraft/client/MouseHandler;m_91530_(JIII)V"
+    },
     "com/ysmef/compat/mixin/LivingEntityRenderDiagMixin": {
       "render(Lnet/minecraft/world/entity/LivingEntity;FFLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;I)V": "Lnet/minecraft/client/renderer/entity/LivingEntityRenderer;m_7392_(Lnet/minecraft/world/entity/LivingEntity;FFLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;I)V"
     },
@@ -16,6 +19,9 @@
     "searge": {
       "com/ysmef/compat/mixin/RenderSystemAccessorMixin": {
         "shaderLightDirections": "shaderLightDirections:[Lorg/joml/Vector3f;"
+      },
+      "com/ysmef/compat/mixin/MouseHandlerMixin": {
+        "onPress(JIII)V": "Lnet/minecraft/client/MouseHandler;m_91530_(JIII)V"
       },
       "com/ysmef/compat/mixin/LivingEntityRenderDiagMixin": {
         "render(Lnet/minecraft/world/entity/LivingEntity;FFLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;I)V": "Lnet/minecraft/client/renderer/entity/LivingEntityRenderer;m_7392_(Lnet/minecraft/world/entity/LivingEntity;FFLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;I)V"

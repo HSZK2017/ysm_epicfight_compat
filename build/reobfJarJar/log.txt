@@ -143,6 +143,8 @@ Conflicting propagated mapping for com/ysmef/compat/gui/YsmGpuRenderCheckbox/onP
 Conflicting propagated mapping for net/minecraft/world/entity/LivingEntity/lambda$addAdditionalSaveData$3(Lnet/minecraft/nbt/CompoundTag;Lnet/minecraft/nbt/Tag;)V from net/minecraft/world/entity/player/Player/lambda$addAdditionalSaveData$3(Lnet/minecraft/nbt/CompoundTag;Lnet/minecraft/nbt/Tag;)V: lambda$addAdditionalSaveData$3 -> m_219754_
 Conflicting propagated mapping for com/elfmcys/yesstevemodel/O0o000o0oOoOoOoOOO0oOOoO/render(Lnet/minecraft/client/gui/GuiGraphics;IIF)V from net/minecraft/client/gui/screens/Screen/render(Lnet/minecraft/client/gui/GuiGraphics;IIF)V: render -> m_88315_
 Conflicting propagated mapping for com/elfmcys/yesstevemodel/O0o000o0oOoOoOoOOO0oOOoO/init()V from net/minecraft/client/gui/screens/Screen/init()V: init -> m_7856_
+Conflicting propagated mapping for yesman/epicfight/api/animation/AnimationManager/prepare(Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;)Ljava/lang/Object; from net/minecraft/server/packs/resources/SimplePreparableReloadListener/prepare(Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;)Ljava/lang/Object;: prepare -> m_5944_
+Conflicting propagated mapping for yesman/epicfight/api/animation/AnimationManager/apply(Ljava/lang/Object;Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;)V from net/minecraft/server/packs/resources/SimplePreparableReloadListener/apply(Ljava/lang/Object;Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;)V: apply -> m_5787_
 Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/entity/passive/EntityMaid/getHurtSound(Lnet/minecraft/world/damagesource/DamageSource;)Lnet/minecraft/sounds/SoundEvent; from net/minecraft/world/entity/LivingEntity/getHurtSound(Lnet/minecraft/world/damagesource/DamageSource;)Lnet/minecraft/sounds/SoundEvent;: getHurtSound -> m_7975_
 Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/entity/passive/EntityMaid/getBreedOffspring(Lnet/minecraft/server/level/ServerLevel;Lnet/minecraft/world/entity/AgeableMob;)Lnet/minecraft/world/entity/AgeableMob; from net/minecraft/world/entity/AgeableMob/getBreedOffspring(Lnet/minecraft/server/level/ServerLevel;Lnet/minecraft/world/entity/AgeableMob;)Lnet/minecraft/world/entity/AgeableMob;: getBreedOffspring -> m_142606_
 Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/entity/passive/EntityMaid/getTarget()Lnet/minecraft/world/entity/LivingEntity; from net/minecraft/world/entity/Mob/getTarget()Lnet/minecraft/world/entity/LivingEntity;: getTarget -> m_5448_
@@ -172,6 +174,7 @@ Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/enti
 Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/entity/passive/EntityMaid/canAttack(Lnet/minecraft/world/entity/LivingEntity;)Z from net/minecraft/world/entity/TamableAnimal/canAttack(Lnet/minecraft/world/entity/LivingEntity;)Z: canAttack -> m_6779_
 Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/entity/passive/EntityMaid/brainProvider()Lnet/minecraft/world/entity/ai/Brain$Provider; from net/minecraft/world/entity/LivingEntity/brainProvider()Lnet/minecraft/world/entity/ai/Brain$Provider;: brainProvider -> m_5490_
 Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/entity/passive/EntityMaid/hurtArmor(Lnet/minecraft/world/damagesource/DamageSource;F)V from net/minecraft/world/entity/LivingEntity/hurtArmor(Lnet/minecraft/world/damagesource/DamageSource;F)V: hurtArmor -> m_6472_
+Conflicting propagated mapping for yesman/epicfight/api/client/model/Meshes/reload(Lnet/minecraft/server/packs/resources/PreparableReloadListener$PreparationBarrier;Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;Lnet/minecraft/util/profiling/ProfilerFiller;Ljava/util/concurrent/Executor;Ljava/util/concurrent/Executor;)Ljava/util/concurrent/CompletableFuture; from net/minecraft/server/packs/resources/PreparableReloadListener/reload(Lnet/minecraft/server/packs/resources/PreparableReloadListener$PreparationBarrier;Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;Lnet/minecraft/util/profiling/ProfilerFiller;Ljava/util/concurrent/Executor;Ljava/util/concurrent/Executor;)Ljava/util/concurrent/CompletableFuture;: reload -> m_5540_
 Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/entity/passive/EntityMaid/defineSynchedData()V from net/minecraft/world/entity/TamableAnimal/defineSynchedData()V: defineSynchedData -> m_8097_
 Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/entity/passive/EntityMaid/getDeathSound()Lnet/minecraft/sounds/SoundEvent; from net/minecraft/world/entity/LivingEntity/getDeathSound()Lnet/minecraft/sounds/SoundEvent;: getDeathSound -> m_5592_
 Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/entity/passive/EntityMaid/createNavigation(Lnet/minecraft/world/level/Level;)Lnet/minecraft/world/entity/ai/navigation/PathNavigation; from net/minecraft/world/entity/Mob/createNavigation(Lnet/minecraft/world/level/Level;)Lnet/minecraft/world/entity/ai/navigation/PathNavigation;: createNavigation -> m_6037_
@@ -222,7 +225,6 @@ Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/enti
 Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/entity/passive/EntityMaid/shootCrossbowProjectile(Lnet/minecraft/world/entity/LivingEntity;Lnet/minecraft/world/item/ItemStack;Lnet/minecraft/world/entity/projectile/Projectile;F)V from net/minecraft/world/entity/monster/CrossbowAttackMob/shootCrossbowProjectile(Lnet/minecraft/world/entity/LivingEntity;Lnet/minecraft/world/item/ItemStack;Lnet/minecraft/world/entity/projectile/Projectile;F)V: shootCrossbowProjectile -> m_5811_
 Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/entity/passive/EntityMaid/setChargingCrossbow(Z)V from net/minecraft/world/entity/monster/CrossbowAttackMob/setChargingCrossbow(Z)V: setChargingCrossbow -> m_6136_
 Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/api/entity/IMaid/onClimbable()Z from com/github/tartaricacid/touhoulittlemaid/entity/passive/EntityMaid/onClimbable()Z: onClimbable -> m_6147_
-Conflicting propagated mapping for yesman/epicfight/api/client/model/Meshes/reload(Lnet/minecraft/server/packs/resources/PreparableReloadListener$PreparationBarrier;Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;Lnet/minecraft/util/profiling/ProfilerFiller;Ljava/util/concurrent/Executor;Ljava/util/concurrent/Executor;)Ljava/util/concurrent/CompletableFuture; from net/minecraft/server/packs/resources/PreparableReloadListener/reload(Lnet/minecraft/server/packs/resources/PreparableReloadListener$PreparationBarrier;Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;Lnet/minecraft/util/profiling/ProfilerFiller;Ljava/util/concurrent/Executor;Ljava/util/concurrent/Executor;)Ljava/util/concurrent/CompletableFuture;: reload -> m_5540_
 Conflicting propagated mapping for yesman/epicfight/client/renderer/EpicFightRenderTypes/lambda$static$6(Lnet/minecraft/resources/ResourceLocation;)Lnet/minecraft/client/renderer/RenderType; from net/minecraft/client/renderer/RenderType/lambda$static$6(Lnet/minecraft/resources/ResourceLocation;)Lnet/minecraft/client/renderer/RenderType;: lambda$static$6 -> m_285695_
 Conflicting propagated mapping for yesman/epicfight/client/renderer/EpicFightRenderTypes/debugQuads()Lnet/minecraft/client/renderer/RenderType; from net/minecraft/client/renderer/RenderType/debugQuads()Lnet/minecraft/client/renderer/RenderType;: debugQuads -> m_269166_
 Conflicting propagated mapping for yesman/epicfight/client/renderer/EpicFightRenderTypes/lambda$static$5(Lnet/minecraft/resources/ResourceLocation;)Lnet/minecraft/client/renderer/RenderType; from net/minecraft/client/renderer/RenderType/lambda$static$5(Lnet/minecraft/resources/ResourceLocation;)Lnet/minecraft/client/renderer/RenderType;: lambda$static$5 -> m_285687_
@@ -245,6 +247,8 @@ Writing Output: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\reo
   com/ysmef/compat/
   com/ysmef/compat/YSMEpicFightCompat.class
   com/ysmef/compat/YsmDiag.class
+  com/ysmef/compat/animation/
+  com/ysmef/compat/animation/YsmWheelAnimation.class
   com/ysmef/compat/config/
   com/ysmef/compat/config/YSMCompatConfig.class
   com/ysmef/compat/cpu/
@@ -257,6 +261,8 @@ Writing Output: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\reo
   com/ysmef/compat/event/YSMCompatClientEvents.class
   com/ysmef/compat/event/YSMReloadTrigger.class
   com/ysmef/compat/event/YSMRenderHook.class
+  com/ysmef/compat/event/YsmWheelPlayback$Tracked.class
+  com/ysmef/compat/event/YsmWheelPlayback.class
   com/ysmef/compat/gpu/
   com/ysmef/compat/gpu/GpuShaderUtil.class
   com/ysmef/compat/gpu/YsmBoneSkinShader.class
@@ -268,12 +274,17 @@ Writing Output: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\reo
   com/ysmef/compat/gui/
   com/ysmef/compat/gui/YsmConfigScreenHook.class
   com/ysmef/compat/gui/YsmGpuRenderCheckbox.class
+  com/ysmef/compat/input/
+  com/ysmef/compat/input/YsmInputGuard.class
   com/ysmef/compat/mixin/
+  com/ysmef/compat/mixin/DiscreteInputActionTriggerMixin.class
   com/ysmef/compat/mixin/DispatcherDiagMixin.class
+  com/ysmef/compat/mixin/EpicFightRenderLivingEventMixin.class
   com/ysmef/compat/mixin/LivingEntityRenderDiagMixin.class
   com/ysmef/compat/mixin/ModernYsmBackgroundHandMixin.class
   com/ysmef/compat/mixin/ModernYsmHandRenderMixin.class
   com/ysmef/compat/mixin/ModernYsmPlayerRenderMixin.class
+  com/ysmef/compat/mixin/MouseHandlerMixin.class
   com/ysmef/compat/mixin/OpenYsmBackgroundHandMixin.class
   com/ysmef/compat/mixin/OpenYsmConfigScreenMixin.class
   com/ysmef/compat/mixin/OpenYsmHandRenderMixin.class
@@ -314,6 +325,16 @@ Writing Output: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\reo
   com/ysmef/compat/model/YSMMeshLibrary$TextureEntry.class
   com/ysmef/compat/model/YSMMeshLibrary$TextureUploadTask.class
   com/ysmef/compat/model/YSMMeshLibrary.class
+  com/ysmef/compat/model/YsmExtraAnimationLibrary$ModelMapping.class
+  com/ysmef/compat/model/YsmExtraAnimationLibrary$TemplateDescriptor.class
+  com/ysmef/compat/model/YsmExtraAnimationLibrary$WheelEntry.class
+  com/ysmef/compat/model/YsmExtraAnimationLibrary.class
+  com/ysmef/compat/model/YsmExtraFrameWriter$ArmatureTables.class
+  com/ysmef/compat/model/YsmExtraFrameWriter$Clip.class
+  com/ysmef/compat/model/YsmExtraFrameWriter$RepresentativeSelection.class
+  com/ysmef/compat/model/YsmExtraFrameWriter$SampleBone.class
+  com/ysmef/compat/model/YsmExtraFrameWriter$SampleEnv.class
+  com/ysmef/compat/model/YsmExtraFrameWriter.class
   com/ysmef/compat/model/runtime/
   com/ysmef/compat/model/runtime/YSMPlayerAnimator$EvalInputs.class
   com/ysmef/compat/model/runtime/YSMPlayerAnimator$ScriptAnimKeyLerp.class
@@ -348,6 +369,8 @@ Writing Output: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\reo
   com/ysmef/compat/renderer/YSMModelAccess$YSMModelRef.class
   com/ysmef/compat/renderer/YSMModelAccess.class
   com/ysmef/compat/renderer/YSMPlayerRenderer.class
+  com/ysmef/compat/renderer/YsmWheelAnimationState$State.class
+  com/ysmef/compat/renderer/YsmWheelAnimationState.class
   com/ysmef/compat/renderer/layer/
   com/ysmef/compat/renderer/layer/YsmConditionalArmorLayer.class
   com/ysmef/compat/renderer/layer/YsmConditionalElytraLayer.class

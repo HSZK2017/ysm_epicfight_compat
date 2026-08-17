@@ -52,6 +52,8 @@ public class YSMReloadTrigger {
     public static void onDisconnect(ClientPlayerNetworkEvent.LoggingOut event) {
         YSMModelAccess.clearCache();
         ModelSyncClient.clear();
+        YsmWheelPlayback.clear();
+        com.ysmef.compat.renderer.YsmWheelAnimationState.invalidate();
     }
 
     @SubscribeEvent

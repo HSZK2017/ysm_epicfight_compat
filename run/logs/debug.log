@@ -1,0 +1,928 @@
+[178月2026 22:33:36.498] [main/INFO] [cpw.mods.modlauncher.Launcher/MODLAUNCHER]: ModLauncher running: args [--launchTarget, forgeclientuserdev, --version, MOD_DEV, --assetIndex, 5, --assetsDir, C:\Users\ASUS\.gradle\caches\forge_gradle\assets, --gameDir, ., --fml.forgeVersion, 47.4.16, --fml.mcVersion, 1.20.1, --fml.forgeGroup, net.minecraftforge, --fml.mcpVersion, 20230612.114412, --mixin.config, ysm_epicfight_compat.mixins.json, --mixin.config, ysm_epicfight_compat.eftlm.mixins.json]
+[178月2026 22:33:36.512] [main/INFO] [cpw.mods.modlauncher.Launcher/MODLAUNCHER]: ModLauncher 10.0.9+10.0.9+main.dcd20f30 starting: java version 17.0.10 by Oracle Corporation; OS Windows 11 arch amd64 version 10.0
+[178月2026 22:33:36.605] [main/DEBUG] [cpw.mods.modlauncher.LaunchServiceHandler/MODLAUNCHER]: Found launch services [fmlclientdev,forgeclient,minecraft,forgegametestserverdev,fmlserveruserdev,fmlclient,fmldatauserdev,forgeserverdev,forgeserveruserdev,forgeclientdev,forgeclientuserdev,forgeserver,forgedatadev,fmlserver,fmlclientuserdev,fmlserverdev,forgedatauserdev,testharness,forgegametestserveruserdev]
+[178月2026 22:33:36.634] [main/DEBUG] [cpw.mods.modlauncher.NameMappingServiceHandler/MODLAUNCHER]: Found naming services : [srgtomcp]
+[178月2026 22:33:36.662] [main/DEBUG] [cpw.mods.modlauncher.LaunchPluginHandler/MODLAUNCHER]: Found launch plugins: [mixin,eventbus,slf4jfixer,object_holder_definalize,runtime_enum_extender,capability_token_subclass,accesstransformer,runtimedistcleaner]
+[178月2026 22:33:36.694] [main/DEBUG] [cpw.mods.modlauncher.TransformationServicesHandler/MODLAUNCHER]: Discovering transformation services
+[178月2026 22:33:36.705] [main/DEBUG] [net.minecraftforge.fml.loading.FMLPaths/CORE]: Path GAMEDIR is E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\run
+[178月2026 22:33:36.707] [main/DEBUG] [net.minecraftforge.fml.loading.FMLPaths/CORE]: Path MODSDIR is E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\run\mods
+[178月2026 22:33:36.708] [main/DEBUG] [net.minecraftforge.fml.loading.FMLPaths/CORE]: Path CONFIGDIR is E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\run\config
+[178月2026 22:33:36.709] [main/DEBUG] [net.minecraftforge.fml.loading.FMLPaths/CORE]: Path FMLCONFIG is E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\run\config\fml.toml
+[178月2026 22:33:36.915] [main/DEBUG] [cpw.mods.modlauncher.TransformationServicesHandler/MODLAUNCHER]: Found additional transformation services from discovery services: 
+[178月2026 22:33:36.939] [main/INFO] [net.minecraftforge.fml.loading.ImmediateWindowHandler/]: Loading ImmediateWindowProvider fmlearlywindow
+[178月2026 22:33:37.181] [main/INFO] [EARLYDISPLAY/]: Trying GL version 4.6
+[178月2026 22:33:37.810] [main/INFO] [EARLYDISPLAY/]: Requested GL version 4.6 got version 4.6
+[178月2026 22:33:38.097] [main/DEBUG] [cpw.mods.modlauncher.TransformationServicesHandler/MODLAUNCHER]: Found transformer services : [mixin,fml]
+[178月2026 22:33:38.098] [main/DEBUG] [cpw.mods.modlauncher.TransformationServicesHandler/MODLAUNCHER]: Transformation services loading
+[178月2026 22:33:38.099] [main/DEBUG] [cpw.mods.modlauncher.TransformationServiceDecorator/MODLAUNCHER]: Loading service mixin
+[178月2026 22:33:38.102] [main/DEBUG] [cpw.mods.modlauncher.TransformationServiceDecorator/MODLAUNCHER]: Loaded service mixin
+[178月2026 22:33:38.103] [main/DEBUG] [cpw.mods.modlauncher.TransformationServiceDecorator/MODLAUNCHER]: Loading service fml
+[178月2026 22:33:38.105] [main/DEBUG] [net.minecraftforge.fml.loading.LauncherVersion/CORE]: Found FMLLauncher version 1.0
+[178月2026 22:33:38.109] [main/DEBUG] [net.minecraftforge.fml.loading.FMLLoader/CORE]: FML 1.0 loading
+[178月2026 22:33:38.113] [main/DEBUG] [net.minecraftforge.fml.loading.FMLLoader/CORE]: FML found ModLauncher version : 10.0.9+10.0.9+main.dcd20f30
+[178月2026 22:33:38.114] [main/DEBUG] [net.minecraftforge.fml.loading.FMLLoader/CORE]: Requesting CoreMods to not apply the fix for ASMAPI.findFirstInstructionBefore by default
+[178月2026 22:33:38.118] [main/DEBUG] [net.minecraftforge.fml.loading.FMLLoader/CORE]: FML found AccessTransformer version : 8.0.4+66+master.c09db6d7
+[178月2026 22:33:38.119] [main/DEBUG] [net.minecraftforge.fml.loading.FMLLoader/CORE]: FML found EventBus version : 6.2.33
+[178月2026 22:33:38.122] [main/DEBUG] [net.minecraftforge.fml.loading.FMLLoader/CORE]: Found Runtime Dist Cleaner
+[178月2026 22:33:38.130] [main/DEBUG] [net.minecraftforge.coremod.CoreModEngine/]: CoreMods will preserve legacy behavior of ASMAPI.findFirstInstructionBefore for backwards-compatibility
+[178月2026 22:33:38.131] [main/DEBUG] [net.minecraftforge.fml.loading.FMLLoader/CORE]: FML found CoreMod version : 5.2.4
+[178月2026 22:33:38.134] [main/DEBUG] [net.minecraftforge.fml.loading.FMLLoader/CORE]: Found ForgeSPI package implementation version 7.0.1+7.0.1+master.d2b38bf6
+[178月2026 22:33:38.138] [main/DEBUG] [net.minecraftforge.fml.loading.FMLLoader/CORE]: Found ForgeSPI package specification 5
+[178月2026 22:33:38.140] [main/DEBUG] [cpw.mods.modlauncher.TransformationServiceDecorator/MODLAUNCHER]: Loaded service fml
+[178月2026 22:33:38.143] [main/DEBUG] [cpw.mods.modlauncher.TransformationServicesHandler/MODLAUNCHER]: Configuring option handling for services
+[178月2026 22:33:38.156] [main/DEBUG] [cpw.mods.modlauncher.TransformationServicesHandler/MODLAUNCHER]: Transformation services initializing
+[178月2026 22:33:38.158] [main/DEBUG] [cpw.mods.modlauncher.TransformationServiceDecorator/MODLAUNCHER]: Initializing transformation service mixin
+[178月2026 22:33:38.201] [main/DEBUG] [mixin/]: MixinService [ModLauncher] was successfully booted in cpw.mods.cl.ModuleClassLoader@e056f20
+[178月2026 22:33:38.286] [main/INFO] [mixin/]: SpongePowered MIXIN Subsystem Version=0.8.5 Source=union:/C:/Users/ASUS/.gradle/caches/modules-2/files-2.1/org.spongepowered/mixin/0.8.5/9d1c0c3a304ae6697ecd477218fa61b850bf57fc/mixin-0.8.5.jar%23128!/ Service=ModLauncher Env=CLIENT
+[178月2026 22:33:38.306] [main/DEBUG] [mixin/]: Initialising Mixin Platform Manager
+[178月2026 22:33:38.307] [main/DEBUG] [mixin/]: Adding mixin platform agents for container ModLauncher Root Container(ModLauncher:4f56a0a2)
+[178月2026 22:33:38.310] [main/DEBUG] [mixin/]: Instancing new MixinPlatformAgentMinecraftForge for ModLauncher Root Container(ModLauncher:4f56a0a2)
+[178月2026 22:33:38.311] [main/DEBUG] [mixin/]: MixinPlatformAgentMinecraftForge rejected container ModLauncher Root Container(ModLauncher:4f56a0a2)
+[178月2026 22:33:38.315] [main/DEBUG] [mixin/]: Instancing new MixinPlatformAgentDefault for ModLauncher Root Container(ModLauncher:4f56a0a2)
+[178月2026 22:33:38.318] [main/DEBUG] [mixin/]: MixinPlatformAgentDefault accepted container ModLauncher Root Container(ModLauncher:4f56a0a2)
+[178月2026 22:33:38.333] [main/DEBUG] [cpw.mods.modlauncher.TransformationServiceDecorator/MODLAUNCHER]: Initialized transformation service mixin
+[178月2026 22:33:38.334] [main/DEBUG] [cpw.mods.modlauncher.TransformationServiceDecorator/MODLAUNCHER]: Initializing transformation service fml
+[178月2026 22:33:38.337] [main/DEBUG] [net.minecraftforge.fml.loading.FMLServiceProvider/CORE]: Setting up basic FML game directories
+[178月2026 22:33:38.342] [main/DEBUG] [net.minecraftforge.fml.loading.FMLPaths/CORE]: Path GAMEDIR is E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\run
+[178月2026 22:33:38.344] [main/DEBUG] [net.minecraftforge.fml.loading.FMLPaths/CORE]: Path MODSDIR is E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\run\mods
+[178月2026 22:33:38.345] [main/DEBUG] [net.minecraftforge.fml.loading.FMLPaths/CORE]: Path CONFIGDIR is E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\run\config
+[178月2026 22:33:38.347] [main/DEBUG] [net.minecraftforge.fml.loading.FMLPaths/CORE]: Path FMLCONFIG is E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\run\config\fml.toml
+[178月2026 22:33:38.349] [main/DEBUG] [net.minecraftforge.fml.loading.FMLServiceProvider/CORE]: Loading configuration
+[178月2026 22:33:38.359] [main/DEBUG] [net.minecraftforge.fml.loading.FMLServiceProvider/CORE]: Preparing ModFile
+[178月2026 22:33:38.374] [main/DEBUG] [net.minecraftforge.fml.loading.FMLServiceProvider/CORE]: Preparing launch handler
+[178月2026 22:33:38.377] [main/DEBUG] [net.minecraftforge.fml.loading.FMLLoader/CORE]: Using forgeclientuserdev as launch service
+[178月2026 22:33:38.389] [pool-2-thread-1/INFO] [EARLYDISPLAY/]: GL info: AMD Radeon(TM) Graphics GL version 4.6.0 Core Profile Context 26.5.2.260413, ATI Technologies Inc.
+[178月2026 22:33:38.439] [main/DEBUG] [net.minecraftforge.fml.loading.FMLLoader/CORE]: Received command line version data  : VersionInfo[forgeVersion=47.4.16, mcVersion=1.20.1, mcpVersion=20230612.114412, forgeGroup=net.minecraftforge]
+[178月2026 22:33:38.444] [main/DEBUG] [cpw.mods.modlauncher.TransformationServiceDecorator/MODLAUNCHER]: Initialized transformation service fml
+[178月2026 22:33:38.447] [main/DEBUG] [cpw.mods.modlauncher.NameMappingServiceHandler/MODLAUNCHER]: Current naming domain is 'mcp'
+[178月2026 22:33:38.449] [main/DEBUG] [cpw.mods.modlauncher.NameMappingServiceHandler/MODLAUNCHER]: Identified name mapping providers {srg=srgtomcp:1234}
+[178月2026 22:33:38.450] [main/DEBUG] [cpw.mods.modlauncher.TransformationServicesHandler/MODLAUNCHER]: Transformation services begin scanning
+[178月2026 22:33:38.453] [main/DEBUG] [cpw.mods.modlauncher.TransformationServiceDecorator/MODLAUNCHER]: Beginning scan trigger - transformation service mixin
+[178月2026 22:33:38.455] [main/DEBUG] [cpw.mods.modlauncher.TransformationServiceDecorator/MODLAUNCHER]: End scan trigger - transformation service mixin
+[178月2026 22:33:38.456] [main/DEBUG] [cpw.mods.modlauncher.TransformationServiceDecorator/MODLAUNCHER]: Beginning scan trigger - transformation service fml
+[178月2026 22:33:38.457] [main/DEBUG] [net.minecraftforge.fml.loading.FMLServiceProvider/CORE]: Initiating mod scan
+[178月2026 22:33:38.489] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModListHandler/CORE]: Found mod coordinates from lists: []
+[178月2026 22:33:38.497] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModDiscoverer/CORE]: Found Mod Locators : (mods folder:null),(maven libs:null),(exploded directory:null),(minecraft:null),(userdev classpath:null)
+[178月2026 22:33:38.498] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModDiscoverer/CORE]: Found Dependency Locators : (JarInJar:null)
+[178月2026 22:33:38.524] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Considering mod file candidate E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\run\mods\epic_fight_avalon-20.12.6.4.jar
+[178月2026 22:33:38.628] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileInfo/LOADING]: Found valid mod file epic_fight_avalon-20.12.6.4.jar with {epic_fight_avalon} mods - versions {20.12.6.4}
+[178月2026 22:33:38.637] [main/DEBUG] [net.minecraftforge.fml.loading.targets.CommonLaunchHandler/CORE]: Got mod coordinates ysm_epicfight_compat%%E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\resources\main;ysm_epicfight_compat%%E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\classes\java\main from env
+[178月2026 22:33:38.641] [main/DEBUG] [net.minecraftforge.fml.loading.targets.CommonLaunchHandler/CORE]: Found supplied mod coordinates [{ysm_epicfight_compat=[E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\resources\main, E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\classes\java\main]}]
+[178月2026 22:33:39.112] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileInfo/LOADING]: Found valid mod file forge-1.20.1-47.4.16_mapped_parchment_2023.09.03-1.20.1-recomp.jar with {minecraft} mods - versions {1.20.1}
+[178月2026 22:33:39.143] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Considering mod file candidate C:\Users\ASUS\.gradle\caches\modules-2\files-2.1\net.minecraftforge\javafmllanguage\1.20.1-47.4.16\4de914f18f755c1d5e11d9842c52e48312928187\javafmllanguage-1.20.1-47.4.16.jar
+[178月2026 22:33:39.144] [main/WARN] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Mod file C:\Users\ASUS\.gradle\caches\modules-2\files-2.1\net.minecraftforge\javafmllanguage\1.20.1-47.4.16\4de914f18f755c1d5e11d9842c52e48312928187\javafmllanguage-1.20.1-47.4.16.jar is missing mods.toml file
+[178月2026 22:33:39.158] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Considering mod file candidate C:\Users\ASUS\.gradle\caches\modules-2\files-2.1\net.minecraftforge\lowcodelanguage\1.20.1-47.4.16\8de956db8928e6196ccdf9f39fa59fedd5edbf0a\lowcodelanguage-1.20.1-47.4.16.jar
+[178月2026 22:33:39.159] [main/WARN] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Mod file C:\Users\ASUS\.gradle\caches\modules-2\files-2.1\net.minecraftforge\lowcodelanguage\1.20.1-47.4.16\8de956db8928e6196ccdf9f39fa59fedd5edbf0a\lowcodelanguage-1.20.1-47.4.16.jar is missing mods.toml file
+[178月2026 22:33:39.177] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Considering mod file candidate C:\Users\ASUS\.gradle\caches\modules-2\files-2.1\net.minecraftforge\mclanguage\1.20.1-47.4.16\a23beeb33d63c395afee6fc9a5dd27008ab45743\mclanguage-1.20.1-47.4.16.jar
+[178月2026 22:33:39.177] [main/WARN] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Mod file C:\Users\ASUS\.gradle\caches\modules-2\files-2.1\net.minecraftforge\mclanguage\1.20.1-47.4.16\a23beeb33d63c395afee6fc9a5dd27008ab45743\mclanguage-1.20.1-47.4.16.jar is missing mods.toml file
+[178月2026 22:33:39.191] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Considering mod file candidate C:\Users\ASUS\.gradle\caches\modules-2\files-2.1\net.minecraftforge\fmlcore\1.20.1-47.4.16\2dd456356718e73c81a72bb33fd713863b5c6beb\fmlcore-1.20.1-47.4.16.jar
+[178月2026 22:33:39.192] [main/WARN] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Mod file C:\Users\ASUS\.gradle\caches\modules-2\files-2.1\net.minecraftforge\fmlcore\1.20.1-47.4.16\2dd456356718e73c81a72bb33fd713863b5c6beb\fmlcore-1.20.1-47.4.16.jar is missing mods.toml file
+[178月2026 22:33:39.199] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Considering mod file candidate E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\resources\main
+[178月2026 22:33:39.204] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileInfo/LOADING]: Found valid mod file main with {ysm_epicfight_compat} mods - versions {1.5.2}
+[178月2026 22:33:39.205] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Considering mod file candidate /
+[178月2026 22:33:39.216] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileInfo/LOADING]: Found valid mod file  with {forge} mods - versions {47.4.16}
+[178月2026 22:33:39.264] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Considering mod file candidate C:\Users\ASUS\.gradle\caches\forge_gradle\deobf_dependencies\maven\modrinth\epic-fight\20.14.17-mc1.20.1-forge_mapped_parchment_2023.09.03-1.20.1\epic-fight-20.14.17-mc1.20.1-forge_mapped_parchment_2023.09.03-1.20.1.jar
+[178月2026 22:33:39.267] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileInfo/LOADING]: Found valid mod file epic-fight-20.14.17-mc1.20.1-forge_mapped_parchment_2023.09.03-1.20.1.jar with {epicfight} mods - versions {20.14.17}
+[178月2026 22:33:39.282] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Considering mod file candidate C:\Users\ASUS\.gradle\caches\forge_gradle\deobf_dependencies\libs\ysm\2.6.5_mapped_parchment_2023.09.03-1.20.1\ysm-2.6.5_mapped_parchment_2023.09.03-1.20.1.jar
+[178月2026 22:33:39.289] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileInfo/LOADING]: Found valid mod file ysm-2.6.5_mapped_parchment_2023.09.03-1.20.1.jar with {yes_steve_model} mods - versions {2.6.5-forge+mc1.20.1}
+[178月2026 22:33:39.301] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Considering mod file candidate C:\Users\ASUS\.gradle\caches\forge_gradle\deobf_dependencies\libs\touhoulittlemaid\1.5.3_mapped_parchment_2023.09.03-1.20.1\touhoulittlemaid-1.5.3_mapped_parchment_2023.09.03-1.20.1.jar
+[178月2026 22:33:39.309] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileInfo/LOADING]: Found valid mod file touhoulittlemaid-1.5.3_mapped_parchment_2023.09.03-1.20.1.jar with {touhou_little_maid} mods - versions {1.5.3-forge+mc1.20.1}
+[178月2026 22:33:39.319] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Considering mod file candidate C:\Users\ASUS\.gradle\caches\forge_gradle\deobf_dependencies\libs\ef_tlm\1.1.1_mapped_parchment_2023.09.03-1.20.1\ef_tlm-1.1.1_mapped_parchment_2023.09.03-1.20.1.jar
+[178月2026 22:33:39.324] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileInfo/LOADING]: Found valid mod file ef_tlm-1.1.1_mapped_parchment_2023.09.03-1.20.1.jar with {ef_tlm} mods - versions {1.1.1}
+[178月2026 22:33:39.341] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Considering mod file candidate C:\Users\ASUS\.gradle\caches\forge_gradle\deobf_dependencies\maven\modrinth\epic-fight\20.14.17-mc1.20.1-forge_mapped_parchment_2023.09.03-1.20.1\epic-fight-20.14.17-mc1.20.1-forge_mapped_parchment_2023.09.03-1.20.1.jar
+[178月2026 22:33:39.344] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileInfo/LOADING]: Found valid mod file epic-fight-20.14.17-mc1.20.1-forge_mapped_parchment_2023.09.03-1.20.1.jar with {epicfight} mods - versions {20.14.17}
+[178月2026 22:33:39.363] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Considering mod file candidate C:\Users\ASUS\.gradle\caches\forge_gradle\deobf_dependencies\libs\ysm\2.6.5_mapped_parchment_2023.09.03-1.20.1\ysm-2.6.5_mapped_parchment_2023.09.03-1.20.1.jar
+[178月2026 22:33:39.367] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileInfo/LOADING]: Found valid mod file ysm-2.6.5_mapped_parchment_2023.09.03-1.20.1.jar with {yes_steve_model} mods - versions {2.6.5-forge+mc1.20.1}
+[178月2026 22:33:39.382] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Considering mod file candidate C:\Users\ASUS\.gradle\caches\forge_gradle\deobf_dependencies\libs\touhoulittlemaid\1.5.3_mapped_parchment_2023.09.03-1.20.1\touhoulittlemaid-1.5.3_mapped_parchment_2023.09.03-1.20.1.jar
+[178月2026 22:33:39.400] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileInfo/LOADING]: Found valid mod file touhoulittlemaid-1.5.3_mapped_parchment_2023.09.03-1.20.1.jar with {touhou_little_maid} mods - versions {1.5.3-forge+mc1.20.1}
+[178月2026 22:33:39.415] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Considering mod file candidate C:\Users\ASUS\.gradle\caches\forge_gradle\deobf_dependencies\libs\ef_tlm\1.1.1_mapped_parchment_2023.09.03-1.20.1\ef_tlm-1.1.1_mapped_parchment_2023.09.03-1.20.1.jar
+[178月2026 22:33:39.424] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileInfo/LOADING]: Found valid mod file ef_tlm-1.1.1_mapped_parchment_2023.09.03-1.20.1.jar with {ef_tlm} mods - versions {1.1.1}
+[178月2026 22:33:39.462] [main/DEBUG] [net.minecraftforge.fml.loading.UniqueModListBuilder/]: Found 2 mods for first modid ef_tlm, selecting most recent based on version data
+[178月2026 22:33:39.467] [main/DEBUG] [net.minecraftforge.fml.loading.UniqueModListBuilder/]: Selected file ef_tlm-1.1.1_mapped_parchment_2023.09.03-1.20.1.jar for modid ef_tlm with version 1.1.1
+[178月2026 22:33:39.469] [main/DEBUG] [net.minecraftforge.fml.loading.UniqueModListBuilder/]: Found 2 mods for first modid yes_steve_model, selecting most recent based on version data
+[178月2026 22:33:39.469] [main/DEBUG] [net.minecraftforge.fml.loading.UniqueModListBuilder/]: Selected file ysm-2.6.5_mapped_parchment_2023.09.03-1.20.1.jar for modid yes_steve_model with version 2.6.5-forge+mc1.20.1
+[178月2026 22:33:39.469] [main/DEBUG] [net.minecraftforge.fml.loading.UniqueModListBuilder/]: Found 2 mods for first modid touhou_little_maid, selecting most recent based on version data
+[178月2026 22:33:39.471] [main/DEBUG] [net.minecraftforge.fml.loading.UniqueModListBuilder/]: Selected file touhoulittlemaid-1.5.3_mapped_parchment_2023.09.03-1.20.1.jar for modid touhou_little_maid with version 1.5.3-forge+mc1.20.1
+[178月2026 22:33:39.472] [main/DEBUG] [net.minecraftforge.fml.loading.UniqueModListBuilder/]: Found 2 mods for first modid epicfight, selecting most recent based on version data
+[178月2026 22:33:39.472] [main/DEBUG] [net.minecraftforge.fml.loading.UniqueModListBuilder/]: Selected file epic-fight-20.14.17-mc1.20.1-forge_mapped_parchment_2023.09.03-1.20.1.jar for modid epicfight with version 20.14.17
+[178月2026 22:33:39.494] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.AbstractJarFileDependencyLocator/]: Failed to load resource META-INF\jarjar\metadata.json from forge-1.20.1-47.4.16_mapped_parchment_2023.09.03-1.20.1-recomp.jar, it does not contain dependency information.
+[178月2026 22:33:39.496] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.AbstractJarFileDependencyLocator/]: Failed to load resource META-INF\jarjar\metadata.json from main, it does not contain dependency information.
+[178月2026 22:33:39.497] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.AbstractJarFileDependencyLocator/]: Failed to load resource META-INF\jarjar\metadata.json from ef_tlm-1.1.1_mapped_parchment_2023.09.03-1.20.1.jar, it does not contain dependency information.
+[178月2026 22:33:39.498] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.AbstractJarFileDependencyLocator/]: Failed to load resource META-INF\jarjar\metadata.json from , it does not contain dependency information.
+[178月2026 22:33:39.499] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.AbstractJarFileDependencyLocator/]: Failed to load resource META-INF\jarjar\metadata.json from touhoulittlemaid-1.5.3_mapped_parchment_2023.09.03-1.20.1.jar, it does not contain dependency information.
+[178月2026 22:33:39.499] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.AbstractJarFileDependencyLocator/]: Failed to load resource META-INF\jarjar\metadata.json from epic_fight_avalon-20.12.6.4.jar, it does not contain dependency information.
+[178月2026 22:33:39.500] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.AbstractJarFileDependencyLocator/]: Failed to load resource META-INF\jarjar\metadata.json from epic-fight-20.14.17-mc1.20.1-forge_mapped_parchment_2023.09.03-1.20.1.jar, it does not contain dependency information.
+[178月2026 22:33:39.501] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.AbstractJarFileDependencyLocator/]: Failed to load resource META-INF\jarjar\metadata.json from mclanguage-1.20.1-47.4.16.jar, it does not contain dependency information.
+[178月2026 22:33:39.501] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.AbstractJarFileDependencyLocator/]: Failed to load resource META-INF\jarjar\metadata.json from javafmllanguage-1.20.1-47.4.16.jar, it does not contain dependency information.
+[178月2026 22:33:39.503] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.AbstractJarFileDependencyLocator/]: Failed to load resource META-INF\jarjar\metadata.json from fmlcore-1.20.1-47.4.16.jar, it does not contain dependency information.
+[178月2026 22:33:39.504] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.AbstractJarFileDependencyLocator/]: Failed to load resource META-INF\jarjar\metadata.json from lowcodelanguage-1.20.1-47.4.16.jar, it does not contain dependency information.
+[178月2026 22:33:39.700] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Considering mod file candidate 
+[178月2026 22:33:39.702] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileInfo/LOADING]: Found valid mod file mixinextras-forge-0.3.6.jar with {mixinextras} mods - versions {0.3.6}
+[178月2026 22:33:39.718] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.AbstractJarFileDependencyLocator/]: Failed to load resource META-INF\jarjar\metadata.json from MixinExtras-0.3.6.jar, it does not contain dependency information.
+[178月2026 22:33:39.788] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Considering mod file candidate 
+[178月2026 22:33:39.795] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileInfo/LOADING]: Found valid mod file mixinextras-forge-0.3.6.jar with {mixinextras} mods - versions {0.3.6}
+[178月2026 22:33:39.820] [main/INFO] [net.minecraftforge.fml.loading.moddiscovery.JarInJarDependencyLocator/]: Found 2 dependencies adding them to mods collection
+[178月2026 22:33:39.833] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileInfo/LOADING]: Found valid mod file forge-1.20.1-47.4.16_mapped_parchment_2023.09.03-1.20.1-recomp.jar with {minecraft} mods - versions {1.20.1}
+[178月2026 22:33:39.849] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFile/LOADING]: Loading mod file C:\Users\ASUS\.gradle\caches\forge_gradle\minecraft_user_repo\net\minecraftforge\forge\1.20.1-47.4.16_mapped_parchment_2023.09.03-1.20.1\forge-1.20.1-47.4.16_mapped_parchment_2023.09.03-1.20.1-recomp.jar with languages [LanguageSpec[languageName=minecraft, acceptedVersions=1]]
+[178月2026 22:33:39.855] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Considering mod file candidate E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\resources\main
+[178月2026 22:33:39.861] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileInfo/LOADING]: Found valid mod file main with {ysm_epicfight_compat} mods - versions {1.5.2}
+[178月2026 22:33:39.863] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFile/LOADING]: Loading mod file E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\resources\main with languages [LanguageSpec[languageName=javafml, acceptedVersions=[47,)]]
+[178月2026 22:33:39.864] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Considering mod file candidate C:\Users\ASUS\.gradle\caches\forge_gradle\deobf_dependencies\libs\ysm\2.6.5_mapped_parchment_2023.09.03-1.20.1\ysm-2.6.5_mapped_parchment_2023.09.03-1.20.1.jar
+[178月2026 22:33:39.869] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileInfo/LOADING]: Found valid mod file ysm-2.6.5_mapped_parchment_2023.09.03-1.20.1.jar with {yes_steve_model} mods - versions {2.6.5-forge+mc1.20.1}
+[178月2026 22:33:39.871] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFile/LOADING]: Loading mod file C:\Users\ASUS\.gradle\caches\forge_gradle\deobf_dependencies\libs\ysm\2.6.5_mapped_parchment_2023.09.03-1.20.1\ysm-2.6.5_mapped_parchment_2023.09.03-1.20.1.jar with languages [LanguageSpec[languageName=javafml, acceptedVersions=[46,)]]
+[178月2026 22:33:39.872] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Considering mod file candidate C:\Users\ASUS\.gradle\caches\forge_gradle\deobf_dependencies\libs\ef_tlm\1.1.1_mapped_parchment_2023.09.03-1.20.1\ef_tlm-1.1.1_mapped_parchment_2023.09.03-1.20.1.jar
+[178月2026 22:33:39.877] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileInfo/LOADING]: Found valid mod file ef_tlm-1.1.1_mapped_parchment_2023.09.03-1.20.1.jar with {ef_tlm} mods - versions {1.1.1}
+[178月2026 22:33:39.878] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFile/LOADING]: Loading mod file C:\Users\ASUS\.gradle\caches\forge_gradle\deobf_dependencies\libs\ef_tlm\1.1.1_mapped_parchment_2023.09.03-1.20.1\ef_tlm-1.1.1_mapped_parchment_2023.09.03-1.20.1.jar with languages [LanguageSpec[languageName=javafml, acceptedVersions=[47,)]]
+[178月2026 22:33:39.879] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Considering mod file candidate /
+[178月2026 22:33:39.881] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileInfo/LOADING]: Found valid mod file  with {forge} mods - versions {47.4.16}
+[178月2026 22:33:39.883] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFile/LOADING]: Loading mod file / with languages [LanguageSpec[languageName=javafml, acceptedVersions=[24,]]]
+[178月2026 22:33:39.893] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Found coremod field_to_method with Javascript path coremods/field_to_method.js
+[178月2026 22:33:39.893] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Found coremod field_to_instanceof with Javascript path coremods/field_to_instanceof.js
+[178月2026 22:33:39.893] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Found coremod add_bouncer_method with Javascript path coremods/add_bouncer_method.js
+[178月2026 22:33:39.894] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Found coremod method_redirector with Javascript path coremods/method_redirector.js
+[178月2026 22:33:39.894] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFile/LOADING]: Found coremod coremods/field_to_method.js
+[178月2026 22:33:39.894] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFile/LOADING]: Found coremod coremods/field_to_instanceof.js
+[178月2026 22:33:39.895] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFile/LOADING]: Found coremod coremods/add_bouncer_method.js
+[178月2026 22:33:39.897] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFile/LOADING]: Found coremod coremods/method_redirector.js
+[178月2026 22:33:39.899] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Considering mod file candidate C:\Users\ASUS\.gradle\caches\forge_gradle\deobf_dependencies\libs\touhoulittlemaid\1.5.3_mapped_parchment_2023.09.03-1.20.1\touhoulittlemaid-1.5.3_mapped_parchment_2023.09.03-1.20.1.jar
+[178月2026 22:33:39.904] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileInfo/LOADING]: Found valid mod file touhoulittlemaid-1.5.3_mapped_parchment_2023.09.03-1.20.1.jar with {touhou_little_maid} mods - versions {1.5.3-forge+mc1.20.1}
+[178月2026 22:33:39.906] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFile/LOADING]: Loading mod file C:\Users\ASUS\.gradle\caches\forge_gradle\deobf_dependencies\libs\touhoulittlemaid\1.5.3_mapped_parchment_2023.09.03-1.20.1\touhoulittlemaid-1.5.3_mapped_parchment_2023.09.03-1.20.1.jar with languages [LanguageSpec[languageName=javafml, acceptedVersions=[46,)]]
+[178月2026 22:33:39.907] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Considering mod file candidate E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\run\mods\epic_fight_avalon-20.12.6.4.jar
+[178月2026 22:33:39.913] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileInfo/LOADING]: Found valid mod file epic_fight_avalon-20.12.6.4.jar with {epic_fight_avalon} mods - versions {20.12.6.4}
+[178月2026 22:33:39.914] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFile/LOADING]: Loading mod file E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\run\mods\epic_fight_avalon-20.12.6.4.jar with languages [LanguageSpec[languageName=javafml, acceptedVersions=[47,)]]
+[178月2026 22:33:39.915] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Considering mod file candidate C:\Users\ASUS\.gradle\caches\forge_gradle\deobf_dependencies\maven\modrinth\epic-fight\20.14.17-mc1.20.1-forge_mapped_parchment_2023.09.03-1.20.1\epic-fight-20.14.17-mc1.20.1-forge_mapped_parchment_2023.09.03-1.20.1.jar
+[178月2026 22:33:39.916] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileInfo/LOADING]: Found valid mod file epic-fight-20.14.17-mc1.20.1-forge_mapped_parchment_2023.09.03-1.20.1.jar with {epicfight} mods - versions {20.14.17}
+[178月2026 22:33:39.917] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFile/LOADING]: Loading mod file C:\Users\ASUS\.gradle\caches\forge_gradle\deobf_dependencies\maven\modrinth\epic-fight\20.14.17-mc1.20.1-forge_mapped_parchment_2023.09.03-1.20.1\epic-fight-20.14.17-mc1.20.1-forge_mapped_parchment_2023.09.03-1.20.1.jar with languages [LanguageSpec[languageName=javafml, acceptedVersions=[47,)]]
+[178月2026 22:33:39.918] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFile/LOADING]: Loading mod file  with languages []
+[178月2026 22:33:39.920] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Considering mod file candidate 
+[178月2026 22:33:39.922] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileInfo/LOADING]: Found valid mod file mixinextras-forge-0.3.6.jar with {mixinextras} mods - versions {0.3.6}
+[178月2026 22:33:39.923] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFile/LOADING]: Loading mod file  with languages [LanguageSpec[languageName=javafml, acceptedVersions=*]]
+[178月2026 22:33:39.924] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFile/LOADING]: Loading mod file  with languages []
+[178月2026 22:33:39.926] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileParser/LOADING]: Considering mod file candidate 
+[178月2026 22:33:39.928] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFileInfo/LOADING]: Found valid mod file mixinextras-forge-0.3.6.jar with {mixinextras} mods - versions {0.3.6}
+[178月2026 22:33:39.928] [main/DEBUG] [net.minecraftforge.fml.loading.moddiscovery.ModFile/LOADING]: Loading mod file  with languages [LanguageSpec[languageName=javafml, acceptedVersions=*]]
+[178月2026 22:33:39.931] [main/DEBUG] [cpw.mods.modlauncher.TransformationServiceDecorator/MODLAUNCHER]: End scan trigger - transformation service fml
+[178月2026 22:33:39.954] [main/DEBUG] [net.minecraftforge.fml.loading.LanguageLoadingProvider/CORE]: Found 3 language providers
+[178月2026 22:33:39.956] [main/DEBUG] [net.minecraftforge.fml.loading.LanguageLoadingProvider/CORE]: Found language provider minecraft, version 1.0
+[178月2026 22:33:39.959] [main/DEBUG] [net.minecraftforge.fml.loading.LanguageLoadingProvider/CORE]: Found language provider lowcodefml, version 47
+[178月2026 22:33:39.961] [main/DEBUG] [net.minecraftforge.fml.loading.LanguageLoadingProvider/CORE]: Found language provider javafml, version 47
+[178月2026 22:33:39.974] [main/DEBUG] [net.minecraftforge.fml.loading.UniqueModListBuilder/]: Found 2 mods for first modid MixinExtras, selecting most recent based on version data
+[178月2026 22:33:39.974] [main/DEBUG] [net.minecraftforge.fml.loading.UniqueModListBuilder/]: Selected file MixinExtras-0.3.6.jar for modid MixinExtras with version 0.0NONE
+[178月2026 22:33:39.975] [main/DEBUG] [net.minecraftforge.fml.loading.UniqueModListBuilder/]: Found 2 mods for first modid mixinextras, selecting most recent based on version data
+[178月2026 22:33:39.975] [main/DEBUG] [net.minecraftforge.fml.loading.UniqueModListBuilder/]: Selected file mixinextras-forge-0.3.6.jar for modid mixinextras with version 0.3.6
+[178月2026 22:33:39.985] [main/DEBUG] [net.minecraftforge.fml.loading.ModSorter/]: Configured system mods: [minecraft, forge]
+[178月2026 22:33:39.986] [main/DEBUG] [net.minecraftforge.fml.loading.ModSorter/]: Found system mod: minecraft
+[178月2026 22:33:39.987] [main/DEBUG] [net.minecraftforge.fml.loading.ModSorter/]: Found system mod: forge
+[178月2026 22:33:39.995] [main/DEBUG] [net.minecraftforge.fml.loading.ModSorter/LOADING]: Found 23 mod requirements (18 mandatory, 5 optional)
+[178月2026 22:33:39.997] [main/DEBUG] [net.minecraftforge.fml.loading.ModSorter/LOADING]: Found 0 mod requirements missing (0 mandatory, 0 optional)
+[178月2026 22:33:41.120] [main/DEBUG] [net.minecraftforge.fml.loading.MCPNamingService/CORE]: Loaded 34318 method mappings from methods.csv
+[178月2026 22:33:41.169] [main/DEBUG] [net.minecraftforge.fml.loading.MCPNamingService/CORE]: Loaded 31014 field mappings from fields.csv
+[178月2026 22:33:41.303] [main/DEBUG] [cpw.mods.modlauncher.TransformationServicesHandler/MODLAUNCHER]: Transformation services loading transformers
+[178月2026 22:33:41.305] [main/DEBUG] [cpw.mods.modlauncher.TransformationServiceDecorator/MODLAUNCHER]: Initializing transformers for transformation service mixin
+[178月2026 22:33:41.307] [main/DEBUG] [cpw.mods.modlauncher.TransformationServiceDecorator/MODLAUNCHER]: Initialized transformers for transformation service mixin
+[178月2026 22:33:41.307] [main/DEBUG] [cpw.mods.modlauncher.TransformationServiceDecorator/MODLAUNCHER]: Initializing transformers for transformation service fml
+[178月2026 22:33:41.308] [main/DEBUG] [net.minecraftforge.fml.loading.FMLServiceProvider/CORE]: Loading coremod transformers
+[178月2026 22:33:41.308] [main/DEBUG] [net.minecraftforge.coremod.CoreModEngine/COREMOD]: Loading CoreMod from coremods/field_to_method.js
+[178月2026 22:33:41.789] [main/DEBUG] [net.minecraftforge.coremod.CoreModEngine/COREMOD]: CoreMod loaded successfully
+[178月2026 22:33:41.789] [main/DEBUG] [net.minecraftforge.coremod.CoreModEngine/COREMOD]: Loading CoreMod from coremods/field_to_instanceof.js
+[178月2026 22:33:42.457] [main/DEBUG] [net.minecraftforge.coremod.CoreModEngine/COREMOD]: CoreMod loaded successfully
+[178月2026 22:33:42.458] [main/DEBUG] [net.minecraftforge.coremod.CoreModEngine/COREMOD]: Loading CoreMod from coremods/add_bouncer_method.js
+[178月2026 22:33:42.575] [main/DEBUG] [net.minecraftforge.coremod.CoreModEngine/COREMOD]: CoreMod loaded successfully
+[178月2026 22:33:42.575] [main/DEBUG] [net.minecraftforge.coremod.CoreModEngine/COREMOD]: Loading CoreMod from coremods/method_redirector.js
+[178月2026 22:33:42.829] [main/DEBUG] [net.minecraftforge.coremod.CoreModEngine/COREMOD]: CoreMod loaded successfully
+[178月2026 22:33:42.873] [main/DEBUG] [cpw.mods.modlauncher.TransformStore/MODLAUNCHER]: Adding transformer net.minecraftforge.coremod.transformer.CoreModClassTransformer@3178219a to Target : CLASS {Lnet/minecraft/world/level/biome/Biome;} {} {V}
+[178月2026 22:33:42.885] [main/DEBUG] [cpw.mods.modlauncher.TransformStore/MODLAUNCHER]: Adding transformer net.minecraftforge.coremod.transformer.CoreModClassTransformer@465b38e6 to Target : CLASS {Lnet/minecraft/world/level/levelgen/structure/Structure;} {} {V}
+[178月2026 22:33:42.893] [main/DEBUG] [cpw.mods.modlauncher.TransformStore/MODLAUNCHER]: Adding transformer net.minecraftforge.coremod.transformer.CoreModClassTransformer@4b960b5b to Target : CLASS {Lnet/minecraft/world/effect/MobEffectInstance;} {} {V}
+[178月2026 22:33:42.895] [main/DEBUG] [cpw.mods.modlauncher.TransformStore/MODLAUNCHER]: Adding transformer net.minecraftforge.coremod.transformer.CoreModClassTransformer@1b13467c to Target : CLASS {Lnet/minecraft/world/level/block/LiquidBlock;} {} {V}
+[178月2026 22:33:42.897] [main/DEBUG] [cpw.mods.modlauncher.TransformStore/MODLAUNCHER]: Adding transformer net.minecraftforge.coremod.transformer.CoreModClassTransformer@7bd96822 to Target : CLASS {Lnet/minecraft/world/item/BucketItem;} {} {V}
+[178月2026 22:33:42.898] [main/DEBUG] [cpw.mods.modlauncher.TransformStore/MODLAUNCHER]: Adding transformer net.minecraftforge.coremod.transformer.CoreModClassTransformer@64dae3b7 to Target : CLASS {Lnet/minecraft/world/level/block/StairBlock;} {} {V}
+[178月2026 22:33:42.899] [main/DEBUG] [cpw.mods.modlauncher.TransformStore/MODLAUNCHER]: Adding transformer net.minecraftforge.coremod.transformer.CoreModClassTransformer@1fedf0a4 to Target : CLASS {Lnet/minecraft/world/level/block/FlowerPotBlock;} {} {V}
+[178月2026 22:33:42.909] [main/DEBUG] [cpw.mods.modlauncher.TransformStore/MODLAUNCHER]: Adding transformer net.minecraftforge.coremod.transformer.CoreModClassTransformer@1e4c6583 to Target : CLASS {Lnet/minecraft/world/item/ItemStack;} {} {V}
+[178月2026 22:33:42.913] [main/DEBUG] [cpw.mods.modlauncher.TransformStore/MODLAUNCHER]: Adding transformer net.minecraftforge.coremod.transformer.CoreModClassTransformer@2ee48610 to Target : CLASS {Lnet/minecraft/network/play/client/CClientSettingsPacket;} {} {V}
+[178月2026 22:33:42.915] [main/DEBUG] [cpw.mods.modlauncher.TransformStore/MODLAUNCHER]: Adding transformer net.minecraftforge.coremod.transformer.CoreModClassTransformer@1d901f20 to Target : CLASS {Lnet/minecraft/world/entity/raid/Raid;} {} {V}
+[178月2026 22:33:42.916] [main/DEBUG] [cpw.mods.modlauncher.TransformStore/MODLAUNCHER]: Adding transformer net.minecraftforge.coremod.transformer.CoreModClassTransformer@1d901f20 to Target : CLASS {Lnet/minecraft/world/entity/monster/Strider;} {} {V}
+[178月2026 22:33:42.919] [main/DEBUG] [cpw.mods.modlauncher.TransformStore/MODLAUNCHER]: Adding transformer net.minecraftforge.coremod.transformer.CoreModClassTransformer@1d901f20 to Target : CLASS {Lnet/minecraft/world/level/levelgen/structure/structures/WoodlandMansionPieces$WoodlandMansionPiece;} {} {V}
+[178月2026 22:33:42.919] [main/DEBUG] [cpw.mods.modlauncher.TransformStore/MODLAUNCHER]: Adding transformer net.minecraftforge.coremod.transformer.CoreModClassTransformer@1d901f20 to Target : CLASS {Lnet/minecraft/world/entity/EntityType;} {} {V}
+[178月2026 22:33:42.921] [main/DEBUG] [cpw.mods.modlauncher.TransformStore/MODLAUNCHER]: Adding transformer net.minecraftforge.coremod.transformer.CoreModClassTransformer@1d901f20 to Target : CLASS {Lnet/minecraft/world/entity/monster/Zombie;} {} {V}
+[178月2026 22:33:42.921] [main/DEBUG] [cpw.mods.modlauncher.TransformStore/MODLAUNCHER]: Adding transformer net.minecraftforge.coremod.transformer.CoreModClassTransformer@1d901f20 to Target : CLASS {Lnet/minecraft/world/level/levelgen/PatrolSpawner;} {} {V}
+[178月2026 22:33:42.922] [main/DEBUG] [cpw.mods.modlauncher.TransformStore/MODLAUNCHER]: Adding transformer net.minecraftforge.coremod.transformer.CoreModClassTransformer@1d901f20 to Target : CLASS {Lnet/minecraft/world/level/levelgen/structure/structures/OceanRuinPieces$OceanRuinPiece;} {} {V}
+[178月2026 22:33:42.924] [main/DEBUG] [cpw.mods.modlauncher.TransformStore/MODLAUNCHER]: Adding transformer net.minecraftforge.coremod.transformer.CoreModClassTransformer@1d901f20 to Target : CLASS {Lnet/minecraft/world/entity/monster/Spider;} {} {V}
+[178月2026 22:33:42.925] [main/DEBUG] [cpw.mods.modlauncher.TransformStore/MODLAUNCHER]: Adding transformer net.minecraftforge.coremod.transformer.CoreModClassTransformer@1d901f20 to Target : CLASS {Lnet/minecraft/world/entity/npc/CatSpawner;} {} {V}
+[178月2026 22:33:42.925] [main/DEBUG] [cpw.mods.modlauncher.TransformStore/MODLAUNCHER]: Adding transformer net.minecraftforge.coremod.transformer.CoreModClassTransformer@1d901f20 to Target : CLASS {Lnet/minecraft/world/entity/animal/frog/Tadpole;} {} {V}
+[178月2026 22:33:42.927] [main/DEBUG] [cpw.mods.modlauncher.TransformStore/MODLAUNCHER]: Adding transformer net.minecraftforge.coremod.transformer.CoreModClassTransformer@1d901f20 to Target : CLASS {Lnet/minecraft/world/entity/animal/horse/SkeletonTrapGoal;} {} {V}
+[178月2026 22:33:42.928] [main/DEBUG] [cpw.mods.modlauncher.TransformStore/MODLAUNCHER]: Adding transformer net.minecraftforge.coremod.transformer.CoreModClassTransformer@1d901f20 to Target : CLASS {Lnet/minecraft/world/level/NaturalSpawner;} {} {V}
+[178月2026 22:33:42.932] [main/DEBUG] [cpw.mods.modlauncher.TransformStore/MODLAUNCHER]: Adding transformer net.minecraftforge.coremod.transformer.CoreModClassTransformer@1d901f20 to Target : CLASS {Lnet/minecraft/world/entity/ai/village/VillageSiege;} {} {V}
+[178月2026 22:33:42.933] [main/DEBUG] [cpw.mods.modlauncher.TransformStore/MODLAUNCHER]: Adding transformer net.minecraftforge.coremod.transformer.CoreModClassTransformer@1d901f20 to Target : CLASS {Lnet/minecraft/world/entity/npc/Villager;} {} {V}
+[178月2026 22:33:42.934] [main/DEBUG] [cpw.mods.modlauncher.TransformStore/MODLAUNCHER]: Adding transformer net.minecraftforge.coremod.transformer.CoreModClassTransformer@1d901f20 to Target : CLASS {Lnet/minecraft/world/entity/monster/ZombieVillager;} {} {V}
+[178月2026 22:33:42.935] [main/DEBUG] [cpw.mods.modlauncher.TransformStore/MODLAUNCHER]: Adding transformer net.minecraftforge.coremod.transformer.CoreModClassTransformer@1d901f20 to Target : CLASS {Lnet/minecraft/server/commands/SummonCommand;} {} {V}
+[178月2026 22:33:42.935] [main/DEBUG] [cpw.mods.modlauncher.TransformStore/MODLAUNCHER]: Adding transformer net.minecraftforge.coremod.transformer.CoreModClassTransformer@1d901f20 to Target : CLASS {Lnet/minecraft/world/level/levelgen/PhantomSpawner;} {} {V}
+[178月2026 22:33:42.935] [main/DEBUG] [cpw.mods.modlauncher.TransformStore/MODLAUNCHER]: Adding transformer net.minecraftforge.coremod.transformer.CoreModClassTransformer@1d901f20 to Target : CLASS {Lnet/minecraft/server/commands/RaidCommand;} {} {V}
+[178月2026 22:33:42.937] [main/DEBUG] [cpw.mods.modlauncher.TransformStore/MODLAUNCHER]: Adding transformer net.minecraftforge.coremod.transformer.CoreModClassTransformer@1d901f20 to Target : CLASS {Lnet/minecraft/world/level/levelgen/structure/templatesystem/StructureTemplate;} {} {V}
+[178月2026 22:33:42.938] [main/DEBUG] [cpw.mods.modlauncher.TransformStore/MODLAUNCHER]: Adding transformer net.minecraftforge.coremod.transformer.CoreModClassTransformer@1d901f20 to Target : CLASS {Lnet/minecraft/world/entity/monster/Evoker$EvokerSummonSpellGoal;} {} {V}
+[178月2026 22:33:42.939] [main/DEBUG] [cpw.mods.modlauncher.TransformStore/MODLAUNCHER]: Adding transformer net.minecraftforge.coremod.transformer.CoreModClassTransformer@1d901f20 to Target : CLASS {Lnet/minecraft/world/level/levelgen/structure/structures/OceanMonumentPieces$OceanMonumentPiece;} {} {V}
+[178月2026 22:33:42.941] [main/DEBUG] [cpw.mods.modlauncher.TransformStore/MODLAUNCHER]: Adding transformer net.minecraftforge.coremod.transformer.CoreModClassTransformer@1d901f20 to Target : CLASS {Lnet/minecraft/world/level/levelgen/structure/structures/SwampHutPiece;} {} {V}
+[178月2026 22:33:42.941] [main/DEBUG] [cpw.mods.modlauncher.TransformationServiceDecorator/MODLAUNCHER]: Initialized transformers for transformation service fml
+[178月2026 22:33:44.243] [main/DEBUG] [mixin/]: Processing prepare() for PlatformAgent[MixinPlatformAgentDefault:ModLauncher Root Container(ModLauncher:4f56a0a2)]
+[178月2026 22:33:44.244] [main/DEBUG] [mixin/]: Registering mixin config: ysm_epicfight_compat.mixins.json
+[178月2026 22:33:44.302] [main/DEBUG] [mixin/]: Compatibility level JAVA_17 specified by ysm_epicfight_compat.mixins.json is higher than the maximum level supported by this version of mixin (JAVA_13).
+[178月2026 22:33:44.352] [main/INFO] [mixin/]: Compatibility level set to JAVA_17
+[178月2026 22:33:44.353] [main/DEBUG] [mixin/]: Registering mixin config: ysm_epicfight_compat.eftlm.mixins.json
+[178月2026 22:33:44.356] [main/DEBUG] [mixin/]: Processing launch tasks for PlatformAgent[MixinPlatformAgentDefault:ModLauncher Root Container(ModLauncher:4f56a0a2)]
+[178月2026 22:33:44.358] [main/DEBUG] [mixin/]: Adding mixin platform agents for container SecureJarResource(minecraft)
+[178月2026 22:33:44.359] [main/DEBUG] [mixin/]: Instancing new MixinPlatformAgentMinecraftForge for SecureJarResource(minecraft)
+[178月2026 22:33:44.359] [main/DEBUG] [mixin/]: MixinPlatformAgentMinecraftForge rejected container SecureJarResource(minecraft)
+[178月2026 22:33:44.360] [main/DEBUG] [mixin/]: Instancing new MixinPlatformAgentDefault for SecureJarResource(minecraft)
+[178月2026 22:33:44.360] [main/DEBUG] [mixin/]: MixinPlatformAgentDefault accepted container SecureJarResource(minecraft)
+[178月2026 22:33:44.360] [main/DEBUG] [mixin/]: Processing prepare() for PlatformAgent[MixinPlatformAgentDefault:SecureJarResource(minecraft)]
+[178月2026 22:33:44.360] [main/DEBUG] [mixin/]: Adding mixin platform agents for container SecureJarResource(mixinextras)
+[178月2026 22:33:44.362] [main/DEBUG] [mixin/]: Instancing new MixinPlatformAgentMinecraftForge for SecureJarResource(mixinextras)
+[178月2026 22:33:44.362] [main/DEBUG] [mixin/]: MixinPlatformAgentMinecraftForge rejected container SecureJarResource(mixinextras)
+[178月2026 22:33:44.364] [main/DEBUG] [mixin/]: Instancing new MixinPlatformAgentDefault for SecureJarResource(mixinextras)
+[178月2026 22:33:44.364] [main/DEBUG] [mixin/]: MixinPlatformAgentDefault accepted container SecureJarResource(mixinextras)
+[178月2026 22:33:44.365] [main/DEBUG] [mixin/]: Processing prepare() for PlatformAgent[MixinPlatformAgentDefault:SecureJarResource(mixinextras)]
+[178月2026 22:33:44.366] [main/DEBUG] [mixin/]: Registering mixin config: mixinextras.init.mixins.json
+[178月2026 22:33:44.389] [main/DEBUG] [mixin/]: Adding mixin platform agents for container SecureJarResource(yes_steve_model)
+[178月2026 22:33:44.391] [main/DEBUG] [mixin/]: Instancing new MixinPlatformAgentMinecraftForge for SecureJarResource(yes_steve_model)
+[178月2026 22:33:44.392] [main/DEBUG] [mixin/]: MixinPlatformAgentMinecraftForge rejected container SecureJarResource(yes_steve_model)
+[178月2026 22:33:44.392] [main/DEBUG] [mixin/]: Instancing new MixinPlatformAgentDefault for SecureJarResource(yes_steve_model)
+[178月2026 22:33:44.393] [main/DEBUG] [mixin/]: MixinPlatformAgentDefault accepted container SecureJarResource(yes_steve_model)
+[178月2026 22:33:44.393] [main/DEBUG] [mixin/]: Processing prepare() for PlatformAgent[MixinPlatformAgentDefault:SecureJarResource(yes_steve_model)]
+[178月2026 22:33:44.394] [main/DEBUG] [mixin/]: Registering mixin config: yes_steve_model.mixins.json
+[178月2026 22:33:44.401] [main/DEBUG] [mixin/]: Adding mixin platform agents for container SecureJarResource(forge)
+[178月2026 22:33:44.402] [main/DEBUG] [mixin/]: Instancing new MixinPlatformAgentMinecraftForge for SecureJarResource(forge)
+[178月2026 22:33:44.402] [main/DEBUG] [mixin/]: MixinPlatformAgentMinecraftForge rejected container SecureJarResource(forge)
+[178月2026 22:33:44.403] [main/DEBUG] [mixin/]: Instancing new MixinPlatformAgentDefault for SecureJarResource(forge)
+[178月2026 22:33:44.404] [main/DEBUG] [mixin/]: MixinPlatformAgentDefault accepted container SecureJarResource(forge)
+[178月2026 22:33:44.405] [main/DEBUG] [mixin/]: Processing prepare() for PlatformAgent[MixinPlatformAgentDefault:SecureJarResource(forge)]
+[178月2026 22:33:44.409] [main/DEBUG] [mixin/]: Adding mixin platform agents for container SecureJarResource(touhou_little_maid)
+[178月2026 22:33:44.409] [main/DEBUG] [mixin/]: Instancing new MixinPlatformAgentMinecraftForge for SecureJarResource(touhou_little_maid)
+[178月2026 22:33:44.412] [main/DEBUG] [mixin/]: MixinPlatformAgentMinecraftForge rejected container SecureJarResource(touhou_little_maid)
+[178月2026 22:33:44.418] [main/DEBUG] [mixin/]: Instancing new MixinPlatformAgentDefault for SecureJarResource(touhou_little_maid)
+[178月2026 22:33:44.418] [main/DEBUG] [mixin/]: MixinPlatformAgentDefault accepted container SecureJarResource(touhou_little_maid)
+[178月2026 22:33:44.420] [main/DEBUG] [mixin/]: Processing prepare() for PlatformAgent[MixinPlatformAgentDefault:SecureJarResource(touhou_little_maid)]
+[178月2026 22:33:44.420] [main/DEBUG] [mixin/]: Registering mixin config: touhou_little_maid.mixins.json
+[178月2026 22:33:44.422] [main/DEBUG] [mixin/]: Adding mixin platform agents for container SecureJarResource(epicfight)
+[178月2026 22:33:44.423] [main/DEBUG] [mixin/]: Instancing new MixinPlatformAgentMinecraftForge for SecureJarResource(epicfight)
+[178月2026 22:33:44.423] [main/DEBUG] [mixin/]: MixinPlatformAgentMinecraftForge rejected container SecureJarResource(epicfight)
+[178月2026 22:33:44.424] [main/DEBUG] [mixin/]: Instancing new MixinPlatformAgentDefault for SecureJarResource(epicfight)
+[178月2026 22:33:44.424] [main/DEBUG] [mixin/]: MixinPlatformAgentDefault accepted container SecureJarResource(epicfight)
+[178月2026 22:33:44.426] [main/DEBUG] [mixin/]: Processing prepare() for PlatformAgent[MixinPlatformAgentDefault:SecureJarResource(epicfight)]
+[178月2026 22:33:44.426] [main/DEBUG] [mixin/]: Registering mixin config: mixins.epicfight.json
+[178月2026 22:33:44.431] [main/DEBUG] [mixin/]: Adding mixin platform agents for container SecureJarResource(epic_fight_avalon)
+[178月2026 22:33:44.431] [main/DEBUG] [mixin/]: Instancing new MixinPlatformAgentMinecraftForge for SecureJarResource(epic_fight_avalon)
+[178月2026 22:33:44.432] [main/DEBUG] [mixin/]: MixinPlatformAgentMinecraftForge rejected container SecureJarResource(epic_fight_avalon)
+[178月2026 22:33:44.432] [main/DEBUG] [mixin/]: Instancing new MixinPlatformAgentDefault for SecureJarResource(epic_fight_avalon)
+[178月2026 22:33:44.432] [main/DEBUG] [mixin/]: MixinPlatformAgentDefault accepted container SecureJarResource(epic_fight_avalon)
+[178月2026 22:33:44.432] [main/DEBUG] [mixin/]: Processing prepare() for PlatformAgent[MixinPlatformAgentDefault:SecureJarResource(epic_fight_avalon)]
+[178月2026 22:33:44.432] [main/DEBUG] [mixin/]: Registering mixin config: epic_fight_avalon.mixins.json
+[178月2026 22:33:44.438] [main/DEBUG] [mixin/]: Adding mixin platform agents for container SecureJarResource(ef_tlm)
+[178月2026 22:33:44.439] [main/DEBUG] [mixin/]: Instancing new MixinPlatformAgentMinecraftForge for SecureJarResource(ef_tlm)
+[178月2026 22:33:44.440] [main/DEBUG] [mixin/]: MixinPlatformAgentMinecraftForge rejected container SecureJarResource(ef_tlm)
+[178月2026 22:33:44.444] [main/DEBUG] [mixin/]: Instancing new MixinPlatformAgentDefault for SecureJarResource(ef_tlm)
+[178月2026 22:33:44.444] [main/DEBUG] [mixin/]: MixinPlatformAgentDefault accepted container SecureJarResource(ef_tlm)
+[178月2026 22:33:44.445] [main/DEBUG] [mixin/]: Processing prepare() for PlatformAgent[MixinPlatformAgentDefault:SecureJarResource(ef_tlm)]
+[178月2026 22:33:44.445] [main/DEBUG] [mixin/]: Registering mixin config: ef_tlm.mixins.json
+[178月2026 22:33:44.458] [main/DEBUG] [mixin/]: Adding mixin platform agents for container SecureJarResource(ysm_epicfight_compat)
+[178月2026 22:33:44.458] [main/DEBUG] [mixin/]: Instancing new MixinPlatformAgentMinecraftForge for SecureJarResource(ysm_epicfight_compat)
+[178月2026 22:33:44.458] [main/DEBUG] [mixin/]: MixinPlatformAgentMinecraftForge rejected container SecureJarResource(ysm_epicfight_compat)
+[178月2026 22:33:44.458] [main/DEBUG] [mixin/]: Instancing new MixinPlatformAgentDefault for SecureJarResource(ysm_epicfight_compat)
+[178月2026 22:33:44.458] [main/DEBUG] [mixin/]: MixinPlatformAgentDefault accepted container SecureJarResource(ysm_epicfight_compat)
+[178月2026 22:33:44.458] [main/DEBUG] [mixin/]: Processing prepare() for PlatformAgent[MixinPlatformAgentDefault:SecureJarResource(ysm_epicfight_compat)]
+[178月2026 22:33:44.458] [main/DEBUG] [mixin/]: Adding mixin platform agents for container SecureJarResource(MixinExtras)
+[178月2026 22:33:44.458] [main/DEBUG] [mixin/]: Instancing new MixinPlatformAgentMinecraftForge for SecureJarResource(MixinExtras)
+[178月2026 22:33:44.458] [main/DEBUG] [mixin/]: MixinPlatformAgentMinecraftForge rejected container SecureJarResource(MixinExtras)
+[178月2026 22:33:44.458] [main/DEBUG] [mixin/]: Instancing new MixinPlatformAgentDefault for SecureJarResource(MixinExtras)
+[178月2026 22:33:44.460] [main/DEBUG] [mixin/]: MixinPlatformAgentDefault accepted container SecureJarResource(MixinExtras)
+[178月2026 22:33:44.460] [main/DEBUG] [mixin/]: Processing prepare() for PlatformAgent[MixinPlatformAgentDefault:SecureJarResource(MixinExtras)]
+[178月2026 22:33:44.460] [main/DEBUG] [mixin/]: inject() running with 11 agents
+[178月2026 22:33:44.461] [main/DEBUG] [mixin/]: Processing inject() for PlatformAgent[MixinPlatformAgentDefault:ModLauncher Root Container(ModLauncher:4f56a0a2)]
+[178月2026 22:33:44.461] [main/DEBUG] [mixin/]: Processing inject() for PlatformAgent[MixinPlatformAgentDefault:SecureJarResource(minecraft)]
+[178月2026 22:33:44.461] [main/DEBUG] [mixin/]: Processing inject() for PlatformAgent[MixinPlatformAgentDefault:SecureJarResource(mixinextras)]
+[178月2026 22:33:44.461] [main/DEBUG] [mixin/]: Processing inject() for PlatformAgent[MixinPlatformAgentDefault:SecureJarResource(yes_steve_model)]
+[178月2026 22:33:44.462] [main/DEBUG] [mixin/]: Processing inject() for PlatformAgent[MixinPlatformAgentDefault:SecureJarResource(forge)]
+[178月2026 22:33:44.462] [main/DEBUG] [mixin/]: Processing inject() for PlatformAgent[MixinPlatformAgentDefault:SecureJarResource(touhou_little_maid)]
+[178月2026 22:33:44.462] [main/DEBUG] [mixin/]: Processing inject() for PlatformAgent[MixinPlatformAgentDefault:SecureJarResource(epicfight)]
+[178月2026 22:33:44.462] [main/DEBUG] [mixin/]: Processing inject() for PlatformAgent[MixinPlatformAgentDefault:SecureJarResource(epic_fight_avalon)]
+[178月2026 22:33:44.463] [main/DEBUG] [mixin/]: Processing inject() for PlatformAgent[MixinPlatformAgentDefault:SecureJarResource(ef_tlm)]
+[178月2026 22:33:44.463] [main/DEBUG] [mixin/]: Processing inject() for PlatformAgent[MixinPlatformAgentDefault:SecureJarResource(ysm_epicfight_compat)]
+[178月2026 22:33:44.463] [main/DEBUG] [mixin/]: Processing inject() for PlatformAgent[MixinPlatformAgentDefault:SecureJarResource(MixinExtras)]
+[178月2026 22:33:44.463] [main/INFO] [cpw.mods.modlauncher.LaunchServiceHandler/MODLAUNCHER]: Launching target 'forgeclientuserdev' with arguments [--version, MOD_DEV, --gameDir, ., --assetsDir, C:\Users\ASUS\.gradle\caches\forge_gradle\assets, --assetIndex, 5]
+[178月2026 22:33:44.754] [main/DEBUG] [mixin/]: Error cleaning class output directory: .mixin.out
+[178月2026 22:33:44.765] [main/DEBUG] [mixin/]: Preparing mixins for MixinEnvironment[DEFAULT]
+[178月2026 22:33:44.765] [main/DEBUG] [mixin/]: Selecting config ysm_epicfight_compat.mixins.json
+[178月2026 22:33:44.777] [main/WARN] [mixin/]: Reference map 'ysm_epicfight_compat.refmap.json' for ysm_epicfight_compat.mixins.json could not be read. If this is a development environment you can ignore this message
+[178月2026 22:33:44.781] [main/DEBUG] [mixin/]: Selecting config ysm_epicfight_compat.eftlm.mixins.json
+[178月2026 22:33:44.793] [main/WARN] [mixin/]: Reference map 'ysm_epicfight_compat.refmap.json' for ysm_epicfight_compat.eftlm.mixins.json could not be read. If this is a development environment you can ignore this message
+[178月2026 22:33:44.797] [main/DEBUG] [mixin/]: Selecting config mixinextras.init.mixins.json
+[178月2026 22:33:44.985] [main/DEBUG] [MixinExtras|Service/]: com.llamalad7.mixinextras.service.MixinExtrasServiceImpl(version=0.3.6) is taking over from null
+[178月2026 22:33:45.069] [main/DEBUG] [mixin/]: Registering new injector for @Inject with org.spongepowered.asm.mixin.injection.struct.CallbackInjectionInfo
+[178月2026 22:33:45.074] [main/DEBUG] [mixin/]: Registering new injector for @ModifyArg with org.spongepowered.asm.mixin.injection.struct.ModifyArgInjectionInfo
+[178月2026 22:33:45.078] [main/DEBUG] [mixin/]: Registering new injector for @ModifyArgs with org.spongepowered.asm.mixin.injection.struct.ModifyArgsInjectionInfo
+[178月2026 22:33:45.082] [main/DEBUG] [mixin/]: Registering new injector for @Redirect with org.spongepowered.asm.mixin.injection.struct.RedirectInjectionInfo
+[178月2026 22:33:45.085] [main/DEBUG] [mixin/]: Registering new injector for @ModifyVariable with org.spongepowered.asm.mixin.injection.struct.ModifyVariableInjectionInfo
+[178月2026 22:33:45.107] [main/DEBUG] [mixin/]: Registering new injector for @ModifyConstant with org.spongepowered.asm.mixin.injection.struct.ModifyConstantInjectionInfo
+[178月2026 22:33:45.145] [main/DEBUG] [mixin/]: Selecting config yes_steve_model.mixins.json
+[178月2026 22:33:45.664] [main/INFO] [mixin/]: Remapping refMap yes_steve_model.refmap.json using E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\createSrgToMcp\output.srg
+[178月2026 22:33:45.665] [main/DEBUG] [mixin/]: Selecting config touhou_little_maid.mixins.json
+[178月2026 22:33:45.671] [main/INFO] [mixin/]: Remapping refMap touhou_little_maid.refmap.json using E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\createSrgToMcp\output.srg
+[178月2026 22:33:45.672] [main/DEBUG] [mixin/]: Selecting config mixins.epicfight.json
+[178月2026 22:33:45.677] [main/INFO] [mixin/]: Remapping refMap mixins.epicfight.refmap.json using E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\createSrgToMcp\output.srg
+[178月2026 22:33:45.679] [main/DEBUG] [mixin/]: Selecting config epic_fight_avalon.mixins.json
+[178月2026 22:33:45.681] [main/INFO] [mixin/]: Remapping refMap epic_fight_avalon.mixin-refmap.json using E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\createSrgToMcp\output.srg
+[178月2026 22:33:45.682] [main/DEBUG] [mixin/]: Selecting config ef_tlm.mixins.json
+[178月2026 22:33:45.685] [main/INFO] [mixin/]: Remapping refMap ef_tlm.refmap.json using E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\createSrgToMcp\output.srg
+[178月2026 22:33:45.687] [main/DEBUG] [mixin/]: Preparing ysm_epicfight_compat.mixins.json (33)
+[178月2026 22:33:45.794] [main/WARN] [mixin/]: Error loading class: com/elfmcys/yesstevemodel/client/event/RenderFirstPlayerBackground (java.lang.ClassNotFoundException: com.elfmcys.yesstevemodel.client.event.RenderFirstPlayerBackground)
+[178月2026 22:33:45.794] [main/WARN] [mixin/]: @Mixin target com.elfmcys.yesstevemodel.client.event.RenderFirstPlayerBackground was not found ysm_epicfight_compat.mixins.json:ModernYsmBackgroundHandMixin
+[178月2026 22:33:45.801] [main/WARN] [mixin/]: Error loading class: com/elfmcys/yesstevemodel/client/event/ReplacePlayerHandRenderEvent (java.lang.ClassNotFoundException: com.elfmcys.yesstevemodel.client.event.ReplacePlayerHandRenderEvent)
+[178月2026 22:33:45.801] [main/WARN] [mixin/]: @Mixin target com.elfmcys.yesstevemodel.client.event.ReplacePlayerHandRenderEvent was not found ysm_epicfight_compat.mixins.json:ModernYsmHandRenderMixin
+[178月2026 22:33:45.803] [main/WARN] [mixin/]: Error loading class: com/elfmcys/yesstevemodel/client/event/ReplacePlayerRenderEvent (java.lang.ClassNotFoundException: com.elfmcys.yesstevemodel.client.event.ReplacePlayerRenderEvent)
+[178月2026 22:33:45.805] [main/WARN] [mixin/]: @Mixin target com.elfmcys.yesstevemodel.client.event.ReplacePlayerRenderEvent was not found ysm_epicfight_compat.mixins.json:ModernYsmPlayerRenderMixin
+[178月2026 22:33:45.807] [main/WARN] [mixin/]: Error loading class: com/elfmcys/yesstevemodel/client/event/RenderFirstPlayerBackground (java.lang.ClassNotFoundException: com.elfmcys.yesstevemodel.client.event.RenderFirstPlayerBackground)
+[178月2026 22:33:45.808] [main/WARN] [mixin/]: @Mixin target com.elfmcys.yesstevemodel.client.event.RenderFirstPlayerBackground was not found ysm_epicfight_compat.mixins.json:OpenYsmBackgroundHandMixin
+[178月2026 22:33:45.810] [main/WARN] [mixin/]: Error loading class: com/elfmcys/yesstevemodel/client/gui/ExtraPlayerConfigScreen (java.lang.ClassNotFoundException: com.elfmcys.yesstevemodel.client.gui.ExtraPlayerConfigScreen)
+[178月2026 22:33:45.812] [main/WARN] [mixin/]: @Mixin target com.elfmcys.yesstevemodel.client.gui.ExtraPlayerConfigScreen was not found ysm_epicfight_compat.mixins.json:OpenYsmConfigScreenMixin
+[178月2026 22:33:45.816] [main/WARN] [mixin/]: Error loading class: com/elfmcys/yesstevemodel/client/event/ReplacePlayerHandRenderEvent (java.lang.ClassNotFoundException: com.elfmcys.yesstevemodel.client.event.ReplacePlayerHandRenderEvent)
+[178月2026 22:33:45.819] [main/WARN] [mixin/]: @Mixin target com.elfmcys.yesstevemodel.client.event.ReplacePlayerHandRenderEvent was not found ysm_epicfight_compat.mixins.json:OpenYsmHandRenderMixin
+[178月2026 22:33:45.828] [main/WARN] [mixin/]: Error loading class: com/elfmcys/yesstevemodel/client/event/ReplacePlayerRenderEvent (java.lang.ClassNotFoundException: com.elfmcys.yesstevemodel.client.event.ReplacePlayerRenderEvent)
+[178月2026 22:33:45.828] [main/WARN] [mixin/]: @Mixin target com.elfmcys.yesstevemodel.client.event.ReplacePlayerRenderEvent was not found ysm_epicfight_compat.mixins.json:OpenYsmPlayerRenderMixin
+[178月2026 22:33:45.941] [main/DEBUG] [mixin/]: @Mixin target yesman.epicfight.client.events.engine.RenderEngine$Events is public in ysm_epicfight_compat.mixins.json:RenderEngineEventsDiagMixin and should be specified in value
+[178月2026 22:33:45.989] [main/WARN] [mixin/]: Error loading class: com/elfmcys/yesstevemodel/geckolib3/core/controller/AnimationControllerRuntime (java.lang.ClassNotFoundException: com.elfmcys.yesstevemodel.geckolib3.core.controller.AnimationControllerRuntime)
+[178月2026 22:33:45.990] [main/WARN] [mixin/]: @Mixin target com.elfmcys.yesstevemodel.geckolib3.core.controller.AnimationControllerRuntime was not found ysm_epicfight_compat.mixins.json:YsmAnimationTransitionGuardMixin
+[178月2026 22:33:45.992] [main/WARN] [mixin/]: Error loading class: com/elfmcys/yesstevemodel/client/animation/predicate/LivingMovementAnimationPredicate (java.lang.ClassNotFoundException: com.elfmcys.yesstevemodel.client.animation.predicate.LivingMovementAnimationPredicate)
+[178月2026 22:33:45.993] [main/WARN] [mixin/]: @Mixin target com.elfmcys.yesstevemodel.client.animation.predicate.LivingMovementAnimationPredicate was not found ysm_epicfight_compat.mixins.json:YsmLivingMovementPredicateMixin
+[178月2026 22:33:46.003] [main/WARN] [mixin/]: Error loading class: com/elfmcys/yesstevemodel/client/renderer/ModelPreviewRenderer (java.lang.ClassNotFoundException: com.elfmcys.yesstevemodel.client.renderer.ModelPreviewRenderer)
+[178月2026 22:33:46.003] [main/WARN] [mixin/]: @Mixin target com.elfmcys.yesstevemodel.client.renderer.ModelPreviewRenderer was not found ysm_epicfight_compat.mixins.json:YsmExtraPlayerOverlayMixin
+[178月2026 22:33:46.016] [main/WARN] [mixin/]: Error loading class: com/elfmcys/yesstevemodel/client/renderer/CustomFishingHookRenderer (java.lang.ClassNotFoundException: com.elfmcys.yesstevemodel.client.renderer.CustomFishingHookRenderer)
+[178月2026 22:33:46.017] [main/WARN] [mixin/]: @Mixin target com.elfmcys.yesstevemodel.client.renderer.CustomFishingHookRenderer was not found ysm_epicfight_compat.mixins.json:YsmUnobfFishingHookRenderMixin
+[178月2026 22:33:46.021] [main/WARN] [mixin/]: Error loading class: com/elfmcys/yesstevemodel/client/renderer/CustomProjectileRenderer (java.lang.ClassNotFoundException: com.elfmcys.yesstevemodel.client.renderer.CustomProjectileRenderer)
+[178月2026 22:33:46.023] [main/WARN] [mixin/]: @Mixin target com.elfmcys.yesstevemodel.client.renderer.CustomProjectileRenderer was not found ysm_epicfight_compat.mixins.json:YsmUnobfProjectileRenderMixin
+[178月2026 22:33:46.028] [main/WARN] [mixin/]: Error loading class: com/elfmcys/yesstevemodel/client/renderer/ModelPreviewRenderer (java.lang.ClassNotFoundException: com.elfmcys.yesstevemodel.client.renderer.ModelPreviewRenderer)
+[178月2026 22:33:46.029] [main/WARN] [mixin/]: @Mixin target com.elfmcys.yesstevemodel.client.renderer.ModelPreviewRenderer was not found ysm_epicfight_compat.mixins.json:YsmUnobfVehiclePreviewMixin
+[178月2026 22:33:46.032] [main/WARN] [mixin/]: Error loading class: com/elfmcys/yesstevemodel/client/renderer/CustomVehicleRenderer (java.lang.ClassNotFoundException: com.elfmcys.yesstevemodel.client.renderer.CustomVehicleRenderer)
+[178月2026 22:33:46.033] [main/WARN] [mixin/]: @Mixin target com.elfmcys.yesstevemodel.client.renderer.CustomVehicleRenderer was not found ysm_epicfight_compat.mixins.json:YsmUnobfVehicleRenderMixin
+[178月2026 22:33:46.038] [main/DEBUG] [mixin/]: Preparing ysm_epicfight_compat.eftlm.mixins.json (1)
+[178月2026 22:33:46.047] [main/DEBUG] [mixin/]: Preparing mixinextras.init.mixins.json (0)
+[178月2026 22:33:46.047] [main/DEBUG] [mixin/]: Preparing yes_steve_model.mixins.json (13)
+[178月2026 22:33:46.198] [main/DEBUG] [mixin/]: Preparing touhou_little_maid.mixins.json (23)
+[178月2026 22:33:46.338] [main/DEBUG] [net.minecraftforge.coremod.transformer.CoreModBaseTransformer/COREMOD]: Transforming net/minecraft/world/level/levelgen/structure/templatesystem/StructureTemplate
+[178月2026 22:33:47.082] [main/DEBUG] [mixin/]: Preparing mixins.epicfight.json (39)
+[178月2026 22:33:47.360] [main/WARN] [mixin/]: Error loading class: dev/tr7zw/skinlayers/versionless/render/CustomModelPart (java.lang.ClassNotFoundException: dev.tr7zw.skinlayers.versionless.render.CustomModelPart)
+[178月2026 22:33:47.360] [main/WARN] [mixin/]: @Mixin target dev.tr7zw.skinlayers.versionless.render.CustomModelPart was not found mixins.epicfight.json:skinlayers.MixinCustomModelPart
+[178月2026 22:33:47.362] [main/WARN] [mixin/]: Error loading class: dev/tr7zw/skinlayers/versionless/render/CustomizableCube (java.lang.ClassNotFoundException: dev.tr7zw.skinlayers.versionless.render.CustomizableCube)
+[178月2026 22:33:47.363] [main/WARN] [mixin/]: @Mixin target dev.tr7zw.skinlayers.versionless.render.CustomizableCube was not found mixins.epicfight.json:skinlayers.MixinCustomizableCubeWrapper$SkinLayer3DMixinCustomModelCube
+[178月2026 22:33:47.368] [main/WARN] [mixin/]: Error loading class: de/teamlapen/vampirism/client/renderer/entity/layers/VampirePlayerHeadLayer (java.lang.ClassNotFoundException: de.teamlapen.vampirism.client.renderer.entity.layers.VampirePlayerHeadLayer)
+[178月2026 22:33:47.368] [main/WARN] [mixin/]: @Mixin target de.teamlapen.vampirism.client.renderer.entity.layers.VampirePlayerHeadLayer was not found mixins.epicfight.json:teamlapen.MixinVampirePlayerHeadLayer
+[178月2026 22:33:47.370] [main/WARN] [mixin/]: Error loading class: de/teamlapen/werewolves/client/render/layer/HumanWerewolfLayer (java.lang.ClassNotFoundException: de.teamlapen.werewolves.client.render.layer.HumanWerewolfLayer)
+[178月2026 22:33:47.371] [main/WARN] [mixin/]: @Mixin target de.teamlapen.werewolves.client.render.layer.HumanWerewolfLayer was not found mixins.epicfight.json:teamlapen.MixinHumanWerewolfLayer
+[178月2026 22:33:47.372] [main/DEBUG] [mixin/]: Preparing epic_fight_avalon.mixins.json (3)
+[178月2026 22:33:47.397] [main/DEBUG] [mixin/]: Preparing ef_tlm.mixins.json (2)
+[178月2026 22:33:47.564] [main/DEBUG] [mixin/]: Prepared 96 mixins in 2.797 sec (29.1ms avg) (0ms load, 0ms transform, 0ms plugin)
+[178月2026 22:33:47.618] [main/INFO] [MixinExtras|Service/]: Initializing MixinExtras via com.llamalad7.mixinextras.service.MixinExtrasServiceImpl(version=0.3.6).
+[178月2026 22:33:47.620] [main/DEBUG] [mixin/]: Registering new injector for @SugarWrapper with com.llamalad7.mixinextras.sugar.impl.SugarWrapperInjectionInfo
+[178月2026 22:33:47.636] [main/DEBUG] [mixin/]: Registering new injector for @FactoryRedirectWrapper with com.llamalad7.mixinextras.wrapper.factory.FactoryRedirectWrapperInjectionInfo
+[178月2026 22:33:47.653] [main/DEBUG] [mixin/]: Mixing client.MixinMinecraft from mixins.epicfight.json into net.minecraft.client.Minecraft
+[178月2026 22:33:48.935] [main/DEBUG] [io.netty.util.internal.logging.InternalLoggerFactory/]: Using SLF4J as the default logging framework
+[178月2026 22:33:48.949] [main/DEBUG] [io.netty.util.ResourceLeakDetector/]: -Dio.netty.leakDetection.level: simple
+[178月2026 22:33:48.949] [main/DEBUG] [io.netty.util.ResourceLeakDetector/]: -Dio.netty.leakDetection.targetRecords: 4
+[178月2026 22:33:49.203] [main/DEBUG] [oshi.util.FileUtil/]: No oshi.properties file found from ClassLoader cpw.mods.modlauncher.TransformingClassLoader@36c2d629
+[178月2026 22:33:49.725] [main/DEBUG] [oshi.util.FileUtil/]: No oshi.architecture.properties file found from ClassLoader cpw.mods.modlauncher.TransformingClassLoader@36c2d629
+[178月2026 22:33:49.948] [main/WARN] [oshi.driver.windows.perfmon.PerfmonDisabled/]: Invalid registry value type detected for PerfOS counters. Should be REG_DWORD. Ignoring: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\PerfOS\Performance\Disable Performance Counters.
+[178月2026 22:33:52.269] [pool-4-thread-1/DEBUG] [mixin/]: Mixing BlockBurningCache from touhou_little_maid.mixins.json into net.minecraft.world.level.block.Block
+[178月2026 22:33:52.326] [pool-4-thread-1/DEBUG] [mixin/]: Mixing EntityMixin from touhou_little_maid.mixins.json into net.minecraft.world.entity.Entity
+[178月2026 22:33:52.349] [pool-4-thread-1/DEBUG] [mixin/]: Mixing accessor.EntityAccessor from touhou_little_maid.mixins.json into net.minecraft.world.entity.Entity
+[178月2026 22:33:52.362] [pool-4-thread-1/DEBUG] [mixin/]: Mixing common.MixinEntity from mixins.epicfight.json into net.minecraft.world.entity.Entity
+[178月2026 22:33:52.363] [pool-4-thread-1/DEBUG] [mixin/]: Renaming synthetic method lambda$epicfight$setOnGroundWithKnownMovement$1(Lyesman/epicfight/world/capabilities/entitypatch/LivingEntityPatch;)V to md4b4907$lambda$epicfight$setOnGroundWithKnownMovement$1$0 in mixins.epicfight.json:common.MixinEntity
+[178月2026 22:33:52.363] [pool-4-thread-1/DEBUG] [mixin/]: Renaming synthetic method lambda$lerpMotion$0(Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;Lyesman/epicfight/world/capabilities/entitypatch/LivingEntityPatch;)V to md4b4907$lambda$lerpMotion$0$1 in mixins.epicfight.json:common.MixinEntity
+[178月2026 22:33:52.583] [pool-4-thread-1/DEBUG] [mixin/]: Mixing client.LivingEntityAccessor from yes_steve_model.mixins.json into net.minecraft.world.entity.LivingEntity
+[178月2026 22:33:52.599] [pool-4-thread-1/DEBUG] [mixin/]: Mixing accessor.LivingEntityAccessor from touhou_little_maid.mixins.json into net.minecraft.world.entity.LivingEntity
+[178月2026 22:33:52.610] [pool-4-thread-1/DEBUG] [mixin/]: Mixing common.MixinLivingEntity from mixins.epicfight.json into net.minecraft.world.entity.LivingEntity
+[178月2026 22:33:52.612] [pool-4-thread-1/DEBUG] [mixin/]: Renaming synthetic method lambda$epicfight$constructor$0(Lnet/minecraft/world/entity/LivingEntity;Lyesman/epicfight/world/capabilities/entitypatch/HurtableEntityPatch;)V to md4b4907$lambda$epicfight$constructor$0$0 in mixins.epicfight.json:common.MixinLivingEntity
+[178月2026 22:33:52.666] [pool-4-thread-1/DEBUG] [net.minecraftforge.coremod.transformer.CoreModBaseTransformer/COREMOD]: Transforming net/minecraft/world/entity/EntityType
+[178月2026 22:33:53.039] [pool-4-thread-1/DEBUG] [mixin/]: Mixing PlayerMixin from touhou_little_maid.mixins.json into net.minecraft.world.entity.player.Player
+[178月2026 22:33:53.056] [pool-4-thread-1/DEBUG] [mixin/]: Mixing common.MixinPlayer from mixins.epicfight.json into net.minecraft.world.entity.player.Player
+[178月2026 22:33:53.604] [pool-4-thread-1/DEBUG] [net.minecraftforge.coremod.transformer.CoreModBaseTransformer/COREMOD]: Transforming net/minecraft/world/entity/EntityType
+[178月2026 22:33:54.317] [pool-4-thread-1/DEBUG] [net.minecraftforge.coremod.transformer.CoreModBaseTransformer/COREMOD]: Transforming net/minecraft/world/level/block/LiquidBlock
+[178月2026 22:33:54.398] [pool-4-thread-1/DEBUG] [net.minecraftforge.coremod.transformer.CoreModBaseTransformer/COREMOD]: Transforming net/minecraft/world/level/block/StairBlock
+[178月2026 22:33:54.418] [pool-4-thread-1/DEBUG] [mixin/]: Mixing accessor.CropBlockAccessor from touhou_little_maid.mixins.json into net.minecraft.world.level.block.CropBlock
+[178月2026 22:33:54.515] [pool-4-thread-1/DEBUG] [mixin/]: Mixing accessor.FenceGateBlockAccessor from touhou_little_maid.mixins.json into net.minecraft.world.level.block.FenceGateBlock
+[178月2026 22:33:54.568] [pool-4-thread-1/DEBUG] [net.minecraftforge.coremod.transformer.CoreModBaseTransformer/COREMOD]: Transforming net/minecraft/world/level/block/FlowerPotBlock
+[178月2026 22:33:54.695] [pool-4-thread-1/DEBUG] [mixin/]: Mixing SweetBerryBushBlockMixin from touhou_little_maid.mixins.json into net.minecraft.world.level.block.SweetBerryBushBlock
+[178月2026 22:33:56.069] [pool-4-thread-1/DEBUG] [mixin/]: Mixing AbstractArrowEntityMixin from yes_steve_model.mixins.json into net.minecraft.world.entity.projectile.AbstractArrow
+[178月2026 22:33:56.075] [pool-4-thread-1/DEBUG] [net.minecraftforge.coremod.transformer.CoreModBaseTransformer/COREMOD]: Transforming net/minecraft/world/item/ItemStack
+[178月2026 22:33:56.094] [pool-4-thread-1/DEBUG] [mixin/]: Mixing ArrowMixin from touhou_little_maid.mixins.json into net.minecraft.world.entity.projectile.AbstractArrow
+[178月2026 22:33:56.096] [pool-4-thread-1/DEBUG] [mixin/]: Mixing accessor.ArrowAccessor from touhou_little_maid.mixins.json into net.minecraft.world.entity.projectile.AbstractArrow
+[178月2026 22:33:56.139] [pool-4-thread-1/DEBUG] [mixin/]: Mixing ProjectileEntityMixin from yes_steve_model.mixins.json into net.minecraft.world.entity.projectile.Projectile
+[178月2026 22:33:56.141] [pool-4-thread-1/DEBUG] [mixin/]: Mixing common.MixinProjectile from mixins.epicfight.json into net.minecraft.world.entity.projectile.Projectile
+[178月2026 22:33:56.207] [pool-4-thread-1/DEBUG] [mixin/]: Mixing MobInteractMixin from touhou_little_maid.mixins.json into net.minecraft.world.entity.Mob
+[178月2026 22:33:56.215] [pool-4-thread-1/DEBUG] [mixin/]: Mixing common.MixinMob from mixins.epicfight.json into net.minecraft.world.entity.Mob
+[178月2026 22:33:56.387] [pool-4-thread-1/DEBUG] [net.minecraftforge.coremod.transformer.CoreModBaseTransformer/COREMOD]: Transforming net/minecraft/world/item/ItemStack
+[178月2026 22:33:56.491] [pool-4-thread-1/DEBUG] [mixin/]: Mixing common.MixinWitherBoss from mixins.epicfight.json into net.minecraft.world.entity.boss.wither.WitherBoss
+[178月2026 22:33:56.496] [pool-4-thread-1/DEBUG] [mixin/]: Renaming @Unique method getAmbientSound()Lnet/minecraft/sounds/SoundEvent; to md4b4907$getAmbientSound$0 in mixins.epicfight.json:common.MixinWitherBoss
+[178月2026 22:33:56.568] [pool-4-thread-1/WARN] [mixin/]: @Final field nextHeadUpdate:[I in mixins.epicfight.json:common.MixinWitherBoss should be final
+[178月2026 22:33:56.569] [pool-4-thread-1/WARN] [mixin/]: @Final field idleHeadUpdates:[I in mixins.epicfight.json:common.MixinWitherBoss should be final
+[178月2026 22:33:56.892] [pool-4-thread-1/DEBUG] [mixin/]: Mixing ConduitBlockEntityMixin from touhou_little_maid.mixins.json into net.minecraft.world.level.block.entity.ConduitBlockEntity
+[178月2026 22:33:56.897] [pool-4-thread-1/DEBUG] [net.minecraftforge.coremod.transformer.CoreModBaseTransformer/COREMOD]: Transforming net/minecraft/world/effect/MobEffectInstance
+[178月2026 22:33:57.438] [pool-4-thread-1/DEBUG] [net.minecraftforge.coremod.transformer.CoreModBaseTransformer/COREMOD]: Transforming net/minecraft/world/entity/animal/frog/Tadpole
+[178月2026 22:33:57.585] [pool-4-thread-1/DEBUG] [net.minecraftforge.coremod.transformer.CoreModBaseTransformer/COREMOD]: Transforming net/minecraft/world/item/BucketItem
+[178月2026 22:33:57.779] [pool-4-thread-1/DEBUG] [mixin/]: Mixing NavigationMixin from touhou_little_maid.mixins.json into net.minecraft.world.entity.ai.navigation.PathNavigation
+[178月2026 22:33:59.245] [pool-4-thread-1/DEBUG] [mixin/]: Mixing client.ArrowEntityAccessor from yes_steve_model.mixins.json into net.minecraft.world.entity.projectile.Arrow
+[178月2026 22:33:59.401] [pool-4-thread-1/DEBUG] [net.minecraftforge.coremod.transformer.CoreModBaseTransformer/COREMOD]: Transforming net/minecraft/world/entity/monster/Spider
+[178月2026 22:33:59.500] [pool-4-thread-1/DEBUG] [net.minecraftforge.coremod.transformer.CoreModBaseTransformer/COREMOD]: Transforming net/minecraft/world/entity/monster/Zombie
+[178月2026 22:33:59.540] [Datafixer Bootstrap/INFO] [com.mojang.datafixers.DataFixerBuilder/]: 188 Datafixer optimizations took 319 milliseconds
+[178月2026 22:33:59.547] [pool-4-thread-1/DEBUG] [net.minecraftforge.coremod.transformer.CoreModBaseTransformer/COREMOD]: Transforming net/minecraft/world/entity/monster/ZombieVillager
+[178月2026 22:33:59.571] [pool-4-thread-1/DEBUG] [mixin/]: Mixing ThrownTridentMixin from touhou_little_maid.mixins.json into net.minecraft.world.entity.projectile.ThrownTrident
+[178月2026 22:33:59.572] [pool-4-thread-1/DEBUG] [mixin/]: Mixing common.MixinThrownTrident from mixins.epicfight.json into net.minecraft.world.entity.projectile.ThrownTrident
+[178月2026 22:33:59.616] [pool-4-thread-1/DEBUG] [mixin/]: Mixing common.MixinRangedAttackGoal from mixins.epicfight.json into net.minecraft.world.entity.ai.goal.RangedAttackGoal
+[178月2026 22:33:59.617] [pool-4-thread-1/DEBUG] [mixin/]: Renaming synthetic method lambda$epicfight$tick$0(Lyesman/epicfight/world/capabilities/entitypatch/LivingEntityPatch;)V to md4b4907$lambda$epicfight$tick$0$0 in mixins.epicfight.json:common.MixinRangedAttackGoal
+[178月2026 22:33:59.640] [pool-4-thread-1/DEBUG] [mixin/]: Mixing client.ThrowableItemProjectileAccessor from yes_steve_model.mixins.json into net.minecraft.world.entity.projectile.ThrowableItemProjectile
+[178月2026 22:33:59.707] [pool-4-thread-1/DEBUG] [net.minecraftforge.coremod.transformer.CoreModBaseTransformer/COREMOD]: Transforming net/minecraft/world/entity/monster/Evoker$EvokerSummonSpellGoal
+[178月2026 22:33:59.873] [pool-4-thread-1/DEBUG] [mixin/]: Mixing common.MixinRangedBowAttackGoal from mixins.epicfight.json into net.minecraft.world.entity.ai.goal.RangedBowAttackGoal
+[178月2026 22:33:59.874] [pool-4-thread-1/DEBUG] [mixin/]: Renaming synthetic method lambda$epicfight$tick$0(Lyesman/epicfight/world/capabilities/entitypatch/LivingEntityPatch;)V to md4b4907$lambda$epicfight$tick$0$0 in mixins.epicfight.json:common.MixinRangedBowAttackGoal
+[178月2026 22:34:00.028] [pool-4-thread-1/DEBUG] [mixin/]: Mixing common.MixinRangedCrossbowAttackGoal from mixins.epicfight.json into net.minecraft.world.entity.ai.goal.RangedCrossbowAttackGoal
+[178月2026 22:34:00.029] [pool-4-thread-1/DEBUG] [mixin/]: Renaming synthetic method lambda$epicfight$tick$0(Lyesman/epicfight/world/capabilities/entitypatch/LivingEntityPatch;)V to md4b4907$lambda$epicfight$tick$0$0 in mixins.epicfight.json:common.MixinRangedCrossbowAttackGoal
+[178月2026 22:34:00.119] [pool-4-thread-1/DEBUG] [net.minecraftforge.coremod.transformer.CoreModBaseTransformer/COREMOD]: Transforming net/minecraft/world/entity/animal/horse/SkeletonTrapGoal
+[178月2026 22:34:00.146] [pool-4-thread-1/DEBUG] [net.minecraftforge.coremod.transformer.CoreModBaseTransformer/COREMOD]: Transforming net/minecraft/world/entity/monster/Strider
+[178月2026 22:34:00.211] [pool-4-thread-1/DEBUG] [mixin/]: Mixing LivingEntityPatchMixin from epic_fight_avalon.mixins.json into yesman.epicfight.world.capabilities.entitypatch.LivingEntityPatch
+[178月2026 22:34:00.247] [pool-4-thread-1/WARN] [net.minecraft.network.syncher.SynchedEntityData/]: defineId called for: class net.minecraft.world.entity.LivingEntity from class yesman.epicfight.world.capabilities.entitypatch.LivingEntityPatch
+[178月2026 22:34:00.248] [pool-4-thread-1/WARN] [net.minecraft.network.syncher.SynchedEntityData/]: defineId called for: class net.minecraft.world.entity.LivingEntity from class yesman.epicfight.world.capabilities.entitypatch.LivingEntityPatch
+[178月2026 22:34:00.249] [pool-4-thread-1/WARN] [net.minecraft.network.syncher.SynchedEntityData/]: defineId called for: class net.minecraft.world.entity.LivingEntity from class yesman.epicfight.world.capabilities.entitypatch.LivingEntityPatch
+[178月2026 22:34:00.249] [pool-4-thread-1/WARN] [net.minecraft.network.syncher.SynchedEntityData/]: defineId called for: class net.minecraft.world.entity.LivingEntity from class yesman.epicfight.world.capabilities.entitypatch.LivingEntityPatch
+[178月2026 22:34:00.257] [pool-4-thread-1/DEBUG] [mixin/]: Mixing ServerPlayerMixin from yes_steve_model.mixins.json into net.minecraft.server.level.ServerPlayer
+[178月2026 22:34:00.409] [pool-4-thread-1/DEBUG] [net.minecraftforge.coremod.transformer.CoreModBaseTransformer/COREMOD]: Transforming net/minecraft/world/entity/npc/Villager
+[178月2026 22:34:00.502] [pool-4-thread-1/DEBUG] [mixin/]: Mixing client.FishingHookAccessor from yes_steve_model.mixins.json into net.minecraft.world.entity.projectile.FishingHook
+[178月2026 22:34:00.564] [pool-4-thread-1/DEBUG] [net.minecraftforge.coremod.transformer.CoreModBaseTransformer/COREMOD]: Transforming net/minecraft/world/effect/MobEffectInstance
+[178月2026 22:34:00.615] [pool-4-thread-1/DEBUG] [mixin/]: Mixing common.MixinServerGamePacketListenerImpl from mixins.epicfight.json into net.minecraft.server.network.ServerGamePacketListenerImpl
+[178月2026 22:34:00.925] [pool-4-thread-1/DEBUG] [mixin/]: Mixing client.MixinInventory from mixins.epicfight.json into net.minecraft.world.entity.player.Inventory
+[178月2026 22:34:01.674] [pool-4-thread-1/DEBUG] [net.minecraftforge.coremod.transformer.CoreModBaseTransformer/COREMOD]: Transforming net/minecraft/world/level/levelgen/structure/Structure
+[178月2026 22:34:01.739] [pool-4-thread-1/DEBUG] [net.minecraftforge.coremod.transformer.CoreModBaseTransformer/COREMOD]: Transforming net/minecraft/world/level/levelgen/structure/structures/OceanRuinPieces$OceanRuinPiece
+[178月2026 22:34:01.751] [pool-4-thread-1/DEBUG] [net.minecraftforge.coremod.transformer.CoreModBaseTransformer/COREMOD]: Transforming net/minecraft/world/level/levelgen/structure/structures/SwampHutPiece
+[178月2026 22:34:01.764] [pool-4-thread-1/DEBUG] [net.minecraftforge.coremod.transformer.CoreModBaseTransformer/COREMOD]: Transforming net/minecraft/world/level/levelgen/structure/structures/OceanMonumentPieces$OceanMonumentPiece
+[178月2026 22:34:01.815] [pool-4-thread-1/DEBUG] [net.minecraftforge.coremod.transformer.CoreModBaseTransformer/COREMOD]: Transforming net/minecraft/world/level/levelgen/structure/structures/WoodlandMansionPieces$WoodlandMansionPiece
+[178月2026 22:34:02.067] [pool-4-thread-1/DEBUG] [net.minecraftforge.coremod.transformer.CoreModBaseTransformer/COREMOD]: Transforming net/minecraft/world/level/biome/Biome
+[178月2026 22:34:02.413] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.GameData/REGISTRIES]: Creating vanilla freeze snapshot
+[178月2026 22:34:02.416] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.ForgeRegistry/REGISTRIES]: Registry minecraft:block Sync: VANILLA -> ACTIVE
+[178月2026 22:34:02.428] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.ForgeRegistry/REGISTRIES]: Registry minecraft:fluid Sync: VANILLA -> ACTIVE
+[178月2026 22:34:02.429] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.ForgeRegistry/REGISTRIES]: Registry minecraft:item Sync: VANILLA -> ACTIVE
+[178月2026 22:34:02.441] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.ForgeRegistry/REGISTRIES]: Registry minecraft:mob_effect Sync: VANILLA -> ACTIVE
+[178月2026 22:34:02.441] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.ForgeRegistry/REGISTRIES]: Registry minecraft:sound_event Sync: VANILLA -> ACTIVE
+[178月2026 22:34:02.454] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.ForgeRegistry/REGISTRIES]: Registry minecraft:potion Sync: VANILLA -> ACTIVE
+[178月2026 22:34:02.454] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.ForgeRegistry/REGISTRIES]: Registry minecraft:enchantment Sync: VANILLA -> ACTIVE
+[178月2026 22:34:02.455] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.ForgeRegistry/REGISTRIES]: Registry minecraft:entity_type Sync: VANILLA -> ACTIVE
+[178月2026 22:34:02.457] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.ForgeRegistry/REGISTRIES]: Registry minecraft:block_entity_type Sync: VANILLA -> ACTIVE
+[178月2026 22:34:02.458] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.ForgeRegistry/REGISTRIES]: Registry minecraft:particle_type Sync: VANILLA -> ACTIVE
+[178月2026 22:34:02.460] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.ForgeRegistry/REGISTRIES]: Registry minecraft:menu Sync: VANILLA -> ACTIVE
+[178月2026 22:34:02.461] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.ForgeRegistry/REGISTRIES]: Registry minecraft:painting_variant Sync: VANILLA -> ACTIVE
+[178月2026 22:34:02.462] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.ForgeRegistry/REGISTRIES]: Registry minecraft:recipe_type Sync: VANILLA -> ACTIVE
+[178月2026 22:34:02.462] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.ForgeRegistry/REGISTRIES]: Registry minecraft:recipe_serializer Sync: VANILLA -> ACTIVE
+[178月2026 22:34:02.463] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.ForgeRegistry/REGISTRIES]: Registry minecraft:attribute Sync: VANILLA -> ACTIVE
+[178月2026 22:34:02.464] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.ForgeRegistry/REGISTRIES]: Registry minecraft:stat_type Sync: VANILLA -> ACTIVE
+[178月2026 22:34:02.464] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.ForgeRegistry/REGISTRIES]: Registry minecraft:command_argument_type Sync: VANILLA -> ACTIVE
+[178月2026 22:34:02.466] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.ForgeRegistry/REGISTRIES]: Registry minecraft:villager_profession Sync: VANILLA -> ACTIVE
+[178月2026 22:34:02.467] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.ForgeRegistry/REGISTRIES]: Registry minecraft:point_of_interest_type Sync: VANILLA -> ACTIVE
+[178月2026 22:34:02.471] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.ForgeRegistry/REGISTRIES]: Registry minecraft:memory_module_type Sync: VANILLA -> ACTIVE
+[178月2026 22:34:02.473] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.ForgeRegistry/REGISTRIES]: Registry minecraft:sensor_type Sync: VANILLA -> ACTIVE
+[178月2026 22:34:02.474] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.ForgeRegistry/REGISTRIES]: Registry minecraft:schedule Sync: VANILLA -> ACTIVE
+[178月2026 22:34:02.475] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.ForgeRegistry/REGISTRIES]: Registry minecraft:activity Sync: VANILLA -> ACTIVE
+[178月2026 22:34:02.475] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.ForgeRegistry/REGISTRIES]: Registry minecraft:worldgen/carver Sync: VANILLA -> ACTIVE
+[178月2026 22:34:02.477] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.ForgeRegistry/REGISTRIES]: Registry minecraft:worldgen/feature Sync: VANILLA -> ACTIVE
+[178月2026 22:34:02.479] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.ForgeRegistry/REGISTRIES]: Registry minecraft:chunk_status Sync: VANILLA -> ACTIVE
+[178月2026 22:34:02.479] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.ForgeRegistry/REGISTRIES]: Registry minecraft:worldgen/block_state_provider_type Sync: VANILLA -> ACTIVE
+[178月2026 22:34:02.480] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.ForgeRegistry/REGISTRIES]: Registry minecraft:worldgen/foliage_placer_type Sync: VANILLA -> ACTIVE
+[178月2026 22:34:02.480] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.ForgeRegistry/REGISTRIES]: Registry minecraft:worldgen/tree_decorator_type Sync: VANILLA -> ACTIVE
+[178月2026 22:34:02.481] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.ForgeRegistry/REGISTRIES]: Registry minecraft:worldgen/biome Sync: VANILLA -> ACTIVE
+[178月2026 22:34:02.493] [pool-4-thread-1/DEBUG] [net.minecraftforge.registries.GameData/REGISTRIES]: Vanilla freeze snapshot created
+[178月2026 22:34:02.541] [pool-4-thread-1/DEBUG] [io.netty.util.internal.PlatformDependent0/]: -Dio.netty.noUnsafe: false
+[178月2026 22:34:02.543] [pool-4-thread-1/DEBUG] [io.netty.util.internal.PlatformDependent0/]: Java version: 17
+[178月2026 22:34:02.545] [pool-4-thread-1/DEBUG] [io.netty.util.internal.PlatformDependent0/]: sun.misc.Unsafe.theUnsafe: available
+[178月2026 22:34:02.547] [pool-4-thread-1/DEBUG] [io.netty.util.internal.PlatformDependent0/]: sun.misc.Unsafe.copyMemory: available
+[178月2026 22:34:02.549] [pool-4-thread-1/DEBUG] [io.netty.util.internal.PlatformDependent0/]: sun.misc.Unsafe.storeFence: available
+[178月2026 22:34:02.550] [pool-4-thread-1/DEBUG] [io.netty.util.internal.PlatformDependent0/]: java.nio.Buffer.address: available
+[178月2026 22:34:02.552] [pool-4-thread-1/DEBUG] [io.netty.util.internal.PlatformDependent0/]: direct buffer constructor: unavailable
+java.lang.UnsupportedOperationException: Reflective setAccessible(true) disabled
+	at io.netty.util.internal.ReflectionUtil.trySetAccessible(ReflectionUtil.java:31) ~[netty-common-4.1.82.Final.jar%23151!/:4.1.82.Final]
+	at io.netty.util.internal.PlatformDependent0$5.run(PlatformDependent0.java:288) ~[netty-common-4.1.82.Final.jar%23151!/:4.1.82.Final]
+	at java.security.AccessController.doPrivileged(AccessController.java:318) ~[?:?]
+	at io.netty.util.internal.PlatformDependent0.<clinit>(PlatformDependent0.java:282) ~[netty-common-4.1.82.Final.jar%23151!/:4.1.82.Final]
+	at io.netty.util.internal.PlatformDependent.isAndroid(PlatformDependent.java:333) ~[netty-common-4.1.82.Final.jar%23151!/:4.1.82.Final]
+	at io.netty.util.internal.PlatformDependent.<clinit>(PlatformDependent.java:88) ~[netty-common-4.1.82.Final.jar%23151!/:4.1.82.Final]
+	at io.netty.util.ConstantPool.<init>(ConstantPool.java:34) ~[netty-common-4.1.82.Final.jar%23151!/:4.1.82.Final]
+	at io.netty.util.AttributeKey$1.<init>(AttributeKey.java:27) ~[netty-common-4.1.82.Final.jar%23151!/:4.1.82.Final]
+	at io.netty.util.AttributeKey.<clinit>(AttributeKey.java:27) ~[netty-common-4.1.82.Final.jar%23151!/:4.1.82.Final]
+	at net.minecraftforge.network.NetworkConstants.<clinit>(NetworkConstants.java:34) ~[forge-1.20.1-47.4.16_mapped_parchment_2023.09.03-1.20.1-recomp.jar%23192%23199!/:?]
+	at net.minecraftforge.network.NetworkHooks.init(NetworkHooks.java:52) ~[forge-1.20.1-47.4.16_mapped_parchment_2023.09.03-1.20.1-recomp.jar%23192%23199!/:?]
+	at net.minecraft.server.Bootstrap.bootStrap(Bootstrap.java:66) ~[forge-1.20.1-47.4.16_mapped_parchment_2023.09.03-1.20.1-recomp.jar%23193!/:?]
+	at net.minecraft.client.main.Main.lambda$main$0(Main.java:151) ~[forge-1.20.1-47.4.16_mapped_parchment_2023.09.03-1.20.1-recomp.jar%23193!/:?]
+	at java.util.concurrent.Executors$RunnableAdapter.call(Executors.java:539) ~[?:?]
+	at java.util.concurrent.FutureTask.run(FutureTask.java:264) ~[?:?]
+	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1136) ~[?:?]
+	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:635) ~[?:?]
+	at java.lang.Thread.run(Thread.java:842) ~[?:?]
+[178月2026 22:34:02.555] [pool-4-thread-1/DEBUG] [io.netty.util.internal.PlatformDependent0/]: java.nio.Bits.unaligned: available, true
+[178月2026 22:34:02.559] [pool-4-thread-1/DEBUG] [io.netty.util.internal.PlatformDependent0/]: jdk.internal.misc.Unsafe.allocateUninitializedArray(int): unavailable
+java.lang.IllegalAccessException: class io.netty.util.internal.PlatformDependent0$7 (in module io.netty.common) cannot access class jdk.internal.misc.Unsafe (in module java.base) because module java.base does not export jdk.internal.misc to module io.netty.common
+	at jdk.internal.reflect.Reflection.newIllegalAccessException(Reflection.java:392) ~[?:?]
+	at java.lang.reflect.AccessibleObject.checkAccess(AccessibleObject.java:674) ~[?:?]
+	at java.lang.reflect.Method.invoke(Method.java:560) ~[?:?]
+	at io.netty.util.internal.PlatformDependent0$7.run(PlatformDependent0.java:410) ~[netty-common-4.1.82.Final.jar%23151!/:4.1.82.Final]
+	at java.security.AccessController.doPrivileged(AccessController.java:318) ~[?:?]
+	at io.netty.util.internal.PlatformDependent0.<clinit>(PlatformDependent0.java:401) ~[netty-common-4.1.82.Final.jar%23151!/:4.1.82.Final]
+	at io.netty.util.internal.PlatformDependent.isAndroid(PlatformDependent.java:333) ~[netty-common-4.1.82.Final.jar%23151!/:4.1.82.Final]
+	at io.netty.util.internal.PlatformDependent.<clinit>(PlatformDependent.java:88) ~[netty-common-4.1.82.Final.jar%23151!/:4.1.82.Final]
+	at io.netty.util.ConstantPool.<init>(ConstantPool.java:34) ~[netty-common-4.1.82.Final.jar%23151!/:4.1.82.Final]
+	at io.netty.util.AttributeKey$1.<init>(AttributeKey.java:27) ~[netty-common-4.1.82.Final.jar%23151!/:4.1.82.Final]
+	at io.netty.util.AttributeKey.<clinit>(AttributeKey.java:27) ~[netty-common-4.1.82.Final.jar%23151!/:4.1.82.Final]
+	at net.minecraftforge.network.NetworkConstants.<clinit>(NetworkConstants.java:34) ~[forge-1.20.1-47.4.16_mapped_parchment_2023.09.03-1.20.1-recomp.jar%23192%23199!/:?]
+	at net.minecraftforge.network.NetworkHooks.init(NetworkHooks.java:52) ~[forge-1.20.1-47.4.16_mapped_parchment_2023.09.03-1.20.1-recomp.jar%23192%23199!/:?]
+	at net.minecraft.server.Bootstrap.bootStrap(Bootstrap.java:66) ~[forge-1.20.1-47.4.16_mapped_parchment_2023.09.03-1.20.1-recomp.jar%23193!/:?]
+	at net.minecraft.client.main.Main.lambda$main$0(Main.java:151) ~[forge-1.20.1-47.4.16_mapped_parchment_2023.09.03-1.20.1-recomp.jar%23193!/:?]
+	at java.util.concurrent.Executors$RunnableAdapter.call(Executors.java:539) ~[?:?]
+	at java.util.concurrent.FutureTask.run(FutureTask.java:264) ~[?:?]
+	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1136) ~[?:?]
+	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:635) ~[?:?]
+	at java.lang.Thread.run(Thread.java:842) ~[?:?]
+[178月2026 22:34:02.561] [pool-4-thread-1/DEBUG] [io.netty.util.internal.PlatformDependent0/]: java.nio.DirectByteBuffer.<init>(long, int): unavailable
+[178月2026 22:34:02.563] [pool-4-thread-1/DEBUG] [io.netty.util.internal.PlatformDependent/]: sun.misc.Unsafe: available
+[178月2026 22:34:02.564] [pool-4-thread-1/DEBUG] [io.netty.util.internal.PlatformDependent/]: maxDirectMemory: 8434745344 bytes (maybe)
+[178月2026 22:34:02.565] [pool-4-thread-1/DEBUG] [io.netty.util.internal.PlatformDependent/]: -Dio.netty.tmpdir: C:\Users\ASUS\AppData\Local\Temp (java.io.tmpdir)
+[178月2026 22:34:02.567] [pool-4-thread-1/DEBUG] [io.netty.util.internal.PlatformDependent/]: -Dio.netty.bitMode: 64 (sun.arch.data.model)
+[178月2026 22:34:02.567] [pool-4-thread-1/DEBUG] [io.netty.util.internal.PlatformDependent/]: Platform: Windows
+[178月2026 22:34:02.569] [pool-4-thread-1/DEBUG] [io.netty.util.internal.PlatformDependent/]: -Dio.netty.maxDirectMemory: -1 bytes
+[178月2026 22:34:02.569] [pool-4-thread-1/DEBUG] [io.netty.util.internal.PlatformDependent/]: -Dio.netty.uninitializedArrayAllocationThreshold: -1
+[178月2026 22:34:02.575] [pool-4-thread-1/DEBUG] [io.netty.util.internal.CleanerJava9/]: java.nio.ByteBuffer.cleaner(): available
+[178月2026 22:34:02.576] [pool-4-thread-1/DEBUG] [io.netty.util.internal.PlatformDependent/]: -Dio.netty.noPreferDirect: false
+[178月2026 22:34:02.781] [pool-4-thread-1/DEBUG] [net.minecraftforge.network.NetworkHooks/]: Loading Network data for FML net version: FML3
+[178月2026 22:34:02.833] [Render thread/DEBUG] [mixin/]: Mixing RenderSystemAccessorMixin from ysm_epicfight_compat.mixins.json into com.mojang.blaze3d.systems.RenderSystem
+[178月2026 22:34:02.834] [Render thread/DEBUG] [mixin/]: Renaming @Accessor method ysmef$getShaderLightDirections()[Lorg/joml/Vector3f; to ysmef$getShaderLightDirections_$md$4b4907$0 in ysm_epicfight_compat.mixins.json:RenderSystemAccessorMixin
+[178月2026 22:34:02.848] [Render thread/DEBUG] [mixin/]: Mixing client.MixinBufferBuilder from mixins.epicfight.json into com.mojang.blaze3d.vertex.BufferBuilder
+[178月2026 22:34:03.053] [Render thread/DEBUG] [mixin/]: Mixing client.MixinAbstractContainerEventHandler from mixins.epicfight.json into net.minecraft.client.gui.components.events.AbstractContainerEventHandler
+[178月2026 22:34:03.084] [Render thread/DEBUG] [mixin/]: Mixing client.MixinGui from mixins.epicfight.json into net.minecraft.client.gui.Gui
+[178月2026 22:34:03.084] [Render thread/DEBUG] [mixin/]: Renaming synthetic method lambda$epicfight$renderCrosshair$0(Lorg/apache/commons/lang3/mutable/MutableBoolean;Lyesman/epicfight/client/world/capabilites/entitypatch/player/LocalPlayerPatch;)V to md4b4907$lambda$epicfight$renderCrosshair$0$0 in mixins.epicfight.json:client.MixinGui
+[178月2026 22:34:03.120] [Render thread/DEBUG] [mixin/]: Mixing client.MixinClientLevel from mixins.epicfight.json into net.minecraft.client.multiplayer.ClientLevel
+[178月2026 22:34:03.168] [Render thread/DEBUG] [mixin/]: Mixing client.PauseScreenMixin from yes_steve_model.mixins.json into net.minecraft.client.gui.screens.PauseScreen
+[178月2026 22:34:03.196] [Render thread/DEBUG] [mixin/]: Mixing client.MixinLocalPlayer from mixins.epicfight.json into net.minecraft.client.player.LocalPlayer
+[178月2026 22:34:03.229] [Render thread/DEBUG] [mixin/]: Mixing client.InventoryScreenMixin from yes_steve_model.mixins.json into net.minecraft.client.gui.screens.inventory.InventoryScreen
+[178月2026 22:34:03.347] [Render thread/WARN] [net.minecraft.server.packs.VanillaPackResourcesBuilder/]: Assets URL 'union:/C:/Users/ASUS/.gradle/caches/forge_gradle/minecraft_user_repo/net/minecraftforge/forge/1.20.1-47.4.16_mapped_parchment_2023.09.03-1.20.1/forge-1.20.1-47.4.16_mapped_parchment_2023.09.03-1.20.1-recomp.jar%23193!/assets/.mcassetsroot' uses unexpected schema
+[178月2026 22:34:03.348] [Render thread/WARN] [net.minecraft.server.packs.VanillaPackResourcesBuilder/]: Assets URL 'union:/C:/Users/ASUS/.gradle/caches/forge_gradle/minecraft_user_repo/net/minecraftforge/forge/1.20.1-47.4.16_mapped_parchment_2023.09.03-1.20.1/forge-1.20.1-47.4.16_mapped_parchment_2023.09.03-1.20.1-recomp.jar%23193!/data/.mcassetsroot' uses unexpected schema
+[178月2026 22:34:03.381] [Render thread/INFO] [com.mojang.authlib.yggdrasil.YggdrasilAuthenticationService/]: Environment: authHost='https://authserver.mojang.com', accountsHost='https://api.mojang.com', sessionHost='https://sessionserver.mojang.com', servicesHost='https://api.minecraftservices.com', name='PROD'
+[178月2026 22:34:03.388] [Render thread/INFO] [net.minecraft.client.Minecraft/]: Setting user: Dev
+[178月2026 22:34:03.395] [Render thread/DEBUG] [mixin/]: Mixing client.MixinOptions from mixins.epicfight.json into net.minecraft.client.Options
+[178月2026 22:34:03.635] [Render thread/INFO] [net.minecraft.client.Minecraft/]: Backend library: LWJGL version 3.3.1 build 7
+[178月2026 22:34:03.815] [Render thread/DEBUG] [mixin/]: Mixing client.MixinMouseHandler from mixins.epicfight.json into net.minecraft.client.MouseHandler
+[178月2026 22:34:03.861] [Render thread/DEBUG] [mixin/]: Mixing client.MixinKeyboardHandler from mixins.epicfight.json into net.minecraft.client.KeyboardHandler
+[178月2026 22:34:04.078] [Render thread/DEBUG] [net.minecraftforge.common.ForgeI18n/CORE]: Loading I18N data entries: 6434
+[178月2026 22:34:04.129] [Render thread/DEBUG] [net.minecraftforge.fml.ModWorkManager/LOADING]: Using 16 threads for parallel mod-loading
+[178月2026 22:34:04.140] [Render thread/DEBUG] [net.minecraftforge.fml.javafmlmod.FMLJavaModLanguageProvider/LOADING]: Loading FMLModContainer from classloader cpw.mods.modlauncher.TransformingClassLoader@36c2d629 - got cpw.mods.cl.ModuleClassLoader@7bb004b8
+[178月2026 22:34:04.142] [Render thread/DEBUG] [net.minecraftforge.fml.javafmlmod.FMLModContainer/LOADING]: Creating FMLModContainer instance for com.llamalad7.mixinextras.platform.forge.MixinExtrasMod
+[178月2026 22:34:04.145] [Render thread/DEBUG] [net.minecraftforge.fml.javafmlmod.FMLJavaModLanguageProvider/LOADING]: Loading FMLModContainer from classloader cpw.mods.modlauncher.TransformingClassLoader@36c2d629 - got cpw.mods.cl.ModuleClassLoader@7bb004b8
+[178月2026 22:34:04.146] [Render thread/DEBUG] [net.minecraftforge.fml.javafmlmod.FMLModContainer/LOADING]: Creating FMLModContainer instance for com.elfmcys.yesstevemodel.YesSteveModel
+[178月2026 22:34:04.146] [Render thread/DEBUG] [net.minecraftforge.fml.javafmlmod.FMLJavaModLanguageProvider/LOADING]: Loading FMLModContainer from classloader cpw.mods.modlauncher.TransformingClassLoader@36c2d629 - got cpw.mods.cl.ModuleClassLoader@7bb004b8
+[178月2026 22:34:04.147] [Render thread/DEBUG] [net.minecraftforge.fml.javafmlmod.FMLModContainer/LOADING]: Creating FMLModContainer instance for net.minecraftforge.common.ForgeMod
+[178月2026 22:34:04.149] [Render thread/DEBUG] [net.minecraftforge.fml.javafmlmod.FMLJavaModLanguageProvider/LOADING]: Loading FMLModContainer from classloader cpw.mods.modlauncher.TransformingClassLoader@36c2d629 - got cpw.mods.cl.ModuleClassLoader@7bb004b8
+[178月2026 22:34:04.149] [Render thread/DEBUG] [net.minecraftforge.fml.javafmlmod.FMLModContainer/LOADING]: Creating FMLModContainer instance for com.github.tartaricacid.touhoulittlemaid.TouhouLittleMaid
+[178月2026 22:34:04.151] [Render thread/DEBUG] [net.minecraftforge.fml.javafmlmod.FMLJavaModLanguageProvider/LOADING]: Loading FMLModContainer from classloader cpw.mods.modlauncher.TransformingClassLoader@36c2d629 - got cpw.mods.cl.ModuleClassLoader@7bb004b8
+[178月2026 22:34:04.151] [Render thread/DEBUG] [net.minecraftforge.fml.javafmlmod.FMLModContainer/LOADING]: Creating FMLModContainer instance for yesman.epicfight.main.EpicFightMod
+[178月2026 22:34:04.153] [Render thread/DEBUG] [net.minecraftforge.fml.javafmlmod.FMLJavaModLanguageProvider/LOADING]: Loading FMLModContainer from classloader cpw.mods.modlauncher.TransformingClassLoader@36c2d629 - got cpw.mods.cl.ModuleClassLoader@7bb004b8
+[178月2026 22:34:04.153] [Render thread/DEBUG] [net.minecraftforge.fml.javafmlmod.FMLModContainer/LOADING]: Creating FMLModContainer instance for com.merlin204.avalon.main.AvalonMOD
+[178月2026 22:34:04.154] [Render thread/DEBUG] [net.minecraftforge.fml.javafmlmod.FMLJavaModLanguageProvider/LOADING]: Loading FMLModContainer from classloader cpw.mods.modlauncher.TransformingClassLoader@36c2d629 - got cpw.mods.cl.ModuleClassLoader@7bb004b8
+[178月2026 22:34:04.154] [Render thread/DEBUG] [net.minecraftforge.fml.javafmlmod.FMLModContainer/LOADING]: Creating FMLModContainer instance for net.EFTLM.EFTLM
+[178月2026 22:34:04.155] [Render thread/DEBUG] [net.minecraftforge.fml.javafmlmod.FMLJavaModLanguageProvider/LOADING]: Loading FMLModContainer from classloader cpw.mods.modlauncher.TransformingClassLoader@36c2d629 - got cpw.mods.cl.ModuleClassLoader@7bb004b8
+[178月2026 22:34:04.155] [Render thread/DEBUG] [net.minecraftforge.fml.javafmlmod.FMLModContainer/LOADING]: Creating FMLModContainer instance for com.ysmef.compat.YSMEpicFightCompat
+[178月2026 22:34:04.198] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Attempting to inject @EventBusSubscriber classes into the eventbus for mixinextras
+[178月2026 22:34:04.222] [modloading-worker-0/ERROR] [net.minecraftforge.fml.javafmlmod.FMLModContainer/LOADING]: Failed to create mod instance. ModID: epic_fight_avalon, class com.merlin204.avalon.main.AvalonMOD
+java.lang.NoSuchMethodError: 'net.minecraft.world.entity.EntityType$Builder net.minecraft.world.entity.EntityType$Builder.m_20704_(net.minecraft.world.entity.EntityType$EntityFactory, net.minecraft.world.entity.MobCategory)'
+	at com.merlin204.avalon.entity.AvalonEntities.<clinit>(AvalonEntities.java:29) ~[epic_fight_avalon-20.12.6.4.jar%23191!/:20.12.6.4]
+	at com.merlin204.avalon.main.AvalonMOD.<init>(AvalonMOD.java:44) ~[epic_fight_avalon-20.12.6.4.jar%23191!/:20.12.6.4]
+	at jdk.internal.reflect.NativeConstructorAccessorImpl.newInstance0(Native Method) ~[?:?]
+	at jdk.internal.reflect.NativeConstructorAccessorImpl.newInstance(NativeConstructorAccessorImpl.java:77) ~[?:?]
+	at jdk.internal.reflect.DelegatingConstructorAccessorImpl.newInstance(DelegatingConstructorAccessorImpl.java:45) ~[?:?]
+	at java.lang.reflect.Constructor.newInstanceWithCaller(Constructor.java:499) ~[?:?]
+	at java.lang.reflect.Constructor.newInstance(Constructor.java:480) ~[?:?]
+	at net.minecraftforge.fml.javafmlmod.FMLModContainer.constructMod(FMLModContainer.java:77) ~[javafmllanguage-1.20.1-47.4.16.jar%23194!/:?]
+	at net.minecraftforge.fml.ModContainer.lambda$buildTransitionHandler$5(ModContainer.java:126) ~[fmlcore-1.20.1-47.4.16.jar%23197!/:?]
+	at java.util.concurrent.CompletableFuture$AsyncRun.run(CompletableFuture.java:1804) ~[?:?]
+	at java.util.concurrent.CompletableFuture$AsyncRun.exec(CompletableFuture.java:1796) ~[?:?]
+	at java.util.concurrent.ForkJoinTask.doExec(ForkJoinTask.java:373) ~[?:?]
+	at java.util.concurrent.ForkJoinPool$WorkQueue.topLevelExec(ForkJoinPool.java:1182) ~[?:?]
+	at java.util.concurrent.ForkJoinPool.scan(ForkJoinPool.java:1655) ~[?:?]
+	at java.util.concurrent.ForkJoinPool.runWorker(ForkJoinPool.java:1622) ~[?:?]
+	at java.util.concurrent.ForkJoinWorkerThread.run(ForkJoinWorkerThread.java:165) ~[?:?]
+[178月2026 22:34:04.240] [modloading-worker-0/DEBUG] [net.minecraftforge.versions.forge.ForgeVersion/CORE]: Forge Version package package net.minecraftforge.versions.forge, Forge, version 47.4 from cpw.mods.modlauncher.TransformingClassLoader@36c2d629
+[178月2026 22:34:04.241] [modloading-worker-0/DEBUG] [net.minecraftforge.versions.forge.ForgeVersion/CORE]: Found Forge version 47.4.16
+[178月2026 22:34:04.241] [modloading-worker-0/DEBUG] [net.minecraftforge.versions.forge.ForgeVersion/CORE]: Found Forge spec 47.4
+[178月2026 22:34:04.241] [modloading-worker-0/DEBUG] [net.minecraftforge.versions.forge.ForgeVersion/CORE]: Found Forge group net.minecraftforge
+[178月2026 22:34:04.243] [modloading-worker-0/DEBUG] [net.minecraftforge.versions.mcp.MCPVersion/CORE]: MCP Version package package net.minecraftforge.versions.mcp, Minecraft, version 1.20.1 from cpw.mods.modlauncher.TransformingClassLoader@36c2d629
+[178月2026 22:34:04.244] [modloading-worker-0/DEBUG] [net.minecraftforge.versions.mcp.MCPVersion/CORE]: Found MC version information 1.20.1
+[178月2026 22:34:04.244] [modloading-worker-0/DEBUG] [net.minecraftforge.versions.mcp.MCPVersion/CORE]: Found MCP version information 20230612.114412
+[178月2026 22:34:04.244] [modloading-worker-0/INFO] [net.minecraftforge.common.ForgeMod/FORGEMOD]: Forge mod loading, version 47.4.16, for MC 1.20.1 with MCP 20230612.114412
+[178月2026 22:34:04.249] [modloading-worker-0/INFO] [net.minecraftforge.common.MinecraftForge/FORGE]: MinecraftForge v47.4.16 Initialized
+[178月2026 22:34:04.257] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.config.ConfigTracker/CONFIG]: Config file ysm_epicfight_compat-client.toml for ysm_epicfight_compat tracking
+[178月2026 22:34:04.277] [modloading-worker-0/DEBUG] [epicfight/]: Registered Extendable Enum class net.EFTLM.EF.Animation.EFTLM_LivingMotions in living_motion
+[178月2026 22:34:04.295] [modloading-worker-0/INFO] [YSM-EF Compat/]: YSM-EF Compat: Initialized successfully
+[178月2026 22:34:04.297] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Attempting to inject @EventBusSubscriber classes into the eventbus for ysm_epicfight_compat
+[178月2026 22:34:04.300] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Attempting to inject @EventBusSubscriber classes into the eventbus for ef_tlm
+[178月2026 22:34:04.304] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing net.EFTLM.EF.Event.EventBus$ModEvents to MOD
+[178月2026 22:34:04.304] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.ysmef.compat.event.YSMCompatClientEvents to MOD
+[178月2026 22:34:04.313] [modloading-worker-0/DEBUG] [mixin/]: Mixing PatchedLivingRenderDiagMixin from ysm_epicfight_compat.mixins.json into yesman.epicfight.client.renderer.patched.entity.PatchedLivingEntityRenderer
+[178月2026 22:34:04.368] [modloading-worker-0/DEBUG] [mixin/]: Mixing PLivingEntityRendererMixin from epic_fight_avalon.mixins.json into yesman.epicfight.client.renderer.patched.entity.PatchedLivingEntityRenderer
+[178月2026 22:34:04.369] [modloading-worker-0/DEBUG] [mixin/]: Renaming synthetic method lambda$avalon$renderLayer$0(Lnet/minecraft/world/entity/LivingEntity;Lyesman/epicfight/world/capabilities/entitypatch/LivingEntityPatch;Lnet/minecraft/client/renderer/MultiBufferSource;Lcom/mojang/blaze3d/vertex/PoseStack;IFLjava/util/List;)V to md4b4907$lambda$avalon$renderLayer$0$0 in epic_fight_avalon.mixins.json:PLivingEntityRendererMixin
+[178月2026 22:34:04.457] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.config.ConfigTracker/CONFIG]: Config file epicfight-client.toml for epicfight tracking
+[178月2026 22:34:04.463] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing net.EFTLM.EF.Event.EventBus$ForgeEvents to FORGE
+[178月2026 22:34:04.473] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.ysmef.compat.event.YSMReloadTrigger to FORGE
+[178月2026 22:34:04.498] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.ysmef.compat.event.YSMRenderHook to FORGE
+[178月2026 22:34:04.501] [modloading-worker-0/DEBUG] [mixin/]: Mixing client.MixinEntityRenderer from mixins.epicfight.json into net.minecraft.client.renderer.entity.EntityRenderer
+[178月2026 22:34:04.502] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.config.ConfigTracker/CONFIG]: Config file epicfight-common.toml for epicfight tracking
+[178月2026 22:34:04.523] [modloading-worker-0/DEBUG] [mixin/]: Mixing LivingEntityRenderDiagMixin from ysm_epicfight_compat.mixins.json into net.minecraft.client.renderer.entity.LivingEntityRenderer
+[178月2026 22:34:04.529] [modloading-worker-0/DEBUG] [mixin/]: Mixing client.LivingRendererMixin from yes_steve_model.mixins.json into net.minecraft.client.renderer.entity.LivingEntityRenderer
+[178月2026 22:34:04.530] [modloading-worker-0/DEBUG] [mixin/]: Mixing client.LivingEntityRendererMixin from touhou_little_maid.mixins.json into net.minecraft.client.renderer.entity.LivingEntityRenderer
+[178月2026 22:34:04.532] [modloading-worker-0/DEBUG] [mixin/]: Mixing client.MixinLivingEntityRenderer from mixins.epicfight.json into net.minecraft.client.renderer.entity.LivingEntityRenderer
+[178月2026 22:34:04.563] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.config.ConfigTracker/CONFIG]: Config file forge-client.toml for forge tracking
+[178月2026 22:34:04.564] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.config.ConfigTracker/CONFIG]: Config file forge-server.toml for forge tracking
+[178月2026 22:34:04.564] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.ModLoadingContext/]: Attempted to register an empty config for type COMMON on mod forge
+[178月2026 22:34:04.567] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.ysmef.compat.event.YsmWheelPlayback to FORGE
+[178月2026 22:34:04.570] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.ysmef.compat.network.ModelSyncServer to FORGE
+[178月2026 22:34:04.580] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing net.EFTLM.EF.Event.ClientEventBus$ModEvents to MOD
+[178月2026 22:34:04.581] [modloading-worker-0/DEBUG] [mixin/]: Mixing YsmMaidRendererMixin from ysm_epicfight_compat.eftlm.mixins.json into net.EFTLM.EF.Render.PatchedLivingMaidRenderer
+[178月2026 22:34:04.589] [modloading-worker-0/DEBUG] [epicfight/]: Registered Extendable Enum class yesman.epicfight.api.animation.LivingMotions in living_motion
+[178月2026 22:34:04.590] [modloading-worker-0/DEBUG] [epicfight/]: Registered Extendable Enum class yesman.epicfight.skill.SkillCategories in skill_category
+[178月2026 22:34:04.592] [modloading-worker-0/DEBUG] [epicfight/]: Registered Extendable Enum class yesman.epicfight.skill.SkillSlots in skill_slot
+[178月2026 22:34:04.593] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing net.EFTLM.EF.Event.ClientEventBus$ForgeEvents to FORGE
+[178月2026 22:34:04.593] [modloading-worker-0/DEBUG] [epicfight/]: Registered Extendable Enum class yesman.epicfight.world.capabilities.item.CapabilityItem$Styles in style
+[178月2026 22:34:04.595] [modloading-worker-0/DEBUG] [epicfight/]: Registered Extendable Enum class yesman.epicfight.world.capabilities.item.CapabilityItem$WeaponCategories in weapon_category
+[178月2026 22:34:04.597] [modloading-worker-0/DEBUG] [epicfight/]: Registered Extendable Enum class yesman.epicfight.world.capabilities.entitypatch.Factions in faction
+[178月2026 22:34:04.598] [modloading-worker-0/DEBUG] [epicfight/]: Registered Extendable Enum class yesman.epicfight.network.EntityPairingPacketTypes in entity_pairing_packet_type
+[178月2026 22:34:04.600] [modloading-worker-0/DEBUG] [epicfight/]: Registered Extendable Enum class yesman.epicfight.api.client.input.action.EpicFightInputAction in input_action
+[178月2026 22:34:04.600] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Attempting to inject @EventBusSubscriber classes into the eventbus for forge
+[178月2026 22:34:04.601] [modloading-worker-0/DEBUG] [epicfight/]: Registered Extendable Enum class yesman.epicfight.api.client.input.action.MinecraftInputAction in input_action
+[178月2026 22:34:04.601] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing net.minecraftforge.common.ForgeSpawnEggItem$CommonHandler to MOD
+[178月2026 22:34:04.603] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing net.EFTLM.EF.Animation.EFTLM_Animations to MOD
+[178月2026 22:34:04.604] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing net.minecraftforge.common.ForgeSpawnEggItem$ColorRegisterHandler to MOD
+[178月2026 22:34:04.612] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing net.minecraftforge.client.model.data.ModelDataManager to FORGE
+[178月2026 22:34:04.616] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing net.minecraftforge.client.ForgeHooksClient$ClientEvents to MOD
+[178月2026 22:34:04.628] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing net.minecraftforge.client.ClientForgeMod to MOD
+[178月2026 22:34:04.717] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Attempting to inject @EventBusSubscriber classes into the eventbus for epicfight
+[178月2026 22:34:04.717] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing yesman.epicfight.world.entity.ai.attribute.EpicFightAttributes to MOD
+[178月2026 22:34:04.723] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing yesman.epicfight.main.EpicFightMod$ClientModEvents to MOD
+[178月2026 22:34:04.726] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing yesman.epicfight.gameasset.EpicFightSkills to MOD
+[178月2026 22:34:04.741] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing yesman.epicfight.gameasset.Animations to MOD
+[178月2026 22:34:04.773] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing yesman.epicfight.events.WorldEvents to FORGE
+[178月2026 22:34:04.783] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing yesman.epicfight.events.WorldEvents$WorldEventsClient to FORGE
+[178月2026 22:34:04.786] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing yesman.epicfight.events.PlayerEvents to FORGE
+[178月2026 22:34:04.788] [modloading-worker-0/DEBUG] [mixin/]: Mixing ServerPlayerPatchMixin from ef_tlm.mixins.json into yesman.epicfight.world.capabilities.entitypatch.player.ServerPlayerPatch
+[178月2026 22:34:04.829] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing yesman.epicfight.events.EntityEvents to FORGE
+[178月2026 22:34:04.845] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.config.ConfigTracker/CONFIG]: Config file touhou_little_maid-common.toml for touhou_little_maid tracking
+[178月2026 22:34:04.847] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.config.ConfigTracker/CONFIG]: Config file touhou_little_maid-server.toml for touhou_little_maid tracking
+[178月2026 22:34:04.849] [modloading-worker-0/INFO] [touhou_little_maid/]: common default pack init start...
+[178月2026 22:34:04.882] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing yesman.epicfight.events.CapabilityEvents to FORGE
+[178月2026 22:34:04.890] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing yesman.epicfight.data.loot.EpicFightLootTables to FORGE
+[178月2026 22:34:04.892] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing yesman.epicfight.config.CommonConfig to MOD
+[178月2026 22:34:04.894] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing yesman.epicfight.config.ClientConfig to MOD
+[178月2026 22:34:04.896] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing yesman.epicfight.client.renderer.EpicFightShaders to MOD
+[178月2026 22:34:04.902] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing yesman.epicfight.client.input.EpicFightKeyMappings to MOD
+[178月2026 22:34:04.908] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing yesman.epicfight.client.events.engine.RenderEngine$Events to FORGE
+[178月2026 22:34:04.909] [modloading-worker-0/DEBUG] [mixin/]: Mixing EpicFightRenderLivingEventMixin from ysm_epicfight_compat.mixins.json into yesman.epicfight.client.events.engine.RenderEngine$Events
+[178月2026 22:34:04.914] [modloading-worker-0/DEBUG] [mixin/]: Mixing RenderEngineEventsDiagMixin from ysm_epicfight_compat.mixins.json into yesman.epicfight.client.events.engine.RenderEngine$Events
+[178月2026 22:34:06.391] [modloading-worker-0/DEBUG] [mixin/]: Mixing AbstractClientPlayerPatchMixin from ef_tlm.mixins.json into yesman.epicfight.client.world.capabilites.entitypatch.player.AbstractClientPlayerPatch
+[178月2026 22:34:06.412] [modloading-worker-0/DEBUG] [mixin/]: Mixing client.MixinEnderDragonRenderer from mixins.epicfight.json into net.minecraft.client.renderer.entity.EnderDragonRenderer
+[178月2026 22:34:06.485] [modloading-worker-0/DEBUG] [mixin/]: Mixing RenderEngineDiagMixin from ysm_epicfight_compat.mixins.json into yesman.epicfight.client.events.engine.RenderEngine
+[178月2026 22:34:06.508] [modloading-worker-0/DEBUG] [mixin/]: Mixing client.MixinGameRenderer from mixins.epicfight.json into net.minecraft.client.renderer.GameRenderer
+[178月2026 22:34:06.548] [modloading-worker-0/ERROR] [yes_steve_model/]: Failed to load native lib
+java.lang.RuntimeException: err: 54
+
+
+	at jdk.internal.loader.NativeLibraries.load(Native Method) ~[?:?]
+	at jdk.internal.loader.NativeLibraries$NativeLibraryImpl.open(NativeLibraries.java:388) ~[?:?]
+	at jdk.internal.loader.NativeLibraries.loadLibrary(NativeLibraries.java:232) ~[?:?]
+	at jdk.internal.loader.NativeLibraries.loadLibrary(NativeLibraries.java:174) ~[?:?]
+	at java.lang.ClassLoader.loadLibrary(ClassLoader.java:2389) ~[?:?]
+	at java.lang.Runtime.load0(Runtime.java:755) ~[?:?]
+	at java.lang.System.load(System.java:1957) ~[?:?]
+	at com.elfmcys.yesstevemodel.oOoOO0o0ooO0oO000o0oOOoO.Oo0Oo0o00O00Oo0OOoOOoooo(Unknown Source) ~[ysm-2.6.5_mapped_parchment_2023.09.03-1.20.1.jar%23201!/:2.6.5-forge+mc1.20.1]
+	at com.elfmcys.yesstevemodel.oOoOO0o0ooO0oO000o0oOOoO.Oo0Oo0o00O00Oo0OOoOOoooo(Unknown Source) ~[ysm-2.6.5_mapped_parchment_2023.09.03-1.20.1.jar%23201!/:2.6.5-forge+mc1.20.1]
+	at com.elfmcys.yesstevemodel.YesSteveModel.<init>(Unknown Source) ~[ysm-2.6.5_mapped_parchment_2023.09.03-1.20.1.jar%23201!/:2.6.5-forge+mc1.20.1]
+	at jdk.internal.reflect.NativeConstructorAccessorImpl.newInstance0(Native Method) ~[?:?]
+	at jdk.internal.reflect.NativeConstructorAccessorImpl.newInstance(NativeConstructorAccessorImpl.java:77) ~[?:?]
+	at jdk.internal.reflect.DelegatingConstructorAccessorImpl.newInstance(DelegatingConstructorAccessorImpl.java:45) ~[?:?]
+	at java.lang.reflect.Constructor.newInstanceWithCaller(Constructor.java:499) ~[?:?]
+	at java.lang.reflect.Constructor.newInstance(Constructor.java:480) ~[?:?]
+	at net.minecraftforge.fml.javafmlmod.FMLModContainer.constructMod(FMLModContainer.java:77) ~[javafmllanguage-1.20.1-47.4.16.jar%23194!/:?]
+	at net.minecraftforge.fml.ModContainer.lambda$buildTransitionHandler$5(ModContainer.java:126) ~[fmlcore-1.20.1-47.4.16.jar%23197!/:?]
+	at java.util.concurrent.CompletableFuture$AsyncRun.run(CompletableFuture.java:1804) ~[?:?]
+	at java.util.concurrent.CompletableFuture$AsyncRun.exec(CompletableFuture.java:1796) ~[?:?]
+	at java.util.concurrent.ForkJoinTask.doExec(ForkJoinTask.java:373) ~[?:?]
+	at java.util.concurrent.ForkJoinPool$WorkQueue.topLevelExec(ForkJoinPool.java:1182) ~[?:?]
+	at java.util.concurrent.ForkJoinPool.scan(ForkJoinPool.java:1655) ~[?:?]
+	at java.util.concurrent.ForkJoinPool.runWorker(ForkJoinPool.java:1622) ~[?:?]
+	at java.util.concurrent.ForkJoinWorkerThread.run(ForkJoinWorkerThread.java:165) ~[?:?]
+[178月2026 22:34:06.550] [modloading-worker-0/ERROR] [yes_steve_model/]: [YSM] Unsatisfied runtime environment: err: 54
+
+
+[178月2026 22:34:06.550] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Attempting to inject @EventBusSubscriber classes into the eventbus for yes_steve_model
+[178月2026 22:34:06.550] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.elfmcys.yesstevemodel.ooOOOoOO000oo0o00o00o000 to FORGE
+[178月2026 22:34:06.555] [modloading-worker-0/DEBUG] [mixin/]: Mixing YsmArmRenderMixin from ysm_epicfight_compat.mixins.json into com.elfmcys.yesstevemodel.ooOOOoOO000oo0o00o00o000
+[178月2026 22:34:06.562] [modloading-worker-0/DEBUG] [mixin/]: Mixing client.MixinCamera from mixins.epicfight.json into net.minecraft.client.Camera
+[178月2026 22:34:06.583] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.elfmcys.yesstevemodel.ooOOO00Oo0000oOOO0OoO0o0 to FORGE
+[178月2026 22:34:06.585] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.elfmcys.yesstevemodel.ooO00OO0OooOOo00O0O0O0O0 to FORGE
+[178月2026 22:34:06.588] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.elfmcys.yesstevemodel.oOoo0O0OO0OOOOo0O00OOooO to FORGE
+[178月2026 22:34:06.593] [modloading-worker-0/DEBUG] [mixin/]: Mixing client.WorldRendererMixin from yes_steve_model.mixins.json into net.minecraft.client.renderer.LevelRenderer
+[178月2026 22:34:06.596] [modloading-worker-0/DEBUG] [mixin/]: Mixing client.MixinLevelRenderer from mixins.epicfight.json into net.minecraft.client.renderer.LevelRenderer
+[178月2026 22:34:06.705] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.elfmcys.yesstevemodel.oO0oOOo0OO0ooOOO00o00OoO to FORGE
+[178月2026 22:34:06.708] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.elfmcys.yesstevemodel.oO0O0O0O0Oo000ooOoOo00OO to FORGE
+[178月2026 22:34:06.712] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.elfmcys.yesstevemodel.oO0000ooOOOo0OOoOo0o0O00 to FORGE
+[178月2026 22:34:06.713] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.elfmcys.yesstevemodel.o0oO0OO0oo00o0O00oOO000o to MOD
+[178月2026 22:34:06.717] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.elfmcys.yesstevemodel.o0o000O000oOOO0O0o0OOo0o to FORGE
+[178月2026 22:34:06.724] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.elfmcys.yesstevemodel.o0OOOOOO0O0oO0o0Oo00Oooo to FORGE
+[178月2026 22:34:06.726] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.elfmcys.yesstevemodel.o0O0000ooOOO0O0oo0OOOoOo to FORGE
+[178月2026 22:34:06.728] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing yesman.epicfight.client.events.engine.ControlEngine$Events to FORGE
+[178月2026 22:34:06.729] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.elfmcys.yesstevemodel.o0000oo0oOoOo000oOooO0Oo to FORGE
+[178月2026 22:34:06.731] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.elfmcys.yesstevemodel.OoooO0ooO0OO0o0OO0O0oooO to FORGE
+[178月2026 22:34:06.733] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.elfmcys.yesstevemodel.OoOoOOOOO0ooooo0O0ooo000 to FORGE
+[178月2026 22:34:06.739] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.elfmcys.yesstevemodel.OoOo0ooo0o00O0oooO0oooOo to MOD
+[178月2026 22:34:06.743] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.elfmcys.yesstevemodel.OoOo0000o0o0o00o0o0Oo00o to FORGE
+[178月2026 22:34:06.746] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing yesman.epicfight.client.events.ClientModBusEvent to MOD
+[178月2026 22:34:06.761] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.elfmcys.yesstevemodel.Oo0o00ooO0O000OO0o00000o to FORGE
+[178月2026 22:34:06.763] [modloading-worker-0/DEBUG] [mixin/]: Mixing client.MixinParticleEngine from mixins.epicfight.json into net.minecraft.client.particle.ParticleEngine
+[178月2026 22:34:06.776] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.elfmcys.yesstevemodel.OOoo00oOOoooooooooOooOOo to MOD
+[178月2026 22:34:06.780] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.elfmcys.yesstevemodel.OOoO00ooO00OOO00O0o0000O to FORGE
+[178月2026 22:34:06.790] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing yesman.epicfight.client.events.ClientEvents to FORGE
+[178月2026 22:34:06.791] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.elfmcys.yesstevemodel.OOOOo00OoOo0000oo000OOO0 to FORGE
+[178月2026 22:34:06.794] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.elfmcys.yesstevemodel.OO00Oo0O00oOo0O00OoO0O00 to FORGE
+[178月2026 22:34:06.798] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.elfmcys.yesstevemodel.O0oOOo00o0oooOo0OoO0OOo0 to FORGE
+[178月2026 22:34:06.798] [modloading-worker-0/DEBUG] [mixin/]: Mixing YsmPlayerRenderMixin from ysm_epicfight_compat.mixins.json into com.elfmcys.yesstevemodel.O0oOOo00o0oooOo0OoO0OOo0
+[178月2026 22:34:06.807] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.elfmcys.yesstevemodel.O0O0oo0OOOOoo00o0oOoO00o to FORGE
+[178月2026 22:34:06.809] [modloading-worker-0/DEBUG] [mixin/]: Mixing YsmLegacyConfigScreenMixin from ysm_epicfight_compat.mixins.json into com.elfmcys.yesstevemodel.O0o000o0oOoOoOoOOO0oOOoO
+[178月2026 22:34:06.821] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.elfmcys.yesstevemodel.O00oo0OOoO0Ooo0O0oO00oO0 to FORGE
+[178月2026 22:34:06.823] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.elfmcys.yesstevemodel.O00oo00o0OOOO0OOo0oO0o0O to MOD
+[178月2026 22:34:06.827] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.elfmcys.yesstevemodel.O000O0O00ooo000O0oOOoo00 to FORGE
+[178月2026 22:34:06.828] [modloading-worker-0/DEBUG] [mixin/]: Mixing YsmBackgroundHandMixin from ysm_epicfight_compat.mixins.json into com.elfmcys.yesstevemodel.O000O0O00ooo000O0oOOoo00
+[178月2026 22:34:06.840] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.elfmcys.yesstevemodel.O000000ooOo0OoO00ooo0o0o to FORGE
+[178月2026 22:34:09.945] [modloading-worker-0/INFO] [touhou_little_maid/]: common default pack init finished, cost time: 5092.224 ms
+[178月2026 22:34:09.947] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Attempting to inject @EventBusSubscriber classes into the eventbus for touhou_little_maid
+[178月2026 22:34:09.948] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.util.EntityCacheUtil to FORGE
+[178月2026 22:34:09.951] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.item.ItemSubstituteJizo to FORGE
+[178月2026 22:34:09.956] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.init.registry.MobSpawnInfoRegistry to FORGE
+[178月2026 22:34:09.959] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.init.registry.DatapackRegistry to FORGE
+[178月2026 22:34:09.961] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.init.registry.CompatRegistry to MOD
+[178月2026 22:34:09.963] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.init.registry.CommonRegistry to MOD
+[178月2026 22:34:09.965] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.init.registry.CommandRegistry to FORGE
+[178月2026 22:34:09.966] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.init.registry.CapabilityRegistry to MOD
+[178月2026 22:34:09.969] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.init.InitRecipes to MOD
+[178月2026 22:34:09.969] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.init.InitLootModifier to MOD
+[178月2026 22:34:09.971] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.init.InitEntities to MOD
+[178月2026 22:34:09.972] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.event.maid.UseNameTagEvent to FORGE
+[178月2026 22:34:09.979] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.event.maid.UseFavorabilityToolEvent to FORGE
+[178月2026 22:34:09.981] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.event.maid.SwitchSittingEvent to FORGE
+[178月2026 22:34:09.983] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.event.maid.SlabClickEvent to FORGE
+[178月2026 22:34:09.985] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.event.maid.SaddleMaidEvent to FORGE
+[178月2026 22:34:09.988] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.event.maid.PotionItemUse to FORGE
+[178月2026 22:34:09.992] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.event.maid.MaidMountEvent to FORGE
+[178月2026 22:34:09.994] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.event.maid.MaidFarmlandTrample to FORGE
+[178月2026 22:34:09.998] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.event.maid.MaidDropBaubleEvent to FORGE
+[178月2026 22:34:10.000] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.event.maid.MaidDeathFavorability to FORGE
+[178月2026 22:34:10.003] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.event.maid.MaidAreaClickEvent to FORGE
+[178月2026 22:34:10.005] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.event.maid.HandleBackpackEvent to FORGE
+[178月2026 22:34:10.008] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.event.maid.GetExpBottleEvent to FORGE
+[178月2026 22:34:10.011] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.event.maid.DismountMaidEvent to FORGE
+[178月2026 22:34:10.014] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.event.maid.ApplyPotionEffectEvent to FORGE
+[178月2026 22:34:10.016] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.event.maid.ApplyGoldenAppleEvent to FORGE
+[178月2026 22:34:10.019] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.event.food.DefaultEatenEvent to FORGE
+[178月2026 22:34:10.023] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.event.food.BowlFoodEvent to FORGE
+[178月2026 22:34:10.026] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.event.MaidTrackEvent to FORGE
+[178月2026 22:34:10.029] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.event.MaidMealRegConfigEvent to MOD
+[178月2026 22:34:10.033] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.event.MaidLivingEntityEvent to FORGE
+[178月2026 22:34:10.037] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.event.InstallChairEvent to FORGE
+[178月2026 22:34:10.041] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.event.EntityJoinWorldEvent to FORGE
+[178月2026 22:34:10.046] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.event.EntityHurtEvent to FORGE
+[178月2026 22:34:10.048] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.event.EntityDeathEvent to FORGE
+[178月2026 22:34:10.051] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.event.EnterServerEvent to FORGE
+[178月2026 22:34:10.052] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.event.CopyEntityIdEvent to FORGE
+[178月2026 22:34:10.055] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.event.CapabilityEvent to FORGE
+[178月2026 22:34:10.062] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.event.CancelSaddleMaidEvent to FORGE
+[178月2026 22:34:10.066] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.entity.chatbubble.RandomEmoji to FORGE
+[178月2026 22:34:10.069] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.debug.target.SendMaidDebugDataEvent to FORGE
+[178月2026 22:34:10.072] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.debug.target.DebugClientRenderEvent to FORGE
+[178月2026 22:34:10.074] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.debug.event.DebugStickClickEvent to FORGE
+[178月2026 22:34:10.077] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.datagen.MaidDataGenerator to MOD
+[178月2026 22:34:10.080] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.compat.domesticationinnovation.EnchantmentRefuse to FORGE
+[178月2026 22:34:10.082] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.client.resource.BedrockModelLoader to MOD
+[178月2026 22:34:10.101] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.client.input.STTChatKey to FORGE
+[178月2026 22:34:10.104] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.client.input.DismountBroomKey to FORGE
+[178月2026 22:34:10.106] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.client.init.InitSpecialItemRender to MOD
+[178月2026 22:34:10.114] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.client.init.InitEntitiesRender to MOD
+[178月2026 22:34:10.118] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.client.init.InitContainerGui to MOD
+[178月2026 22:34:10.120] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.client.init.InitClientTooltip to MOD
+[178月2026 22:34:10.123] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.client.init.ClientSetupEvent to MOD
+[178月2026 22:34:10.127] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.client.event.WirelessIORenderEvent to FORGE
+[178月2026 22:34:10.129] [modloading-worker-0/DEBUG] [mixin/]: Mixing client.MixinCompositeRenderType from mixins.epicfight.json into net.minecraft.client.renderer.RenderType$CompositeRenderType
+[178月2026 22:34:10.140] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.client.event.SpecialMaidRenderEvent to FORGE
+[178月2026 22:34:10.148] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.client.event.ShowPowerEvent to FORGE
+[178月2026 22:34:10.153] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.client.event.ShowOptifineScreen to FORGE
+[178月2026 22:34:10.157] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.client.event.ScrollRenderEvent to FORGE
+[178月2026 22:34:10.159] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.client.event.ReloadResourceEvent to MOD
+[178月2026 22:34:10.162] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.client.event.PressAIChatKeyEvent to FORGE
+[178月2026 22:34:10.164] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.client.event.PlayerLoggedInNotice to FORGE
+[178月2026 22:34:10.166] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.client.event.PlayMaidSoundEvent to FORGE
+[178月2026 22:34:10.177] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.client.event.MaidSoundFreqEvent to FORGE
+[178月2026 22:34:10.180] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.client.event.MaidAreaRenderEvent to FORGE
+[178月2026 22:34:10.183] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.client.event.CompassRenderEvent to FORGE
+[178月2026 22:34:10.185] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.client.event.ClientPackDownloadEvent to MOD
+[178月2026 22:34:10.189] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.client.event.CarryMaidHideArmEvent to FORGE
+[178月2026 22:34:10.190] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.client.event.AddInformationEvent to FORGE
+[178月2026 22:34:10.192] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.touhoulittlemaid.client.download.InfoGetManager to MOD
+[178月2026 22:34:10.198] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.simplebedrockmodel.client.manager.BedrockEntityModelRegister to MOD
+[178月2026 22:34:10.201] [modloading-worker-0/DEBUG] [net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber/LOADING]: Auto-subscribing com.github.tartaricacid.simplebedrockmodel.client.ClientSetupEvent to MOD
+[178月2026 22:34:10.207] [Render thread/FATAL] [net.minecraftforge.fml.ModLoader/LOADING]: Failed to complete lifecycle event CONSTRUCT, 1 errors found
+[178月2026 22:34:10.298] [Render thread/DEBUG] [mixin/]: Mixing client.LanguageMixin from touhou_little_maid.mixins.json into net.minecraft.client.resources.language.ClientLanguage
+[178月2026 22:34:10.501] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.sound.SoundEngineLoadEvent to a broken mod state
+[178月2026 22:34:10.727] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.RegisterColorHandlersEvent$Block to a broken mod state
+[178月2026 22:34:10.731] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.RegisterColorHandlersEvent$Item to a broken mod state
+[178月2026 22:34:10.752] [Render thread/DEBUG] [mixin/]: Mixing DispatcherDiagMixin from ysm_epicfight_compat.mixins.json into net.minecraft.client.renderer.entity.EntityRenderDispatcher
+[178月2026 22:34:10.755] [Render thread/DEBUG] [mixin/]: Mixing client.EntityRenderDispatcherMixin from yes_steve_model.mixins.json into net.minecraft.client.renderer.entity.EntityRenderDispatcher
+[178月2026 22:34:10.970] [Render thread/DEBUG] [mixin/]: Mixing client.BufferSourceMixin from yes_steve_model.mixins.json into net.minecraft.client.renderer.MultiBufferSource$BufferSource
+[178月2026 22:34:11.005] [Render thread/DEBUG] [mixin/]: Mixing client.MixinLightTexture from mixins.epicfight.json into net.minecraft.client.renderer.LightTexture
+[178月2026 22:34:11.053] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.RenderLevelStageEvent$RegisterStageEvent to a broken mod state
+[178月2026 22:34:11.258] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.RegisterParticleProvidersEvent to a broken mod state
+[178月2026 22:34:11.395] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.RegisterClientReloadListenersEvent to a broken mod state
+[178月2026 22:34:11.395] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.EntityRenderersEvent$RegisterLayerDefinitions to a broken mod state
+[178月2026 22:34:11.395] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.EntityRenderersEvent$RegisterRenderers to a broken mod state
+[178月2026 22:34:11.399] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.RegisterTextureAtlasSpriteLoadersEvent to a broken mod state
+[178月2026 22:34:11.401] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.RegisterClientTooltipComponentFactoriesEvent to a broken mod state
+[178月2026 22:34:11.403] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.RegisterEntitySpectatorShadersEvent to a broken mod state
+[178月2026 22:34:11.403] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.RegisterKeyMappingsEvent to a broken mod state
+[178月2026 22:34:11.408] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.RegisterRecipeBookCategoriesEvent to a broken mod state
+[178月2026 22:34:11.414] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.RegisterGuiOverlaysEvent to a broken mod state
+[178月2026 22:34:11.425] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.RegisterDimensionSpecialEffectsEvent to a broken mod state
+[178月2026 22:34:11.426] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.RegisterNamedRenderTypesEvent to a broken mod state
+[178月2026 22:34:11.429] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.RegisterColorHandlersEvent$ColorResolvers to a broken mod state
+[178月2026 22:34:11.431] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.RegisterItemDecorationsEvent to a broken mod state
+[178月2026 22:34:11.444] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.RegisterPresetEditorsEvent to a broken mod state
+[178月2026 22:34:11.620] [Render thread/INFO] [net.minecraft.server.packs.resources.ReloadableResourceManager/]: Reloading ResourceManager: vanilla
+[178月2026 22:34:11.704] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.ModelEvent$RegisterGeometryLoaders to a broken mod state
+[178月2026 22:34:11.899] [Worker-Main-5/INFO] [net.minecraft.client.gui.font.providers.UnihexProvider/]: Found unifont_all_no_pua-15.0.06.hex, loading
+[178月2026 22:34:13.507] [Worker-Main-6/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.ModelEvent$RegisterAdditional to a broken mod state
+[178月2026 22:34:14.684] [Worker-Main-6/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.ModelEvent$ModifyBakingResult to a broken mod state
+[178月2026 22:34:14.827] [Render thread/DEBUG] [net.minecraftforge.common.ForgeI18n/CORE]: Loading I18N data entries: 6217
+[178月2026 22:34:14.896] [Render thread/WARN] [net.minecraft.client.sounds.SoundEngine/]: Missing sound for event: minecraft:item.goat_horn.play
+[178月2026 22:34:14.897] [Render thread/WARN] [net.minecraft.client.sounds.SoundEngine/]: Missing sound for event: minecraft:entity.goat.screaming.horn_break
+[178月2026 22:34:14.997] [Render thread/INFO] [com.mojang.blaze3d.audio.Library/]: OpenAL initialized on device OpenAL Soft on 耳机 (BULL-VTW142)
+[178月2026 22:34:14.998] [Render thread/INFO] [net.minecraft.client.sounds.SoundEngine/SOUNDS]: Sound engine started
+[178月2026 22:34:14.998] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.sound.SoundEngineLoadEvent to a broken mod state
+[178月2026 22:34:15.206] [Render thread/INFO] [net.minecraft.client.renderer.texture.TextureAtlas/]: Created: 1024x512x4 minecraft:textures/atlas/blocks.png-atlas
+[178月2026 22:34:15.232] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.TextureStitchEvent$Post to a broken mod state
+[178月2026 22:34:15.233] [Render thread/INFO] [net.minecraft.client.renderer.texture.TextureAtlas/]: Created: 256x256x4 minecraft:textures/atlas/signs.png-atlas
+[178月2026 22:34:15.234] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.TextureStitchEvent$Post to a broken mod state
+[178月2026 22:34:15.234] [Render thread/INFO] [net.minecraft.client.renderer.texture.TextureAtlas/]: Created: 512x512x4 minecraft:textures/atlas/shield_patterns.png-atlas
+[178月2026 22:34:15.236] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.TextureStitchEvent$Post to a broken mod state
+[178月2026 22:34:15.236] [Render thread/INFO] [net.minecraft.client.renderer.texture.TextureAtlas/]: Created: 512x512x4 minecraft:textures/atlas/banner_patterns.png-atlas
+[178月2026 22:34:15.241] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.TextureStitchEvent$Post to a broken mod state
+[178月2026 22:34:15.241] [Render thread/INFO] [net.minecraft.client.renderer.texture.TextureAtlas/]: Created: 1024x1024x4 minecraft:textures/atlas/armor_trims.png-atlas
+[178月2026 22:34:15.264] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.TextureStitchEvent$Post to a broken mod state
+[178月2026 22:34:15.265] [Render thread/INFO] [net.minecraft.client.renderer.texture.TextureAtlas/]: Created: 128x64x4 minecraft:textures/atlas/decorated_pot.png-atlas
+[178月2026 22:34:15.265] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.TextureStitchEvent$Post to a broken mod state
+[178月2026 22:34:15.265] [Render thread/INFO] [net.minecraft.client.renderer.texture.TextureAtlas/]: Created: 256x256x4 minecraft:textures/atlas/chest.png-atlas
+[178月2026 22:34:15.265] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.TextureStitchEvent$Post to a broken mod state
+[178月2026 22:34:15.266] [Render thread/INFO] [net.minecraft.client.renderer.texture.TextureAtlas/]: Created: 512x256x4 minecraft:textures/atlas/shulker_boxes.png-atlas
+[178月2026 22:34:15.266] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.TextureStitchEvent$Post to a broken mod state
+[178月2026 22:34:15.266] [Render thread/INFO] [net.minecraft.client.renderer.texture.TextureAtlas/]: Created: 512x256x4 minecraft:textures/atlas/beds.png-atlas
+[178月2026 22:34:15.267] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.TextureStitchEvent$Post to a broken mod state
+[178月2026 22:34:15.268] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.ModelEvent$BakingCompleted to a broken mod state
+[178月2026 22:34:15.274] [Render thread/DEBUG] [mixin/]: Mixing client.HumanoidModelMixin from touhou_little_maid.mixins.json into net.minecraft.client.model.HumanoidModel
+[178月2026 22:34:15.295] [Render thread/DEBUG] [mixin/]: Mixing client.MixinAgeableListModel from mixins.epicfight.json into net.minecraft.client.model.AgeableListModel
+[178月2026 22:34:15.537] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.EntityRenderersEvent$CreateSkullModels to a broken mod state
+[178月2026 22:34:15.543] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.EntityRenderersEvent$CreateSkullModels to a broken mod state
+[178月2026 22:34:15.729] [Render thread/DEBUG] [mixin/]: Mixing client.MixinThrownTridentRenderer from mixins.epicfight.json into net.minecraft.client.renderer.entity.ThrownTridentRenderer
+[178月2026 22:34:15.797] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.EntityRenderersEvent$CreateSkullModels to a broken mod state
+[178月2026 22:34:15.802] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.EntityRenderersEvent$CreateSkullModels to a broken mod state
+[178月2026 22:34:15.822] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.EntityRenderersEvent$CreateSkullModels to a broken mod state
+[178月2026 22:34:15.840] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.EntityRenderersEvent$CreateSkullModels to a broken mod state
+[178月2026 22:34:15.861] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.EntityRenderersEvent$CreateSkullModels to a broken mod state
+[178月2026 22:34:15.862] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.EntityRenderersEvent$CreateSkullModels to a broken mod state
+[178月2026 22:34:15.872] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.EntityRenderersEvent$CreateSkullModels to a broken mod state
+[178月2026 22:34:15.874] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.EntityRenderersEvent$CreateSkullModels to a broken mod state
+[178月2026 22:34:15.876] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.EntityRenderersEvent$CreateSkullModels to a broken mod state
+[178月2026 22:34:15.880] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.EntityRenderersEvent$CreateSkullModels to a broken mod state
+[178月2026 22:34:15.887] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.EntityRenderersEvent$CreateSkullModels to a broken mod state
+[178月2026 22:34:15.888] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.EntityRenderersEvent$CreateSkullModels to a broken mod state
+[178月2026 22:34:15.892] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.EntityRenderersEvent$CreateSkullModels to a broken mod state
+[178月2026 22:34:15.903] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.EntityRenderersEvent$CreateSkullModels to a broken mod state
+[178月2026 22:34:15.908] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.EntityRenderersEvent$CreateSkullModels to a broken mod state
+[178月2026 22:34:15.909] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.EntityRenderersEvent$CreateSkullModels to a broken mod state
+[178月2026 22:34:15.912] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.EntityRenderersEvent$CreateSkullModels to a broken mod state
+[178月2026 22:34:15.929] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.EntityRenderersEvent$CreateSkullModels to a broken mod state
+[178月2026 22:34:15.930] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.EntityRenderersEvent$CreateSkullModels to a broken mod state
+[178月2026 22:34:15.931] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.EntityRenderersEvent$AddLayers to a broken mod state
+[178月2026 22:34:16.053] [Render thread/WARN] [net.minecraft.client.renderer.ShaderInstance/]: Shader rendertype_entity_translucent_emissive could not find sampler named Sampler2 in the specified shader program.
+[178月2026 22:34:16.163] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.RegisterShadersEvent to a broken mod state
+[178月2026 22:34:16.196] [Render thread/INFO] [net.minecraft.client.renderer.texture.TextureAtlas/]: Created: 256x256x0 minecraft:textures/atlas/particles.png-atlas
+[178月2026 22:34:16.197] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.TextureStitchEvent$Post to a broken mod state
+[178月2026 22:34:16.200] [Render thread/INFO] [net.minecraft.client.renderer.texture.TextureAtlas/]: Created: 256x256x0 minecraft:textures/atlas/paintings.png-atlas
+[178月2026 22:34:16.201] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.TextureStitchEvent$Post to a broken mod state
+[178月2026 22:34:16.201] [Render thread/INFO] [net.minecraft.client.renderer.texture.TextureAtlas/]: Created: 128x128x0 minecraft:textures/atlas/mob_effects.png-atlas
+[178月2026 22:34:16.202] [Render thread/ERROR] [net.minecraftforge.fml.ModLoader/]: Cowardly refusing to send event net.minecraftforge.client.event.TextureStitchEvent$Post to a broken mod state
+[178月2026 22:34:16.240] [Render thread/DEBUG] [net.minecraftforge.common.ForgeI18n/CORE]: Loading I18N data entries: 6434
+[178月2026 22:34:16.354] [Render thread/DEBUG] [oshi.util.FileUtil/]: No oshi.architecture.properties file found from ClassLoader cpw.mods.modlauncher.TransformingClassLoader@36c2d629
+[178月2026 22:34:16.544] [Render thread/DEBUG] [mixin/]: Mixing client.ClientPacketListenerMixin from touhou_little_maid.mixins.json into net.minecraft.client.multiplayer.ClientPacketListener
+[178月2026 22:34:16.568] [Render thread/DEBUG] [mixin/]: Mixing client.MixinClientPacketListener from mixins.epicfight.json into net.minecraft.client.multiplayer.ClientPacketListener
+[178月2026 22:34:16.626] [Render thread/FATAL] [net.minecraftforge.common.ForgeMod/]: Preparing crash report with UUID 94506569-d227-4164-92c4-4cb0f6de5ffc
+[178月2026 22:34:16.629] [Render thread/FATAL] [net.minecraftforge.client.loading.ClientModLoader/]: Crash report saved to .\crash-reports\crash-2026-08-17_22.34.16-fml.txt
+[178月2026 22:34:16.639] [Render thread/FATAL] [net.minecraftforge.common.ForgeMod/]: Preparing crash report with UUID 93c752c1-37bd-4ad1-8ba9-680188acc4a5

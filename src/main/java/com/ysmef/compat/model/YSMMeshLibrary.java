@@ -371,6 +371,7 @@ public class YSMMeshLibrary {
                 touch(modelId);
                 trimIfNeeded();
                 PENDING_MODELS.remove(modelId);
+                YsmExtraAnimationLibrary.ensureConvertedAsync(modelId);
                 return;
             }
             PENDING_MODELS.remove(modelId);
@@ -849,6 +850,7 @@ public class YSMMeshLibrary {
         com.ysmef.compat.cpu.YsmCpuRenderPath.disposeAll();
         YSMRuntimeModel.invalidateAll();
         com.ysmef.compat.model.runtime.YsmBindArmature.invalidateAll();
+        YsmExtraAnimationLibrary.invalidateAll();
     }
 
     /**
@@ -994,6 +996,9 @@ public class YSMMeshLibrary {
                 YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: skipping model '{}' (no geometry after conversion)", modelId);
                 return null;
             }
+            // Convert the model's wheel-selectable GEO animations into sampled
+            // Avalon-style frame animation templates (deduplicated in public/).
+            YsmExtraAnimationLibrary.convertModel(pkg);
 
             String meshHash = sha256Hex(outFile);
             long meshSize = Files.size(outFile);

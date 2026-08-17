@@ -37,7 +37,16 @@ public final class YsmModelPackage {
     public final YSMGeoModel geometry;
     public final Map<String, byte[]> textures;
     public final Map<String, int[]> textureInfo;
+    /** Runtime-relevant animations (parallel loops, locomotion states, hold/use overlays). */
     public final Map<String, com.ysmef.compat.ysm.script.ScriptAnim> scriptAnims;
+    /** Every parsed animation of the package, including the wheel-selectable extra animations. */
+    public final Map<String, com.ysmef.compat.ysm.script.ScriptAnim> allScriptAnims;
+    /**
+     * Wheel-selectable extra animations declared by the model properties:
+     * animation name -> description (often empty). Entries whose key starts
+     * with '#' are wheel sub-menus, not animations.
+     */
+    public final Map<String, String> extraAnimations;
     public final float widthScale;
     public final float heightScale;
     public final String defaultTexture;
@@ -46,27 +55,41 @@ public final class YsmModelPackage {
 
     private YsmModelPackage(String modelId, YSMGeoModel geometry, Map<String, byte[]> textures,
                             Map<String, int[]> textureInfo, float widthScale, float heightScale, String defaultTexture) {
-        this(modelId, geometry, textures, textureInfo, java.util.Collections.emptyMap(), widthScale, heightScale, defaultTexture, -1L);
+        this(modelId, geometry, textures, textureInfo, java.util.Collections.emptyMap(), java.util.Collections.emptyMap(),
+                java.util.Collections.emptyMap(), widthScale, heightScale, defaultTexture, -1L);
     }
 
     private YsmModelPackage(String modelId, YSMGeoModel geometry, Map<String, byte[]> textures,
                             Map<String, int[]> textureInfo, Map<String, com.ysmef.compat.ysm.script.ScriptAnim> scriptAnims,
                             float widthScale, float heightScale, String defaultTexture) {
-        this(modelId, geometry, textures, textureInfo, scriptAnims, widthScale, heightScale, defaultTexture, -1L);
+        this(modelId, geometry, textures, textureInfo, scriptAnims, scriptAnims, java.util.Collections.emptyMap(),
+                widthScale, heightScale, defaultTexture, -1L);
     }
 
     private YsmModelPackage(String modelId, YSMGeoModel geometry, Map<String, byte[]> textures,
                             Map<String, int[]> textureInfo, Map<String, com.ysmef.compat.ysm.script.ScriptAnim> scriptAnims,
+                            Map<String, com.ysmef.compat.ysm.script.ScriptAnim> allScriptAnims,
+                            Map<String, String> extraAnimations,
                             float widthScale, float heightScale, String defaultTexture, long contentFingerprint) {
         this.modelId = modelId;
         this.geometry = geometry;
         this.textures = textures;
         this.textureInfo = textureInfo;
         this.scriptAnims = scriptAnims;
+        this.allScriptAnims = allScriptAnims;
+        this.extraAnimations = extraAnimations;
         this.widthScale = widthScale;
         this.heightScale = heightScale;
         this.defaultTexture = defaultTexture;
         this.contentFingerprint = contentFingerprint;
+    }
+
+    /**
+     * The animation data for a wheel-selectable animation name, or null when the
+     * package has no animation with that name.
+     */
+    public com.ysmef.compat.ysm.script.ScriptAnim wheelAnim(String animationName) {
+        return animationName == null ? null : allScriptAnims.get(animationName);
     }
 
     /**
@@ -103,16 +126,33 @@ public final class YsmModelPackage {
             float widthScale = 0.7f;
             float heightScale = 0.7f;
             String defaultTexture = "";
+            Map<String, String> extraAnimations = new LinkedHashMap<>();
             if (json.has("properties")) {
                 JsonObject props = json.getAsJsonObject("properties");
                 widthScale = props.has("width_scale") ? props.get("width_scale").getAsFloat() : 0.7f;
                 heightScale = props.has("height_scale") ? props.get("height_scale").getAsFloat() : 0.7f;
                 defaultTexture = props.has("default_texture") ? props.get("default_texture").getAsString() : "";
+                if (props.has("extra_animation") && props.get("extra_animation").isJsonObject()) {
+                    for (Map.Entry<String, JsonElement> entry : props.getAsJsonObject("extra_animation").entrySet()) {
+                        extraAnimations.put(entry.getKey(), entry.getValue().getAsString());
+                    }
+                }
+                if (props.has("extra_animation_classify") && props.get("extra_animation_classify").isJsonArray()) {
+                    for (JsonElement elem : props.getAsJsonArray("extra_animation_classify")) {
+                        if (!elem.isJsonObject() || !elem.getAsJsonObject().has("extra_animation")) {
+                            continue;
+                        }
+                        JsonObject clsAnim = elem.getAsJsonObject().getAsJsonObject("extra_animation");
+                        for (Map.Entry<String, JsonElement> entry : clsAnim.entrySet()) {
+                            extraAnimations.putIfAbsent(entry.getKey(), entry.getValue().getAsString());
+                        }
+                    }
+                }
             }
 
             YSMGeoModel geometry = null;
             Map<String, byte[]> textures = new LinkedHashMap<>();
-            Map<String, com.ysmef.compat.ysm.script.ScriptAnim> scriptAnims = new LinkedHashMap<>();
+            Map<String, com.ysmef.compat.ysm.script.ScriptAnim> allScriptAnims = new LinkedHashMap<>();
             if (json.has("files")) {
                 JsonObject files = json.getAsJsonObject("files");
                 if (files.has("player")) {
@@ -131,7 +171,9 @@ public final class YsmModelPackage {
                         for (Map.Entry<String, JsonElement> entry : animObj.entrySet()) {
                             Path animPath = modelDir.resolve(entry.getValue().getAsString());
                             if (Files.isRegularFile(animPath)) {
-                                loadScriptAnims(animPath, scriptAnims);
+                                // The "extra" animation file carries the wheel-selectable
+                                // animations; it wins on name collisions.
+                                loadScriptAnims(animPath, allScriptAnims, "extra".equals(entry.getKey()));
                             }
                         }
                     }
@@ -160,18 +202,27 @@ public final class YsmModelPackage {
             }
 
             if (geometry != null) {
+                Map<String, com.ysmef.compat.ysm.script.ScriptAnim> scriptAnims = new LinkedHashMap<>();
+                for (Map.Entry<String, com.ysmef.compat.ysm.script.ScriptAnim> entry : allScriptAnims.entrySet()) {
+                    if (com.ysmef.compat.ysm.script.ScriptJson.isRuntimeRelevant(entry.getKey())) {
+                        scriptAnims.put(entry.getKey(), entry.getValue());
+                    }
+                }
                 return new YsmModelPackage(modelId, geometry, textures, java.util.Collections.emptyMap(), scriptAnims,
-                        widthScale, heightScale, defaultTexture);
+                        allScriptAnims, extraAnimations, widthScale, heightScale, defaultTexture, -1L);
             }
         }
         return null;
     }
 
     /**
-     * Reads one Bedrock .animation.json file and merges the animations relevant to
-     * the Epic Fight compat runtime (see ScriptJson.isRuntimeRelevant).
+     * Reads one Bedrock .animation.json file and merges every animation into
+     * {@code out}. When {@code overwrite} is true (the model's "extra" animation
+     * file), an animation of the same name replaces an earlier one; other files
+     * never overwrite an already parsed name.
      */
-    private static void loadScriptAnims(Path animPath, Map<String, com.ysmef.compat.ysm.script.ScriptAnim> out) {
+    private static void loadScriptAnims(Path animPath, Map<String, com.ysmef.compat.ysm.script.ScriptAnim> out,
+                                        boolean overwrite) {
         try {
             JsonObject root = JsonParser.parseString(Files.readString(animPath, StandardCharsets.UTF_8)).getAsJsonObject();
             JsonObject anims = root.has("animations") ? root.getAsJsonObject("animations") : null;
@@ -179,7 +230,7 @@ public final class YsmModelPackage {
                 return;
             }
             for (Map.Entry<String, JsonElement> entry : anims.entrySet()) {
-                if (com.ysmef.compat.ysm.script.ScriptJson.isRuntimeRelevant(entry.getKey())) {
+                if (overwrite || !out.containsKey(entry.getKey())) {
                     out.put(entry.getKey(), com.ysmef.compat.ysm.script.ScriptJson.fromBedrock(
                             entry.getKey(), entry.getValue().getAsJsonObject()));
                 }
@@ -207,6 +258,7 @@ public final class YsmModelPackage {
             // and would otherwise decrypt the whole package a second time.
             long contentFingerprint = contentFingerprintOfBinary(root, modelId, decrypted);
             return new YsmModelPackage(modelId, geometry, binary.textures, binary.textureInfo, binary.animations,
+                    binary.allAnimations, binary.extraAnimations,
                     binary.widthScale, binary.heightScale, binary.defaultTexture, contentFingerprint);
         }
         return null;

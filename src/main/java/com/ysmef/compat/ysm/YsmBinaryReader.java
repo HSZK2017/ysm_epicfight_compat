@@ -29,7 +29,15 @@ public class YsmBinaryReader {
         public final List<BinaryBone> mainBones = new ArrayList<>();
         public final Map<String, byte[]> textures = new LinkedHashMap<>();
         public final Map<String, int[]> textureInfo = new LinkedHashMap<>();
+        /** Runtime-relevant animations (parallel loops, locomotion states, hold/use overlays). */
         public final Map<String, com.ysmef.compat.ysm.script.ScriptAnim> animations = new LinkedHashMap<>();
+        /** Every parsed animation, including the wheel-selectable "extra" animations. */
+        public final Map<String, com.ysmef.compat.ysm.script.ScriptAnim> allAnimations = new LinkedHashMap<>();
+        /**
+         * Wheel-selectable extra animations parsed from model properties
+         * (animation name -> description / empty string).
+         */
+        public final Map<String, String> extraAnimations = new LinkedHashMap<>();
         public float widthScale = 0.7f;
         public float heightScale = 0.7f;
         public String defaultTexture = "";
@@ -87,7 +95,7 @@ public class YsmBinaryReader {
             r.readVarInt();
             int unknownPadding = r.readVarInt();
             if (unknownPadding != 1) throw new IllegalStateException("Expected 1");
-            readAnimations(r, format, model.animations);
+            readAnimations(r, format, model.allAnimations);
         }
 
         int customTextureCount = r.readVarInt();
@@ -123,6 +131,7 @@ public class YsmBinaryReader {
         }
 
         r.readString();
+        copyRuntimeAnimations(model);
         return model;
     }
 
@@ -148,7 +157,7 @@ public class YsmBinaryReader {
             r.readVarInt();
             int unknownPadding = r.readVarInt();
             if (unknownPadding != 1) throw new IllegalStateException("Expected 1");
-            readAnimations(r, format, model.animations);
+            readAnimations(r, format, model.allAnimations);
         }
 
         if (format > 9) {
@@ -220,6 +229,7 @@ public class YsmBinaryReader {
         }
 
         readProperties(r, model, format);
+        copyRuntimeAnimations(model);
         return model;
     }
 
@@ -256,7 +266,7 @@ public class YsmBinaryReader {
         for (int i = 0; i < animationCount; ++i) {
             r.readVarInt();
             r.readString();
-            readAnimations(r, format, model.animations);
+            readAnimations(r, format, model.allAnimations);
         }
 
         skipAnimationControllers(r, format, true);
@@ -295,6 +305,7 @@ public class YsmBinaryReader {
         }
 
         readProperties(r, model, format);
+        copyRuntimeAnimations(model);
         return model;
     }
 
@@ -404,8 +415,7 @@ public class YsmBinaryReader {
 
         int extraAnimationsCount = r.readVarInt();
         for (int i = 0; i < extraAnimationsCount; i++) {
-            r.readString();
-            r.readString();
+            model.extraAnimations.put(r.readString(), r.readString());
         }
 
         if (format > 9) {
@@ -692,8 +702,16 @@ public class YsmBinaryReader {
                     r.readFloat();
                 }
             }
-            if (com.ysmef.compat.ysm.script.ScriptJson.isRuntimeRelevant(anim.name)) {
-                out.put(anim.name, anim);
+            out.put(anim.name, anim);
+        }
+    }
+
+    /** Copy the runtime-relevant subset of allAnimations into the runtime map. */
+    private static void copyRuntimeAnimations(BinaryModel model) {
+        model.animations.clear();
+        for (Map.Entry<String, com.ysmef.compat.ysm.script.ScriptAnim> entry : model.allAnimations.entrySet()) {
+            if (com.ysmef.compat.ysm.script.ScriptJson.isRuntimeRelevant(entry.getKey())) {
+                model.animations.put(entry.getKey(), entry.getValue());
             }
         }
     }
