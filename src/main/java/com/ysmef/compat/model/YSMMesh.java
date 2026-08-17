@@ -367,7 +367,8 @@ public class YSMMesh extends HumanoidMesh {
             // GUI entity previews keep the CPU preference for every size: only
             // one preview is drawn there, and Epic Fight itself switches its
             // compute path off for those passes.
-            boolean guiEntityPreview = YsmGpuRenderPath.isGuiEntityProjection();
+            boolean guiEntityPreview = YsmGpuRenderPath.isGuiEntityProjection()
+                    || YsmGpuRenderPath.isYsmPreviewMode();
             if (!guiEntityPreview && positionCount > CPU_PATH_MAX_VERTICES) {
                 logComputePreferredOnce(positionCount);
             }

@@ -26,6 +26,7 @@ import yesman.epicfight.api.model.Armature;
 import yesman.epicfight.api.utils.math.OpenMatrix4f;
 
 import javax.annotation.Nullable;
+import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 import java.util.IdentityHashMap;
 import java.util.Map;
@@ -230,6 +231,42 @@ public final class YsmGpuRenderPath {
         return max;
     }
 
+    /** YSM's ModelPreviewRenderer#isPreview(), used to reject GUI entity previews. */
+    private static final Class<?> YSM_PREVIEW_RENDERER_CLASS = findYsmPreviewRendererClass();
+    private static final Method YSM_PREVIEW_MODE_METHOD = findYsmPreviewModeMethod();
+
+    private static Class<?> findYsmPreviewRendererClass() {
+        try {
+            return Class.forName("com.elfmcys.yesstevemodel.client.renderer.ModelPreviewRenderer",
+                    false, YsmGpuRenderPath.class.getClassLoader());
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private static Method findYsmPreviewModeMethod() {
+        try {
+            return YSM_PREVIEW_RENDERER_CLASS == null ? null : YSM_PREVIEW_RENDERER_CLASS.getMethod("isPreview");
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /**
+     * Whether YSM is currently rendering one of its GUI entity previews
+     * (ModelPreviewRenderer#isPreview). Those passes use GUI GL state that the
+     * GPU skinning path's world-tuned texture-unit/light setup corrupts, which
+     * is visible as a collapsed red rectangle over the preview.
+     */
+    public static boolean isYsmPreviewMode() {
+        try {
+            return YSM_PREVIEW_MODE_METHOD != null
+                    && Boolean.TRUE.equals(YSM_PREVIEW_MODE_METHOD.invoke(null));
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     /** Oculus/Iris API (reflective: the compat mod has no hard dependency on Oculus). */
     private static final Class<?> IRIS_API_CLASS = findIrisApiClass();
     private static long shaderPackCheckedAtNanos = 0;
@@ -417,6 +454,14 @@ public final class YsmGpuRenderPath {
         }
         if (poses == null || armature == null || bufferSources instanceof OutlineBufferSource) {
             gpuSkipDiag(mesh, "no-poses-or-outline-pass");
+            return false;
+        }
+        if (isYsmPreviewMode()) {
+            // YSM's own GUI preview flag is authoritative even when the
+            // projection matrix is not orthographic at this exact point (some
+            // maid preview chains restore a perspective projection before the
+            // mesh draw). The GPU path must never draw in those passes.
+            gpuSkipDiag(mesh, "ysm-preview-mode");
             return false;
         }
         if (isGuiEntityProjection()) {

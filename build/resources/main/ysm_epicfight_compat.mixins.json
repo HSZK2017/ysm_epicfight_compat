@@ -21,6 +21,7 @@
     "RenderSystemAccessorMixin",
     "SkinnedMeshCpuRenderMixin",
     "YsmAnimationTransitionGuardMixin",
+    "YsmLivingMovementPredicateMixin",
     "YsmArmaturePoseMixin",
     "YsmArmRenderMixin",
     "YsmBackgroundHandMixin",
