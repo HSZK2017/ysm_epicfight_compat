@@ -1,6 +1,7 @@
 package com.ysmef.compat.event;
 
 import com.ysmef.compat.YSMEpicFightCompat;
+import com.ysmef.compat.animation.YsmRoamingState;
 import com.ysmef.compat.model.YsmExtraAnimationLibrary;
 import com.ysmef.compat.renderer.YSMBattleMode;
 import com.ysmef.compat.renderer.YSMModelAccess;
@@ -133,6 +134,11 @@ public final class YsmWheelPlayback {
 
         tracked.activeWheelAnimation = wheelAnimation;
         tracked.retryPending = true;
+        // Mirror YSM's persistent roaming toggles (accessory switches) even
+        // though YSM's own script evaluator is idle in battle mode.
+        if (modelRef != null) {
+            YsmRoamingState.onWheelAnimationStarted(player, modelRef.modelId(), wheelAnimation);
+        }
         tryPlay(patch, player, tracked);
     }
 
@@ -201,6 +207,7 @@ public final class YsmWheelPlayback {
     /** Forget all per-player state (world leave). */
     public static void clear() {
         TRACKED.clear();
+        YsmRoamingState.clear();
         tickDiagLogged = false;
     }
 }

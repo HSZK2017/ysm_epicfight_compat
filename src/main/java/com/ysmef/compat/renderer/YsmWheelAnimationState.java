@@ -37,6 +37,8 @@ public final class YsmWheelAnimationState {
     private static volatile Method isModelSwitchingMethod;
     private static volatile boolean methodLookupDone;
     private static volatile Method getServerVarContainerMethod;
+    private static volatile Method getPropertyGetterMethod;
+    private static volatile Method foreignGetPublicMethod;
     private static volatile Method roamingForEachVarMethod;
     private static volatile Method roamingGetPropertyMethod;
     private static volatile Method stringPoolGetNameMethod;
@@ -84,19 +86,27 @@ public final class YsmWheelAnimationState {
     public static Map<String, Float> readRoamingVars(Player player) {
         Object animatable = resolveAnimatable(player);
         if (animatable == null) {
+            roamingDiag("animatable", "roaming reader has no YSM PlayerCapability for player");
             return Collections.emptyMap();
         }
         try {
             ensureRoamingContainerMethod(animatable.getClass());
             if (getServerVarContainerMethod == null) {
+                roamingDiag("container-method", "getServerVarContainer not found on " + animatable.getClass().getName());
                 return Collections.emptyMap();
             }
             Object struct = getServerVarContainerMethod.invoke(animatable);
-            if (struct == null || !struct.getClass().getName().endsWith("RoamingStruct")) {
+            if (struct == null) {
+                roamingDiag("struct-null", "getServerVarContainer returned null");
+                return Collections.emptyMap();
+            }
+            if (!struct.getClass().getName().endsWith("RoamingStruct")) {
+                roamingDiag("struct-type", "getServerVarContainer returned " + struct.getClass().getName());
                 return Collections.emptyMap();
             }
             ensureRoamingStructMethods(struct.getClass());
             if (roamingForEachVarMethod == null || roamingGetPropertyMethod == null || stringPoolGetNameMethod == null) {
+                roamingDiag("struct-methods", "roaming struct reflection methods unavailable for " + struct.getClass().getName());
                 return Collections.emptyMap();
             }
             Map<String, Float> result = new TreeMap<>();
@@ -125,6 +135,131 @@ public final class YsmWheelAnimationState {
         }
     }
 
+    /**
+     * Read specific v.roaming.* variables from YSM's animation processor public
+     * variable storage. Unlike the serverVarContainer path (which can be empty
+     * while YSM's renderer is suppressed in battle mode), config-driven clothing
+     * and accessory toggles are written directly into this storage.
+     */
+    public static Map<String, Float> readRoamingVars(Player player, java.util.Set<String> names) {
+        if (names == null || names.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Object animatable = resolveAnimatable(player);
+        if (animatable == null) {
+            roamingDiag("named-animatable", "no YSM PlayerCapability for named roaming read");
+            return Collections.emptyMap();
+        }
+        try {
+            ensureRoamingContainerMethod(animatable.getClass());
+            if (getPropertyGetterMethod == null) {
+                roamingDiag("named-getter-method", "getPropertyGetter not found on " + animatable.getClass().getName());
+                return Collections.emptyMap();
+            }
+            Object storage = getPropertyGetterMethod.invoke(animatable);
+            if (storage == null) {
+                roamingDiag("named-storage-null", "getPropertyGetter returned null for " + animatable.getClass().getName());
+                return Collections.emptyMap();
+            }
+            ensureForeignStorageMethod(storage.getClass());
+            ensureStringPoolNameMethod();
+            if (foreignGetPublicMethod == null || stringPoolGetNameMethod == null) {
+                roamingDiag("named-methods", "getPublic/StringPool unavailable for storage " + storage.getClass().getName());
+                return Collections.emptyMap();
+            }
+            Map<String, Float> result = new TreeMap<>();
+            StringBuilder sample = new StringBuilder();
+            int sampled = 0;
+            for (String name : names) {
+                try {
+                    Object idObj = stringPoolGetNameMethod.invoke(null, "v.roaming." + name);
+                    if (!(idObj instanceof Integer id)) {
+                        if (sampled < 4) {
+                            sample.append(' ').append(name).append("=no-id");
+                            sampled++;
+                        }
+                        continue;
+                    }
+                    Object value = foreignGetPublicMethod.invoke(storage, id);
+                    if (value instanceof Number number) {
+                        result.put(name, number.floatValue());
+                    } else if (sampled < 4) {
+                        sample.append(' ').append(name).append('=').append(value == null ? "null" : value.getClass().getSimpleName());
+                        sampled++;
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+            if (result.isEmpty() && !names.isEmpty()) {
+                roamingDiag("named-empty", "getPropertyGetter public storage has no values for " + names.size()
+                        + " roaming names; sample:" + sample
+                        + " publicKeys:" + dumpPublicKeys(storage));
+            }
+            return result;
+        } catch (Throwable t) {
+            logFailureOnce(t);
+            return Collections.emptyMap();
+        }
+    }
+
+    private static synchronized void ensureForeignStorageMethod(Class<?> storageClass) {
+        if (foreignGetPublicMethod != null) {
+            return;
+        }
+        try {
+            foreignGetPublicMethod = storageClass.getMethod("getPublic", int.class);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static synchronized void ensureStringPoolNameMethod() {
+        if (stringPoolGetNameMethod != null) {
+            return;
+        }
+        try {
+            Class<?> stringPool = Class.forName("com.elfmcys.yesstevemodel.geckolib3.core.molang.util.StringPool");
+            stringPoolGetNameMethod = stringPool.getMethod("getName", String.class);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** Diagnostic: enumerate the concrete publicMap keys of YSM's VariableStorage. */
+    private static String dumpPublicKeys(Object storage) {
+        StringBuilder sb = new StringBuilder();
+        try {
+            java.lang.reflect.Field publicMapField = storage.getClass().getDeclaredField("publicMap");
+            publicMapField.setAccessible(true);
+            Object publicMap = publicMapField.get(storage);
+            if (publicMap == null) {
+                return "null";
+            }
+            java.lang.reflect.Method keySetMethod = publicMap.getClass().getMethod("keySet");
+            Object keySet = keySetMethod.invoke(publicMap);
+            java.lang.reflect.Method iteratorMethod = keySet.getClass().getMethod("iterator");
+            Object iterator = iteratorMethod.invoke(keySet);
+            java.lang.reflect.Method hasNext = iterator.getClass().getMethod("hasNext");
+            java.lang.reflect.Method nextInt = iterator.getClass().getMethod("nextInt");
+            java.lang.reflect.Method getPublic = storage.getClass().getMethod("getPublic", int.class);
+            java.lang.reflect.Method getString = null;
+            try {
+                Class<?> pool = Class.forName("com.elfmcys.yesstevemodel.geckolib3.core.molang.util.StringPool");
+                getString = pool.getMethod("getString", int.class);
+            } catch (Throwable ignored) {
+            }
+            int shown = 0;
+            while ((boolean) hasNext.invoke(iterator) && shown < 30) {
+                int id = (int) nextInt.invoke(iterator);
+                String name = getString == null ? null : (String) getString.invoke(null, id);
+                Object value = getPublic.invoke(storage, id);
+                sb.append(' ').append(name).append('=').append(value);
+                shown++;
+            }
+        } catch (Throwable ignored) {
+            sb.append(" <unavailable>");
+        }
+        return sb.toString();
+    }
+
     private static void ensureRoamingContainerMethod(Class<?> animatableClass) {
         if (roamingLookupDone) {
             return;
@@ -134,6 +269,13 @@ public final class YsmWheelAnimationState {
             Method container = animatableClass.getMethod("getServerVarContainer");
             if (container.getParameterCount() == 0) {
                 getServerVarContainerMethod = container;
+            }
+        } catch (Throwable ignored) {
+        }
+        try {
+            Method getter = animatableClass.getMethod("getPropertyGetter");
+            if (getter.getParameterCount() == 0) {
+                getPropertyGetterMethod = getter;
             }
         } catch (Throwable ignored) {
         }
@@ -249,13 +391,21 @@ public final class YsmWheelAnimationState {
 
     private static volatile boolean failureLogged;
     private static volatile boolean missingMethodsLogged;
+    private static volatile String roamingDiagState;
+
+    private static void roamingDiag(String key, String message) {
+        if (!key.equals(roamingDiagState)) {
+            roamingDiagState = key;
+            YSMEpicFightCompat.LOGGER.info("YSM-EF Compat: [roaming] {}: {}", key, message);
+        }
+    }
 
     private static void logFailureOnce(Throwable t) {
         if (failureLogged) {
             return;
         }
         failureLogged = true;
-        YSMEpicFightCompat.LOGGER.debug("YSM-EF Compat: failed to read YSM wheel animation state", t);
+        YSMEpicFightCompat.LOGGER.info("YSM-EF Compat: [wheel] failed to read YSM wheel/roaming state", t);
     }
 
     /** Force re-resolution after a YSM mod replacement / resource reload. */
@@ -268,10 +418,13 @@ public final class YsmWheelAnimationState {
         failureLogged = false;
         missingMethodsLogged = false;
         getServerVarContainerMethod = null;
+        getPropertyGetterMethod = null;
+        foreignGetPublicMethod = null;
         roamingForEachVarMethod = null;
         roamingGetPropertyMethod = null;
         stringPoolGetNameMethod = null;
         roamingLookupDone = false;
         roamingStructMethodsClass = null;
+        roamingDiagState = null;
     }
 }

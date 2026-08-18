@@ -33,4 +33,16 @@ public class YsmWheelAnimation extends StaticAnimation {
             this.addProperty(ClientAnimationProperties.PRIORITY, Layer.Priority.HIGHEST);
         }
     }
+
+    /**
+     * Converted wheel clips animate the Head joint themselves. Epic Fight's
+     * player pose hook would otherwise overwrite the Head rotation with the
+     * camera's look direction every tick while the clip is active, which fights
+     * the sampled YSM head motion and visibly detaches the neck on large models
+     * during violent animations.
+     */
+    @Override
+    public boolean doesHeadRotFollowEntityHead() {
+        return false;
+    }
 }

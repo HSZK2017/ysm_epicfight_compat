@@ -84,10 +84,83 @@ public final class YsmBindArmature {
     /** entity armature instance -> the pose Epic Fight last applied to it. */
     private static final Map<Armature, Pose> POSES = new HashMap<>();
 
+    /** Players currently playing a converted YSM wheel animation on the composite layer. */
+    private static final Map<java.util.UUID, java.util.Set<String>> WHEEL_JOINTS = new ConcurrentHashMap<>();
+
     /** Stale-entry guard: armatures of unloaded entities accumulate otherwise. */
     private static final int POSE_MAP_CAP = 256;
 
     private YsmBindArmature() {}
+
+    // ------------------------------------------------------------------
+    // Wheel-animation pivot correction
+    // ------------------------------------------------------------------
+
+    /**
+     * Register which joints the currently playing converted wheel animation
+     * overrides. Converted wheel clips are authored against Epic Fight's
+     * reference biped armature; when the same pose is re-applied to the YSM-bind
+     * armature, those joints need T' = L_bind^-1 x L_ref x T, otherwise the
+     * pivot offset is applied twice and large models tear apart under violent
+     * motion. Joints not overridden by the wheel animation keep the combat pose
+     * unchanged (the bind armature's corrected pivots already handle those).
+     */
+    public static void setWheelPoseJoints(java.util.UUID playerId, java.util.Set<String> jointNames) {
+        if (playerId == null) {
+            return;
+        }
+        if (jointNames == null || jointNames.isEmpty()) {
+            WHEEL_JOINTS.remove(playerId);
+        } else {
+            WHEEL_JOINTS.put(playerId, java.util.Set.copyOf(jointNames));
+        }
+    }
+
+    public static void clearWheelPoseJoints(java.util.UUID playerId) {
+        if (playerId != null) {
+            WHEEL_JOINTS.remove(playerId);
+        }
+    }
+
+    /** Correct the captured pose for the currently active wheel-animation joints. */
+    public static yesman.epicfight.api.animation.Pose correctWheelPose(
+            java.util.UUID playerId, yesman.epicfight.api.animation.Pose captured,
+            Armature sourceArmature, Armature targetArmature) {
+        java.util.Set<String> wheelJoints = playerId == null ? null : WHEEL_JOINTS.get(playerId);
+        if (wheelJoints == null || wheelJoints.isEmpty() || captured == null
+                || sourceArmature == null || targetArmature == null) {
+            return captured;
+        }
+        boolean correctedAny = false;
+        yesman.epicfight.api.animation.Pose corrected =
+                new yesman.epicfight.api.animation.Pose(new HashMap<>(captured.getJointTransformData()));
+        for (String jointName : wheelJoints) {
+            yesman.epicfight.api.animation.JointTransform transform = corrected.getJointTransformData().get(jointName);
+            if (transform == null) {
+                continue;
+            }
+            Joint sourceJoint = sourceArmature.searchJointByName(jointName);
+            Joint targetJoint = targetArmature.searchJointByName(jointName);
+            if (sourceJoint == null || targetJoint == null) {
+                continue;
+            }
+            OpenMatrix4f sourceLocal = sourceJoint.getLocalTransform();
+            OpenMatrix4f targetLocal = targetJoint.getLocalTransform();
+            OpenMatrix4f targetInv = OpenMatrix4f.invert(targetLocal, null);
+            // Row-vector convention: correction = target^-1 * source, applied
+            // before the wheel animation transform T: corrected = correction * T.
+            OpenMatrix4f correction = OpenMatrix4f.mul(targetInv, sourceLocal, null);
+            OpenMatrix4f correctedTransform = OpenMatrix4f.mul(correction, transform.toMatrix(), null);
+            corrected.putJointData(jointName,
+                    yesman.epicfight.api.animation.JointTransform.fromMatrix(correctedTransform));
+            correctedAny = true;
+        }
+        return correctedAny ? corrected : captured;
+    }
+
+    public static void clearWheelAnimationFlags() {
+        WHEEL_JOINTS.clear();
+    }
 
     // ------------------------------------------------------------------
     // Per-frame pose capture
@@ -148,6 +221,7 @@ public final class YsmBindArmature {
     /** Forget every re-bound armature and captured pose (model reload paths). */
     public static void invalidateAll() {
         BY_MODEL.clear();
+        WHEEL_JOINTS.clear();
         synchronized (POSES) {
             POSES.clear();
         }
@@ -237,6 +311,14 @@ public final class YsmBindArmature {
         putPivot(pivots, JOINT_TOOL_R, wristR != null ? wristR : elbowR);
         putPivot(pivots, JOINT_TOOL_L, wristL != null ? wristL : elbowL);
 
+        if (BIND_PIVOT_LOG_LOGGED.add(modelId)) {
+            YSMEpicFightCompat.LOGGER.info(
+                    "YSM-EF Compat: [bind] model='{}' pivots root={},torso={},chest={},head={},shoulderR={},shoulderL={},elbowR={},elbowL={},wristR={},wristL={}",
+                    modelId,
+                    fmt(hip), fmt(hip), fmt(chest), fmt(neck), fmt(shoulderR), fmt(shoulderL),
+                    fmt(elbowR), fmt(elbowL), fmt(wristR), fmt(wristL));
+        }
+
         Map<String, Joint> jointMap = new HashMap<>();
         Joint newRoot = copyHierarchy(ref.rootJoint, new OpenMatrix4f(), pivots, jointMap, true);
         newRoot.initOriginTransform(new OpenMatrix4f());
@@ -286,6 +368,14 @@ public final class YsmBindArmature {
 
     private static final java.util.Set<String> DIAG_LOGGED = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private static final java.util.Set<String> DIAG_JOINTS_LOGGED = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private static final java.util.Set<String> BIND_PIVOT_LOG_LOGGED = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    private static String fmt(Vector3f v) {
+        if (v == null) {
+            return "null";
+        }
+        return String.format("(%.3f,%.3f,%.3f)", v.x, v.y, v.z);
+    }
 
     /** Armature-frame world position of a pivot, or null to keep the reference translation. */
     private static void putPivot(Map<Integer, OpenMatrix4f> pivots, int joint, Vector3f pos) {

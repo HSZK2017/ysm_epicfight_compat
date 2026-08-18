@@ -15,6 +15,7 @@
     "EpicFightRenderLivingEventMixin",
     "DiscreteInputActionTriggerMixin",
     "MouseHandlerMixin",
+    "YsmRouletteConfigExpressionMixin",
     "PPlayerRendererMixin",
     "PatchedLivingRenderDiagMixin",
     "DispatcherDiagMixin",

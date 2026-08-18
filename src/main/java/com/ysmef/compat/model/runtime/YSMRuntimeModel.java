@@ -5,6 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.ysmef.compat.YSMEpicFightCompat;
+import com.ysmef.compat.animation.YsmRoamingState;
 import com.ysmef.compat.model.EFMeshJsonWriter;
 import com.ysmef.compat.model.YSMMesh;
 import com.ysmef.compat.model.YSMMeshLibrary;
@@ -64,6 +65,8 @@ public final class YSMRuntimeModel {
     final List<CompiledAnim> parallels;
     final Map<String, CompiledAnim> states;
     final Map<String, CompiledAnim> conditionAnims;
+    /** All v.roaming.<name> variable names referenced by this model's scripts. */
+    final Set<String> roamingNames;
     /** Number of compiled keyframe channels; used to size per-animator cursor arrays. */
     final int channelCount;
 
@@ -87,13 +90,14 @@ public final class YSMRuntimeModel {
 
     private YSMRuntimeModel(String modelId, BoneRt[] bones, Map<String, Integer> boneIndex,
                             List<CompiledAnim> parallels, Map<String, CompiledAnim> states,
-                            Map<String, CompiledAnim> conditionAnims, int channelCount) {
+                            Map<String, CompiledAnim> conditionAnims, Set<String> roamingNames, int channelCount) {
         this.modelId = modelId;
         this.bones = bones;
         this.boneIndex = boneIndex;
         this.parallels = parallels;
         this.states = states;
         this.conditionAnims = conditionAnims;
+        this.roamingNames = roamingNames;
         this.channelCount = channelCount;
     }
 
@@ -180,9 +184,19 @@ public final class YSMRuntimeModel {
      */
     public void applyEntityVisibility(YSMMesh mesh, Player player) {
         ensureDefaultPartMap(mesh);
-        java.util.Map<String, Float> roaming = YsmWheelAnimationState.readRoamingVars(player);
+        java.util.Map<String, Float> ysmRoaming = YsmWheelAnimationState.readRoamingVars(player, roamingNames);
+        java.util.Map<String, Float> trackedRoaming = YsmRoamingState.getRoaming(player);
+        // YSM's own roaming struct is authoritative when available; the local
+        // tracker fills the gap while YSM's evaluator is idle in battle mode.
+        java.util.Map<String, Float> roaming = new java.util.TreeMap<>(trackedRoaming);
+        roaming.putAll(ysmRoaming);
         boolean[] hidden;
         if (roaming.isEmpty()) {
+            if (ROAMING_EMPTY_LOGGED.add(modelId)) {
+                YSMEpicFightCompat.LOGGER.info(
+                        "YSM-EF Compat: [roaming] no roaming variables exposed for model '{}' (battle-mode accessories fall back to default form)",
+                        modelId);
+            }
             hidden = defaultHidden();
         } else {
             long fingerprint = roamingFingerprint(roaming);
@@ -194,11 +208,30 @@ public final class YSMRuntimeModel {
                 }
                 roamingHiddenCache.put(fingerprint, hidden);
             }
+            String stateKey = fingerprint + ":" + roaming;
+            if (ROAMING_STATE_LOGGED.add(stateKey)) {
+                YSMEpicFightCompat.LOGGER.info(
+                        "YSM-EF Compat: [roaming] model='{}' vars={} -> {} hidden bone parts",
+                        modelId, roaming, countHidden(hidden));
+            }
         }
         for (int i = 0; i < defaultBoneParts.size(); i++) {
             int boneIdx = defaultPartBoneIdx[i];
             defaultBoneParts.get(i).setHidden(boneIdx >= 0 && boneIdx < hidden.length && hidden[boneIdx]);
         }
+    }
+
+    private static final java.util.Set<String> ROAMING_EMPTY_LOGGED = ConcurrentHashMap.newKeySet();
+    private static final java.util.Set<String> ROAMING_STATE_LOGGED = ConcurrentHashMap.newKeySet();
+
+    private static int countHidden(boolean[] hidden) {
+        int count = 0;
+        for (boolean b : hidden) {
+            if (b) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private static long roamingFingerprint(java.util.Map<String, Float> roaming) {
@@ -585,7 +618,34 @@ public final class YSMRuntimeModel {
         // pre_parallel* first, then parallel*, each in numeric order
         parallels.sort(Comparator.comparing((CompiledAnim a) -> a.name.startsWith("pre_parallel") ? 0 : 1)
                 .thenComparing(a -> a.name));
-        return new YSMRuntimeModel(modelId, bones, boneIndex, parallels, states, conditions, nextChannelId);
+        return new YSMRuntimeModel(modelId, bones, boneIndex, parallels, states, conditions,
+                collectRoamingNames(root), nextChannelId);
+    }
+
+    /** Extract every distinct v.roaming.<name> variable referenced anywhere in the runtime JSON. */
+    private static Set<String> collectRoamingNames(JsonObject root) {
+        Set<String> names = new HashSet<>();
+        java.util.ArrayDeque<JsonElement> queue = new java.util.ArrayDeque<>();
+        queue.add(root);
+        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("v\\.roaming\\.([A-Za-z_][A-Za-z0-9_]*)");
+        while (!queue.isEmpty()) {
+            JsonElement element = queue.poll();
+            if (element.isJsonObject()) {
+                for (Map.Entry<String, JsonElement> entry : element.getAsJsonObject().entrySet()) {
+                    queue.add(entry.getValue());
+                }
+            } else if (element.isJsonArray()) {
+                for (JsonElement child : element.getAsJsonArray()) {
+                    queue.add(child);
+                }
+            } else if (element.isJsonPrimitive() && element.getAsJsonPrimitive().isString()) {
+                java.util.regex.Matcher matcher = pattern.matcher(element.getAsString());
+                while (matcher.find()) {
+                    names.add(matcher.group(1));
+                }
+            }
+        }
+        return names;
     }
 
     /**

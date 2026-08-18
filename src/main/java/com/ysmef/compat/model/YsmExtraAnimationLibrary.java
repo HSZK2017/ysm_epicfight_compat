@@ -20,6 +20,7 @@ import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -437,6 +438,33 @@ public final class YsmExtraAnimationLibrary {
     /** The template JSON file of a template id. */
     public static Path templateFile(String templateId) {
         return PUBLIC_DIR.resolve(templateId + ".json");
+    }
+
+    private static final Map<String, Set<String>> TEMPLATE_JOINT_NAME_CACHE = new ConcurrentHashMap<>();
+
+    /** Joint names overridden by one public template (used for wheel-pose retarget correction). */
+    public static Set<String> templateJointNames(String templateId) {
+        Set<String> cached = TEMPLATE_JOINT_NAME_CACHE.get(templateId);
+        if (cached != null) {
+            return cached;
+        }
+        Set<String> names = new LinkedHashSet<>();
+        try {
+            Path file = templateFile(templateId);
+            if (Files.isRegularFile(file)) {
+                JsonObject json = JsonParser.parseString(Files.readString(file, StandardCharsets.UTF_8)).getAsJsonObject();
+                if (json.has("animation") && json.get("animation").isJsonArray()) {
+                    for (var element : json.getAsJsonArray("animation")) {
+                        if (element.isJsonObject() && element.getAsJsonObject().has("name")) {
+                            names.add(element.getAsJsonObject().get("name").getAsString());
+                        }
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        TEMPLATE_JOINT_NAME_CACHE.put(templateId, names);
+        return names;
     }
 
     /**
