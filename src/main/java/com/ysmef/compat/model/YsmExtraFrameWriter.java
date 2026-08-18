@@ -21,6 +21,8 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Samples YSM wheel-selectable extra animations (the "extra" GEO animation file)
@@ -41,6 +43,14 @@ public final class YsmExtraFrameWriter {
 
     /** Longest wheel animation that is converted (guards corrupt/infinite lengths). */
     private static final float MAX_ANIMATION_LENGTH = 120.0f;
+    private static final Set<String> FRAME_PIVOT_LOG = ConcurrentHashMap.newKeySet();
+
+    private static String fmtPivot(OpenMatrix4f m) {
+        if (m == null) {
+            return "null";
+        }
+        return String.format("(%.3f,%.3f,%.3f)", m.m30, m.m31, m.m32);
+    }
 
     private static final int JOINT_COUNT = 20;
     private static final int JOINT_ROOT = 0;
@@ -165,6 +175,17 @@ public final class YsmExtraFrameWriter {
             bindWorldOf(bones, i);
         }
         ArmatureTables tables = buildArmatureTables(pkg, bones);
+        if (FRAME_PIVOT_LOG.add(pkg.modelId)) {
+            YSMEpicFightCompat.LOGGER.info(
+                    "YSM-EF Compat: [framepivots] model='{}' root={},torso={},chest={},head={},shoulderR={},shoulderL={}",
+                    pkg.modelId,
+                    fmtPivot(tables.ysmWorlds[JOINT_ROOT]),
+                    fmtPivot(tables.ysmWorlds[JOINT_TORSO]),
+                    fmtPivot(tables.ysmWorlds[JOINT_CHEST]),
+                    fmtPivot(tables.ysmWorlds[JOINT_HEAD]),
+                    fmtPivot(tables.ysmWorlds[JOINT_SHOULDER_R]),
+                    fmtPivot(tables.ysmWorlds[JOINT_SHOULDER_L]));
+        }
         RepresentativeSelection selection = selectRepresentatives(bones, anim);
         if (!selection.hasAnimatedJoint()) {
             return null;
@@ -220,7 +241,8 @@ public final class YsmExtraFrameWriter {
                 if (localFrames.containsKey(joint)) {
                     int boneIdx = selection.representative(joint);
                     if (boneIdx >= 0) {
-                        local = jointLocalFor(bones[boneIdx], tables.ysmWorlds[joint], x);
+                        local = jointLocalFor(bones[boneIdx], tables.ysmWorlds[joint], x,
+                                pkg.widthScale, pkg.heightScale);
                     }
                 }
                 if (local == null || !isFinite(local)) {
@@ -455,6 +477,10 @@ public final class YsmExtraFrameWriter {
         return bind;
     }
 
+    private static Vector3f scaledPos(Vector3f source, float scaleW, float scaleH) {
+        return new Vector3f(source.x * scaleW, source.y * scaleH, source.z * scaleW);
+    }
+
     private static void applyLocal(Matrix4f m, float px, float py, float pz,
                                    float rx, float ry, float rz, float sx, float sy, float sz) {
         m.translate(px, py, pz);
@@ -465,7 +491,8 @@ public final class YsmExtraFrameWriter {
         m.translate(-px, -py, -pz);
     }
 
-    private static void computeAnimatedBoneWorld(SampleBone[] bones, ScriptAnim anim, SampleBone bone, SampleEnv env) {
+    private static void computeAnimatedBoneWorld(SampleBone[] bones, ScriptAnim anim, SampleBone bone,
+                                                 SampleEnv env) {
         float rx = bone.bone.rotX;
         float ry = bone.bone.rotY;
         float rz = bone.bone.rotZ;
@@ -637,7 +664,7 @@ public final class YsmExtraFrameWriter {
 
     private static ArmatureTables buildArmatureTables(YsmModelPackage pkg, SampleBone[] bones) {
         ArmatureTables tables = new ArmatureTables();
-        Map<Integer, List<Vector3f>> byJoint = collectGeometryByJoint(bones);
+        Map<Integer, List<Vector3f>> byJoint = collectGeometryByJoint(bones, pkg);
         Vector3f thighR = topOf(byJoint.get(JOINT_THIGH_R));
         Vector3f thighL = topOf(byJoint.get(JOINT_THIGH_L));
         Vector3f hip = midpoint(thighR, thighL);
@@ -649,8 +676,8 @@ public final class YsmExtraFrameWriter {
         Vector3f shoulderL = topOf(byJoint.get(JOINT_ARM_L));
         Vector3f elbowR = topOf(byJoint.get(JOINT_HAND_R));
         Vector3f elbowL = topOf(byJoint.get(JOINT_HAND_L));
-        Vector3f wristR = handPivot(byJoint.get(JOINT_HAND_R), bones);
-        Vector3f wristL = handPivot(byJoint.get(JOINT_HAND_L), bones);
+        Vector3f wristR = handPivot(byJoint.get(JOINT_HAND_R), bones, pkg.widthScale, pkg.heightScale);
+        Vector3f wristL = handPivot(byJoint.get(JOINT_HAND_L), bones, pkg.widthScale, pkg.heightScale);
 
         Map<Integer, OpenMatrix4f> pivots = new HashMap<>();
         putPivot(pivots, JOINT_ROOT, hip);
@@ -703,7 +730,7 @@ public final class YsmExtraFrameWriter {
         tables.ysmWorldsJoml[joint] = toJoml(tables.ysmWorlds[joint]);
     }
 
-    private static Map<Integer, List<Vector3f>> collectGeometryByJoint(SampleBone[] bones) {
+    private static Map<Integer, List<Vector3f>> collectGeometryByJoint(SampleBone[] bones, YsmModelPackage pkg) {
         Map<Integer, List<Vector3f>> byJoint = new HashMap<>();
         for (SampleBone sample : bones) {
             if (!sample.direct) {
@@ -713,11 +740,11 @@ public final class YsmExtraFrameWriter {
             if (!name.isEmpty() && Character.isDigit(name.charAt(name.length() - 1))) {
                 continue;
             }
-            Matrix4f bind = bindWorldOf(bones, indexOf(bones, sample));
+            Matrix4f bind = sample.bind;
             List<Vector3f> list = byJoint.computeIfAbsent(sample.joint, k -> new ArrayList<>());
             for (YSMGeoModel.Quad quad : sample.bone.quads) {
                 for (Vector3f pos : quad.positions) {
-                    list.add(new Vector3f(pos).mulPosition(bind));
+                    list.add(scaledPos(new Vector3f(pos).mulPosition(bind), pkg.widthScale, pkg.heightScale));
                 }
             }
         }
@@ -733,7 +760,7 @@ public final class YsmExtraFrameWriter {
         return -1;
     }
 
-    private static Vector3f handPivot(List<Vector3f> vertices, SampleBone[] bones) {
+    private static Vector3f handPivot(List<Vector3f> vertices, SampleBone[] bones, float scaleW, float scaleH) {
         if (vertices == null || vertices.isEmpty()) {
             return null;
         }
@@ -744,11 +771,11 @@ public final class YsmExtraFrameWriter {
             if (!sample.direct || (sample.joint != JOINT_HAND_R && sample.joint != JOINT_HAND_L)) {
                 continue;
             }
-            Matrix4f bind = bindWorldOf(bones, indexOf(bones, sample));
+            Matrix4f bind = sample.bind;
             List<Vector3f> handVerts = new ArrayList<>();
             for (YSMGeoModel.Quad quad : sample.bone.quads) {
                 for (Vector3f pos : quad.positions) {
-                    handVerts.add(new Vector3f(pos).mulPosition(bind));
+                    handVerts.add(scaledPos(new Vector3f(pos).mulPosition(bind), scaleW, scaleH));
                 }
             }
             return topOf(handVerts);
@@ -892,13 +919,23 @@ public final class YsmExtraFrameWriter {
         return selection;
     }
 
-    private static OpenMatrix4f jointLocalFor(SampleBone bone, OpenMatrix4f ysmBindWorld, OpenMatrix4f parentLocalProduct) {
-        Matrix4f bind = bone.bind;
+    private static OpenMatrix4f jointLocalFor(SampleBone bone, OpenMatrix4f ysmBindWorld,
+                                              OpenMatrix4f parentLocalProduct, float scaleW, float scaleH) {
+        Matrix4f bind = new Matrix4f(bone.bind);
+        scaleMatrixTranslation(bind, scaleW, scaleH);
         Matrix4f invBind = new Matrix4f(bind).invert();
-        Matrix4f d = new Matrix4f(bone.animWorld).mul(invBind).mul(toJoml(ysmBindWorld));
+        Matrix4f animated = new Matrix4f(bone.animWorld);
+        scaleMatrixTranslation(animated, scaleW, scaleH);
+        Matrix4f d = animated.mul(invBind).mul(toJoml(ysmBindWorld));
         OpenMatrix4f desired = toOpen(d);
-        OpenMatrix4f xInverse = OpenMatrix4f.invert(parentLocalProduct, null);
+        OpenMatrix4f xInverse = OpenMatrix4f.invert(parentLocalProduct, new OpenMatrix4f());
         return OpenMatrix4f.mul(xInverse, desired, null);
+    }
+
+    private static void scaleMatrixTranslation(Matrix4f matrix, float scaleW, float scaleH) {
+        matrix.m30(matrix.m30() * scaleW);
+        matrix.m31(matrix.m31() * scaleH);
+        matrix.m32(matrix.m32() * scaleW);
     }
 
     private static Matrix4f toJoml(OpenMatrix4f m) {
