@@ -432,6 +432,11 @@ public final class YsmExtraAnimationLibrary {
                 return entry;
             }
         }
+        // Older mappings were written before classified submenu animations
+        // (e.g. "#快捷交流" entries) were merged into extraAnimations. Re-convert
+        // such a model once per session so newly discovered submenu actions are
+        // appended to the persisted mapping.
+        remapConvertedAsync(modelId);
         return null;
     }
 
@@ -649,6 +654,35 @@ public final class YsmExtraAnimationLibrary {
         });
     }
 
+    private static final Set<String> REMAP_PENDING_MODELS = ConcurrentHashMap.newKeySet();
+    private static final Set<String> REMAP_CHECKED_MODELS = ConcurrentHashMap.newKeySet();
+
+    /**
+     * Re-run conversion for a model whose persisted mapping exists but does not
+     * contain the requested animation (legacy mapping missing classified
+     * submenu entries). Runs at most once per model per session.
+     */
+    private static void remapConvertedAsync(String modelId) {
+        if (modelId == null || modelId.isEmpty() || !REMAP_CHECKED_MODELS.add(modelId)) {
+            return;
+        }
+        if (!REMAP_PENDING_MODELS.add(modelId)) {
+            return;
+        }
+        CONVERT_POOL.submit(() -> {
+            try {
+                YsmModelPackage pkg = YsmModelPackage.load(modelId);
+                if (pkg != null) {
+                    convertModel(pkg);
+                }
+            } catch (Throwable t) {
+                YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: wheel animation remap failed for '{}'", modelId, t);
+            } finally {
+                REMAP_PENDING_MODELS.remove(modelId);
+            }
+        });
+    }
+
     /** Forget cached mappings/descriptors after model reloads. */
     public static void invalidateAll() {
         MAPPING_CACHE.clear();
@@ -657,6 +691,9 @@ public final class YsmExtraAnimationLibrary {
         REGISTERING.clear();
         REGISTERED.clear();
         REGISTER_QUEUE.clear();
+        TEMPLATE_JOINT_NAME_CACHE.clear();
+        REMAP_CHECKED_MODELS.clear();
+        REMAP_PENDING_MODELS.clear();
         descriptorFileDirty = false;
         // On a full resource reload Epic Fight drops resourcepack-animation
         // registrations itself; templates will be re-registered on next lookup.

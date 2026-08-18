@@ -445,8 +445,13 @@ public class YsmBinaryReader {
                 r.readString();
                 int classificationExtrasCount = r.readVarInt();
                 for (int j = 0; j < classificationExtrasCount; j++) {
-                    r.readString();
-                    r.readString();
+                    String animationKey = r.readString();
+                    String animationName = r.readString();
+                    // Classified entries are the actual wheel animations shown
+                    // after entering a submenu such as "#快捷交流". They must be
+                    // part of extraAnimations, otherwise those submenu actions
+                    // are never converted / playable in battle mode.
+                    model.extraAnimations.putIfAbsent(animationKey, animationName);
                 }
             }
         }
