@@ -163,13 +163,19 @@ public class YSMMesh extends HumanoidMesh {
         // 保证静止形态不受影响。仅当 poses 是当前 armature 的实时姿势矩阵时
         // 才生效（EntitySnapshot 等快照路径传独立数组，保持原样）。
         boolean rebindApplied = false;
+        LivingEntity renderEntity = YSMRuntimeBridge.getCurrentEntity();
         if (this.runtimeModelId != null && armature != null && poses != null
                 && poses == armature.getPoseMatrices()) {
             yesman.epicfight.api.animation.Pose captured = YsmBindArmature.findPose(armature);
             if (captured != null) {
                 yesman.epicfight.model.armature.HumanoidArmature bind = YsmBindArmature.getArmature(this.runtimeModelId, this);
                 if (bind != null) {
-                    bind.setPose(captured);
+                    yesman.epicfight.api.animation.Pose poseToApply = captured;
+                    if (renderEntity != null) {
+                        poseToApply = YsmBindArmature.correctWheelPose(
+                                renderEntity.getUUID(), captured, armature, bind);
+                    }
+                    bind.setPose(poseToApply);
                     armature = bind;
                     poses = bind.getPoseMatrices();
                     rebindApplied = true;

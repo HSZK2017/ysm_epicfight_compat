@@ -128,34 +128,63 @@ public final class YsmBindArmature {
             Armature sourceArmature, Armature targetArmature) {
         java.util.Set<String> wheelJoints = playerId == null ? null : WHEEL_JOINTS.get(playerId);
         if (wheelJoints == null || wheelJoints.isEmpty() || captured == null
-                || sourceArmature == null || targetArmature == null) {
+                || sourceArmature == null || targetArmature == null
+                || sourceArmature.rootJoint == null || targetArmature.rootJoint == null) {
             return captured;
         }
-        boolean correctedAny = false;
         yesman.epicfight.api.animation.Pose corrected =
                 new yesman.epicfight.api.animation.Pose(new HashMap<>(captured.getJointTransformData()));
-        for (String jointName : wheelJoints) {
-            yesman.epicfight.api.animation.JointTransform transform = corrected.getJointTransformData().get(jointName);
-            if (transform == null) {
-                continue;
-            }
-            Joint sourceJoint = sourceArmature.searchJointByName(jointName);
-            Joint targetJoint = targetArmature.searchJointByName(jointName);
-            if (sourceJoint == null || targetJoint == null) {
-                continue;
-            }
-            OpenMatrix4f sourceLocal = sourceJoint.getLocalTransform();
-            OpenMatrix4f targetLocal = targetJoint.getLocalTransform();
-            OpenMatrix4f targetInv = OpenMatrix4f.invert(targetLocal, null);
-            // Row-vector convention: correction = target^-1 * source, applied
-            // before the wheel animation transform T: corrected = correction * T.
-            OpenMatrix4f correction = OpenMatrix4f.mul(targetInv, sourceLocal, null);
-            OpenMatrix4f correctedTransform = OpenMatrix4f.mul(correction, transform.toMatrix(), null);
-            corrected.putJointData(jointName,
-                    yesman.epicfight.api.animation.JointTransform.fromMatrix(correctedTransform));
-            correctedAny = true;
+        Map<String, OpenMatrix4f> sourceWorlds = new HashMap<>();
+        collectSourceWorlds(sourceArmature.rootJoint, new OpenMatrix4f(), captured, sourceWorlds);
+        if (correctJointRecursive(targetArmature.rootJoint, new OpenMatrix4f(), captured, corrected,
+                sourceWorlds, wheelJoints)) {
+            return corrected;
         }
-        return correctedAny ? corrected : captured;
+        return captured;
+    }
+
+    private static void collectSourceWorlds(Joint joint, OpenMatrix4f parentWorld,
+                                            Pose captured, Map<String, OpenMatrix4f> out) {
+        OpenMatrix4f local = new OpenMatrix4f(joint.getLocalTransform());
+        OpenMatrix4f transform = transformOf(captured, joint.getName());
+        OpenMatrix4f parentLocal = OpenMatrix4f.mul(parentWorld, local, null);
+        OpenMatrix4f world = OpenMatrix4f.mul(parentLocal, transform, null);
+        out.put(joint.getName(), world);
+        for (Joint child : joint.getSubJoints()) {
+            collectSourceWorlds(child, world, captured, out);
+        }
+    }
+
+    private static boolean correctJointRecursive(Joint joint, OpenMatrix4f parentTargetWorld,
+                                                 Pose captured, Pose corrected,
+                                                 Map<String, OpenMatrix4f> sourceWorlds,
+                                                 Set<String> wheelJoints) {
+        boolean correctedAny = false;
+        String name = joint.getName();
+        OpenMatrix4f local = new OpenMatrix4f(joint.getLocalTransform());
+        OpenMatrix4f parentLocal = OpenMatrix4f.mul(parentTargetWorld, local, null);
+        OpenMatrix4f world;
+        if (wheelJoints.contains(name) && sourceWorlds.containsKey(name)) {
+            OpenMatrix4f sourceWorld = sourceWorlds.get(name);
+            OpenMatrix4f parentLocalInv = OpenMatrix4f.invert(parentLocal, null);
+            OpenMatrix4f correctedLocal = OpenMatrix4f.mul(parentLocalInv, sourceWorld, null);
+            corrected.putJointData(name,
+                    yesman.epicfight.api.animation.JointTransform.fromMatrix(new OpenMatrix4f(correctedLocal)));
+            world = sourceWorld;
+            correctedAny = true;
+        } else {
+            OpenMatrix4f transform = transformOf(captured, name);
+            world = OpenMatrix4f.mul(parentLocal, transform, null);
+        }
+        for (Joint child : joint.getSubJoints()) {
+            correctedAny |= correctJointRecursive(child, world, captured, corrected, sourceWorlds, wheelJoints);
+        }
+        return correctedAny;
+    }
+
+    private static OpenMatrix4f transformOf(Pose pose, String jointName) {
+        yesman.epicfight.api.animation.JointTransform transform = pose.getJointTransformData().get(jointName);
+        return transform == null ? new OpenMatrix4f() : new OpenMatrix4f(transform.toMatrix());
     }
 
     public static void clearWheelAnimationFlags() {
