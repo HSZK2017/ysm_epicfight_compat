@@ -8,6 +8,7 @@ import com.ysmef.compat.YSMEpicFightCompat;
 import com.ysmef.compat.model.EFMeshJsonWriter;
 import com.ysmef.compat.model.YSMMesh;
 import com.ysmef.compat.model.YSMMeshLibrary;
+import com.ysmef.compat.renderer.YsmWheelAnimationState;
 import com.ysmef.compat.ysm.script.Molang;
 import com.ysmef.compat.ysm.script.ScriptAnim;
 import com.ysmef.compat.ysm.script.ScriptJson;
@@ -161,6 +162,63 @@ public final class YSMRuntimeModel {
     private volatile boolean[] defaultHidden;
 
     /**
+     * Roaming-variable visibility cache: wheel animations can toggle persistent
+     * v.roaming.* values (gun, key, accessory switches, ...), and the model's
+     * parallel visibility scripts use them to show or collapse accessory parts.
+     * Epic Fight battle mode never runs YSM's own script evaluator, so this
+     * evaluates the visibility scripts statically with the current roaming
+     * values whenever the player has any, and caches the resulting part-hidden
+     * mask per variable fingerprint.
+     */
+    private final Map<Long, boolean[]> roamingHiddenCache = new ConcurrentHashMap<>();
+    private static final int ROAMING_HIDDEN_CACHE_MAX = 32;
+
+    /**
+     * Battle-mode visibility honoring YSM's current persistent roaming variables
+     * (accessories toggled by wheel animations). Falls back to the neutral
+     * default form when the YSM fork exposes no roaming variables.
+     */
+    public void applyEntityVisibility(YSMMesh mesh, Player player) {
+        ensureDefaultPartMap(mesh);
+        java.util.Map<String, Float> roaming = YsmWheelAnimationState.readRoamingVars(player);
+        boolean[] hidden;
+        if (roaming.isEmpty()) {
+            hidden = defaultHidden();
+        } else {
+            long fingerprint = roamingFingerprint(roaming);
+            hidden = roamingHiddenCache.get(fingerprint);
+            if (hidden == null) {
+                hidden = computeHiddenWithRoaming(roaming);
+                if (roamingHiddenCache.size() >= ROAMING_HIDDEN_CACHE_MAX) {
+                    roamingHiddenCache.clear();
+                }
+                roamingHiddenCache.put(fingerprint, hidden);
+            }
+        }
+        for (int i = 0; i < defaultBoneParts.size(); i++) {
+            int boneIdx = defaultPartBoneIdx[i];
+            defaultBoneParts.get(i).setHidden(boneIdx >= 0 && boneIdx < hidden.length && hidden[boneIdx]);
+        }
+    }
+
+    private static long roamingFingerprint(java.util.Map<String, Float> roaming) {
+        long hash = 1125899906842597L;
+        for (java.util.Map.Entry<String, Float> entry : roaming.entrySet()) {
+            hash = hash * 31L + entry.getKey().hashCode();
+            hash = hash * 31L + Float.floatToIntBits(entry.getValue());
+        }
+        return hash;
+    }
+
+    private boolean[] computeHiddenWithRoaming(java.util.Map<String, Float> roaming) {
+        Molang.Env env = newDefaultEnv();
+        for (java.util.Map.Entry<String, Float> entry : roaming.entrySet()) {
+            env.setVar("v.roaming." + entry.getKey(), entry.getValue());
+        }
+        return computeHidden(env);
+    }
+
+    /**
      * Apply the default-form visibility to every per-bone part of the mesh.
      * Used in Epic Fight battle mode, where no script animation may run.
      * The part -> bone-index mapping is captured once per mesh instance
@@ -223,8 +281,11 @@ public final class YSMRuntimeModel {
     }
 
     private boolean[] computeDefaultHidden() {
+        return computeHidden(newDefaultEnv());
+    }
+
+    private boolean[] computeHidden(Molang.Env env) {
         int n = bones.length;
-        Molang.Env env = newDefaultEnv();
         // evaluate each parallel anim's t=0 scale channels; later anims override
         // earlier ones per bone, mirroring the animator's shared scratch arrays
         float[][] scales = new float[n][];

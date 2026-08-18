@@ -474,9 +474,57 @@ public final class YsmExtraAnimationLibrary {
      * resource reload is not needed for a lazily converted model).
      */
     public static void clientTick() {
+        migrateLegacyTemplateConstructors();
         JsonObject json;
         while ((json = REGISTER_QUEUE.poll()) != null) {
             registerFromJson(json);
+        }
+    }
+
+    private static volatile boolean LEGACY_TEMPLATES_MIGRATED;
+
+    /**
+     * Early generated templates used "epicfight:biped" as the armature accessor
+     * name. Epic Fight 20.14.17 registers the biped armature under
+     * "epicfight:entity/biped", and the old name fails at clip load time with
+     * "Can't find resource file: epicfight:animmodels/biped.json". Rewrite those
+     * already-written template files in place once so existing caches work.
+     */
+    private static synchronized void migrateLegacyTemplateConstructors() {
+        if (LEGACY_TEMPLATES_MIGRATED) {
+            return;
+        }
+        LEGACY_TEMPLATES_MIGRATED = true;
+        try {
+            if (!Files.isDirectory(PUBLIC_DIR)) {
+                return;
+            }
+            int rewritten = 0;
+            try (var files = Files.list(PUBLIC_DIR)) {
+                for (Path file : files.filter(p -> p.getFileName().toString().endsWith(".json")).toList()) {
+                    try {
+                        String json = Files.readString(file, StandardCharsets.UTF_8);
+                        if (!json.contains("epicfight:biped#")) {
+                            continue;
+                        }
+                        String fixed = json.replace("epicfight:biped#", "epicfight:entity/biped#");
+                        EFMeshJsonWriter.writeFileAtomic(file, fixed.getBytes(StandardCharsets.UTF_8));
+                        // Re-register on the render thread even when Epic Fight's
+                        // resource reload already created an accessor for this
+                        // id: readResourcepackAnimation overwrites by name, so
+                        // this replaces the legacy object before playback.
+                        enqueueRegistration(JsonParser.parseString(fixed).getAsJsonObject());
+                        rewritten++;
+                    } catch (Exception ignored) {
+                    }
+                }
+            }
+            if (rewritten > 0) {
+                YSMEpicFightCompat.LOGGER.info(
+                        "YSM-EF Compat: [wheel] migrated {} public templates to armature 'epicfight:entity/biped'", rewritten);
+            }
+        } catch (Exception e) {
+            YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to migrate legacy wheel template constructors", e);
         }
     }
 
@@ -500,6 +548,7 @@ public final class YsmExtraAnimationLibrary {
                     YSMEpicFightCompat.MODID, PUBLIC_DIRECTORY + "/" + id);
             method.invoke(AnimationManager.getInstance(), rl, json);
             REGISTERED.add(id);
+            YSMEpicFightCompat.LOGGER.info("YSM-EF Compat: [wheel] registered public animation template '{}'", id);
         } catch (Throwable t) {
             if (id != null) {
                 REGISTERING.remove(id);

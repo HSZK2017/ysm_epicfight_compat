@@ -5,6 +5,7 @@ import com.ysmef.compat.model.YSMMesh;
 import com.ysmef.compat.renderer.YSMBattleMode;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.player.Player;
 import yesman.epicfight.api.client.model.MeshPart;
 import yesman.epicfight.api.model.Armature;
 import yesman.epicfight.api.utils.math.OpenMatrix4f;
@@ -59,7 +60,15 @@ public final class YSMRuntimeBridge {
         YSMRuntimeModel model = YSMRuntimeModel.get(modelId);
         if (YSMBattleMode.isBattleMode(entity)) {
             if (model != null) {
-                model.applyDefaultVisibility(mesh);
+                if (entity instanceof Player player) {
+                    // Honor persistent v.roaming.* toggles from the wheel
+                    // (accessory switches like the gun/key animations) so the
+                    // converted mesh shows/hides the same accessory parts as
+                    // YSM's own renderer would.
+                    model.applyEntityVisibility(mesh, player);
+                } else {
+                    model.applyDefaultVisibility(mesh);
+                }
             } else {
                 unhideAllBoneParts(mesh);
             }

@@ -7,6 +7,9 @@ import net.minecraftforge.common.util.LazyOptional;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.Collections;
+import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * Reads the currently wheel-selected extra animation of a player from YSM's
@@ -33,6 +36,11 @@ public final class YsmWheelAnimationState {
     private static volatile Method getSelectedModelIdMethod;
     private static volatile Method isModelSwitchingMethod;
     private static volatile boolean methodLookupDone;
+    private static volatile Method getServerVarContainerMethod;
+    private static volatile Method roamingForEachVarMethod;
+    private static volatile Method roamingGetPropertyMethod;
+    private static volatile Method stringPoolGetNameMethod;
+    private static volatile boolean roamingLookupDone;
 
     private YsmWheelAnimationState() {}
 
@@ -47,6 +55,12 @@ public final class YsmWheelAnimationState {
         try {
             ensureMethods(animatable.getClass());
             if (getSelectedModelIdMethod == null || isModelSwitchingMethod == null) {
+                if (!missingMethodsLogged) {
+                    missingMethodsLogged = true;
+                    YSMEpicFightCompat.LOGGER.info(
+                            "YSM-EF Compat: [wheel] YSM wheel-state methods not found on {} (selectedModelId={}, modelSwitching={})",
+                            animatable.getClass().getName(), getSelectedModelIdMethod != null, isModelSwitchingMethod != null);
+                }
                 return State.NONE;
             }
             Object rawName = getSelectedModelIdMethod.invoke(animatable);
@@ -60,6 +74,90 @@ public final class YsmWheelAnimationState {
         }
     }
 
+    /**
+     * Read YSM's persistent client-side roaming variables (v.roaming.*) for the
+     * player. These are the variables wheel animations like "toggle gun" or
+     * "toggle key" flip, and the model's visibility scripts use them to show or
+     * collapse accessory parts. An empty map means the YSM fork does not expose
+     * them reflectively (or none are set).
+     */
+    public static Map<String, Float> readRoamingVars(Player player) {
+        Object animatable = resolveAnimatable(player);
+        if (animatable == null) {
+            return Collections.emptyMap();
+        }
+        try {
+            ensureRoamingContainerMethod(animatable.getClass());
+            if (getServerVarContainerMethod == null) {
+                return Collections.emptyMap();
+            }
+            Object struct = getServerVarContainerMethod.invoke(animatable);
+            if (struct == null || !struct.getClass().getName().endsWith("RoamingStruct")) {
+                return Collections.emptyMap();
+            }
+            ensureRoamingStructMethods(struct.getClass());
+            if (roamingForEachVarMethod == null || roamingGetPropertyMethod == null || stringPoolGetNameMethod == null) {
+                return Collections.emptyMap();
+            }
+            Map<String, Float> result = new TreeMap<>();
+            java.util.List<String> names = new java.util.ArrayList<>();
+            roamingForEachVarMethod.invoke(struct, (java.util.function.Consumer<String>) names::add);
+            for (String name : names) {
+                if (name == null || name.isEmpty()) {
+                    continue;
+                }
+                try {
+                    Object idObj = stringPoolGetNameMethod.invoke(null, name);
+                    if (!(idObj instanceof Integer id)) {
+                        continue;
+                    }
+                    Object value = roamingGetPropertyMethod.invoke(struct, id);
+                    if (value instanceof Number number) {
+                        result.put(name, number.floatValue());
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+            return result;
+        } catch (Throwable t) {
+            logFailureOnce(t);
+            return Collections.emptyMap();
+        }
+    }
+
+    private static void ensureRoamingContainerMethod(Class<?> animatableClass) {
+        if (roamingLookupDone) {
+            return;
+        }
+        roamingLookupDone = true;
+        try {
+            Method container = animatableClass.getMethod("getServerVarContainer");
+            if (container.getParameterCount() == 0) {
+                getServerVarContainerMethod = container;
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static Class<?> roamingStructMethodsClass;
+
+    private static synchronized void ensureRoamingStructMethods(Class<?> roamingType) {
+        if (roamingStructMethodsClass == roamingType && roamingForEachVarMethod != null && roamingGetPropertyMethod != null) {
+            return;
+        }
+        try {
+            roamingForEachVarMethod = roamingType.getMethod("forEachVar", java.util.function.Consumer.class);
+            roamingGetPropertyMethod = roamingType.getMethod("getProperty", int.class);
+            Class<?> stringPool = Class.forName("com.elfmcys.yesstevemodel.geckolib3.core.molang.util.StringPool");
+            stringPoolGetNameMethod = stringPool.getMethod("getName", String.class);
+            roamingStructMethodsClass = roamingType;
+        } catch (Throwable ignored) {
+            roamingForEachVarMethod = null;
+            roamingGetPropertyMethod = null;
+            stringPoolGetNameMethod = null;
+        }
+    }
+
     private static Object resolveAnimatable(Player player) {
         Capability<?> cap = resolveCapability();
         if (cap == null) {
@@ -67,7 +165,14 @@ public final class YsmWheelAnimationState {
         }
         try {
             LazyOptional<?> lazy = player.getCapability(cap);
-            return lazy.resolve();
+            Object resolved = lazy.resolve();
+            // Forge's LazyOptional#resolve returns an Optional, not the stored
+            // value directly (see the 1.20.1 Forge sources). Unwrap it before
+            // reflecting over the YSM PlayerCapability.
+            if (resolved instanceof java.util.Optional<?> optional) {
+                return optional.orElse(null);
+            }
+            return resolved;
         } catch (Throwable t) {
             logFailureOnce(t);
             return null;
@@ -88,7 +193,7 @@ public final class YsmWheelAnimationState {
                     "PLAYER_CAP");
         }
         if (capability == null) {
-            YSMEpicFightCompat.LOGGER.debug("YSM-EF Compat: YSM PlayerCapability not resolvable, wheel animation bridge disabled");
+            YSMEpicFightCompat.LOGGER.info("YSM-EF Compat: [wheel] YSM PlayerCapability not resolvable, wheel animation bridge disabled");
         }
         return capability;
     }
@@ -143,6 +248,7 @@ public final class YsmWheelAnimationState {
     }
 
     private static volatile boolean failureLogged;
+    private static volatile boolean missingMethodsLogged;
 
     private static void logFailureOnce(Throwable t) {
         if (failureLogged) {
@@ -159,5 +265,13 @@ public final class YsmWheelAnimationState {
         getSelectedModelIdMethod = null;
         isModelSwitchingMethod = null;
         methodLookupDone = false;
+        failureLogged = false;
+        missingMethodsLogged = false;
+        getServerVarContainerMethod = null;
+        roamingForEachVarMethod = null;
+        roamingGetPropertyMethod = null;
+        stringPoolGetNameMethod = null;
+        roamingLookupDone = false;
+        roamingStructMethodsClass = null;
     }
 }

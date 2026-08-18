@@ -331,7 +331,7 @@ public final class YsmExtraFrameWriter {
         boolean isRepeat = loop == ScriptAnim.LOOP_REPEAT;
         constructor.addProperty("invocation_command",
                 "(0.15F#F," + isRepeat + "#Z,ysm_epicfight_compat:public/PLACEHOLDER#java.lang.String,"
-                        + "epicfight:biped#yesman.epicfight.api.model.Armature,0#I)"
+                        + "epicfight:entity/biped#yesman.epicfight.api.model.Armature,0#I)"
                         + "#com.ysmef.compat.animation.YsmWheelAnimation");
         root.add("constructor", constructor);
 

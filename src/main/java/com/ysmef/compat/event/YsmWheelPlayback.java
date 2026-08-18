@@ -44,9 +44,13 @@ public final class YsmWheelPlayback {
         String activeTemplate;
         AssetAccessor<? extends StaticAnimation> accessor;
         boolean retryPending;
+        boolean loggedNoEntry;
+        boolean loggedNoAccessor;
+        String lastDiagState;
     }
 
     private static final Map<UUID, Tracked> TRACKED = new ConcurrentHashMap<>();
+    private static volatile boolean tickDiagLogged;
 
     private YsmWheelPlayback() {}
 
@@ -62,8 +66,20 @@ public final class YsmWheelPlayback {
         if (mc.level == null || mc.player == null) {
             return;
         }
+        if (!tickDiagLogged) {
+            tickDiagLogged = true;
+            YSMEpicFightCompat.LOGGER.info(
+                    "YSM-EF Compat: [wheel] client tick bridge active: level players={}, localPlayer='{}'",
+                    mc.level.players().size(), mc.player.getGameProfile().getName());
+        }
+        // ClientLevel#players() usually contains the local player, but never
+        // rely on that: processing the local player directly guarantees wheel
+        // playback works even in edge cases where the tracking list is late.
         for (Player player : mc.level.players()) {
             tickPlayer(player);
+        }
+        if (!mc.level.players().contains(mc.player)) {
+            tickPlayer(mc.player);
         }
     }
 
@@ -86,6 +102,20 @@ public final class YsmWheelPlayback {
         if (tracked == null) {
             tracked = new Tracked();
             TRACKED.put(player.getUUID(), tracked);
+        }
+
+        YSMModelAccess.YSMModelRef modelRef = YSMModelAccess.getCurrentModel(player);
+        String modelId = modelRef == null ? "<none>" : modelRef.modelId();
+        String diagState = "battle=" + battleMode + ",playing=" + state.playing()
+                + ",animation=" + (state.animationName() == null ? "" : state.animationName())
+                + ",model=" + modelId;
+        if (!diagState.equals(tracked.lastDiagState)) {
+            tracked.lastDiagState = diagState;
+            tracked.loggedNoEntry = false;
+            tracked.loggedNoAccessor = false;
+            YSMEpicFightCompat.LOGGER.info(
+                    "YSM-EF Compat: [wheel] state for '{}': {}",
+                    player.getGameProfile().getName(), diagState);
         }
 
         String wheelAnimation = state.playing() ? state.animationName() : "";
@@ -114,6 +144,12 @@ public final class YsmWheelPlayback {
         YsmExtraAnimationLibrary.WheelEntry entry =
                 YsmExtraAnimationLibrary.findEntry(modelRef.modelId(), tracked.activeWheelAnimation);
         if (entry == null) {
+            if (!tracked.loggedNoEntry) {
+                tracked.loggedNoEntry = true;
+                YSMEpicFightCompat.LOGGER.info(
+                        "YSM-EF Compat: [wheel] no converted entry for model='{}' animation='{}' (conversion may still be running)",
+                        modelRef.modelId(), tracked.activeWheelAnimation);
+            }
             // Conversion of this model's wheel animations is running in the
             // background; retry on the next tick.
             return;
@@ -121,6 +157,12 @@ public final class YsmWheelPlayback {
         AssetAccessor<? extends StaticAnimation> accessor =
                 YsmExtraAnimationLibrary.getTemplateAccessor(entry.templateId());
         if (accessor == null) {
+            if (!tracked.loggedNoAccessor) {
+                tracked.loggedNoAccessor = true;
+                YSMEpicFightCompat.LOGGER.info(
+                        "YSM-EF Compat: [wheel] template '{}' for model='{}' animation='{}' is not registered yet",
+                        entry.templateId(), modelRef.modelId(), tracked.activeWheelAnimation);
+            }
             // Registration is queued for this render tick; retry shortly.
             return;
         }
@@ -129,9 +171,9 @@ public final class YsmWheelPlayback {
             tracked.accessor = accessor;
             tracked.activeTemplate = entry.templateId();
             tracked.retryPending = false;
-            YSMEpicFightCompat.LOGGER.debug(
-                    "YSM-EF Compat: playing wheel animation '{}' (template '{}') for '{}' in battle mode",
-                    tracked.activeWheelAnimation, entry.templateId(), player.getGameProfile().getName());
+            YSMEpicFightCompat.LOGGER.info(
+                    "YSM-EF Compat: [wheel] playing animation '{}' (template '{}', loop={}) for '{}' in battle mode",
+                    tracked.activeWheelAnimation, entry.templateId(), entry.loop(), player.getGameProfile().getName());
         } catch (Throwable t) {
             YSMEpicFightCompat.LOGGER.warn(
                     "YSM-EF Compat: failed to play wheel animation '{}' for '{}'",
@@ -146,6 +188,8 @@ public final class YsmWheelPlayback {
         tracked.activeTemplate = null;
         tracked.activeWheelAnimation = null;
         tracked.retryPending = false;
+        tracked.loggedNoEntry = false;
+        tracked.loggedNoAccessor = false;
         if (accessor != null) {
             try {
                 patch.getClientAnimator().stopPlaying(accessor);
@@ -157,5 +201,6 @@ public final class YsmWheelPlayback {
     /** Forget all per-player state (world leave). */
     public static void clear() {
         TRACKED.clear();
+        tickDiagLogged = false;
     }
 }
