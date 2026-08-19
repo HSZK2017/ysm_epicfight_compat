@@ -524,6 +524,7 @@ public class YSMMeshLibrary {
                     mesh.destroy();
                     com.ysmef.compat.gpu.YsmGpuRenderPath.disposeMesh(mesh);
                     com.ysmef.compat.cpu.YsmCpuRenderPath.disposeMesh(mesh);
+                    com.ysmef.compat.gpu.YsmIrisComputePath.disposeMesh(mesh);
                 } catch (Throwable t) {
                     YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to release evicted model '{}'", modelId, t);
                 }
@@ -848,6 +849,7 @@ public class YSMMeshLibrary {
         LOADED_MODELS.clear();
         com.ysmef.compat.gpu.YsmGpuRenderPath.disposeAll();
         com.ysmef.compat.cpu.YsmCpuRenderPath.disposeAll();
+        com.ysmef.compat.gpu.YsmIrisComputePath.disposeAll();
         YSMRuntimeModel.invalidateAll();
         com.ysmef.compat.model.runtime.YsmBindArmature.invalidateAll();
         YsmExtraAnimationLibrary.invalidateAll();

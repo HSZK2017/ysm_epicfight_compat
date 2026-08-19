@@ -384,6 +384,21 @@ public class YSMMesh extends HumanoidMesh {
                             packedLight, r, g, b, a, overlay, armature, poses)) {
                 return;
             }
+            // Optimized Iris compute path: identical visual output to Epic Fight's
+            // IrisComputeShaderSetup (Epic Fight's own iris compute shader skins
+            // the mesh, the pack's entity shader draws it), but without its
+            // per-draw costs - joint-only pose uploads with exact byte counts, a
+            // change-gated part section, cached uniform locations and a
+            // change-gated vertex-format specification. Its per-mesh pose SSBO is
+            // dynamically sized, so it also renders meshes exceeding Epic Fight's
+            // MAX_JOINTS capacity. Falls through to Epic Fight's path when
+            // unavailable (no Oculus, setup failure).
+            long tIris = com.ysmef.compat.YsmDiag.isEnabled() ? System.nanoTime() : 0L;
+            if (com.ysmef.compat.gpu.YsmIrisComputePath.tryRender(this, setup, poseStack, bufferSources,
+                    renderType, packedLight, r, g, b, a, overlay, armature, poses)) {
+                com.ysmef.compat.YsmDiag.addNanos(com.ysmef.compat.YsmDiag.SLOT_COMPUTE_PATH, System.nanoTime() - tIris);
+                return;
+            }
             // Epic Fight's compute paths (VanillaComputeShaderSetup and the Iris
             // variant used under shader packs) stage poses.length + partCount
             // matrices in the static ComputeShaderSetup.TOTAL_POSES array, whose
