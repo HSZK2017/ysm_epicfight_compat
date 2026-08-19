@@ -384,6 +384,22 @@ public class YSMMesh extends HumanoidMesh {
                             packedLight, r, g, b, a, overlay, armature, poses)) {
                 return;
             }
+            // Epic Fight's compute paths (VanillaComputeShaderSetup and the Iris
+            // variant used under shader packs) stage poses.length + partCount
+            // matrices in the static ComputeShaderSetup.TOTAL_POSES array, whose
+            // capacity is EpicFightSharedConstants.MAX_JOINTS (1000). A converted
+            // YSM model with more joints+parts than that overflows the array
+            // (TOTAL_POSES[poses.length + partIdx] and the POSE_BO upload) and
+            // crashes the game with an ArrayIndexOutOfBoundsException - draw it
+            // with this mod's own CPU skinning path instead, even under a shader
+            // pack (the pack's shaders are bypassed for this model, but the
+            // alternative is a crash).
+            if (poses != null && poses.length + this.getAllParts().size()
+                    > yesman.epicfight.main.EpicFightSharedConstants.MAX_JOINTS) {
+                renderOverCapacity(poseStack, bufferSources, drawingFunction, packedLight,
+                        r, g, b, a, overlay, armature, poses, "compute");
+                return;
+            }
             long t0 = com.ysmef.compat.YsmDiag.isEnabled() ? System.nanoTime() : 0L;
             setup.drawWithShader(this, poseStack, bufferSources, renderType,
                     packedLight, r, g, b, a, overlay, armature, poses);
@@ -391,6 +407,14 @@ public class YSMMesh extends HumanoidMesh {
             return;
         }
         logCpuFallbackOnce();
+        // Epic Fight's drawPosed stages poses.length matrices in the same static
+        // TOTAL_POSES array (MAX_JOINTS = 1000), so the same overflow guard
+        // applies to the CPU fallback.
+        if (poses != null && poses.length > yesman.epicfight.main.EpicFightSharedConstants.MAX_JOINTS) {
+            renderOverCapacity(poseStack, bufferSources, drawingFunction, packedLight,
+                    r, g, b, a, overlay, armature, poses, "drawPosed");
+            return;
+        }
         // Root cause of the original CPU-path missing faces: EpicFightRenderTypes
         // keeps ONE cache (TRIANGLED_RENDERTYPES_BY_NAME_TEXTURE) shared by
         // getTriangulated / addRenderType / replaceTexture. replaceTexture writes
@@ -409,6 +433,40 @@ public class YSMMesh extends HumanoidMesh {
     }
 
     private static final Set<String> DIAG_CPU_FALLBACK_LOGGED = ConcurrentHashMap.newKeySet();
+
+    /**
+     * Renders (or skips) a mesh whose joint/part count exceeds Epic Fight's
+     * static pose-array capacity (EpicFightSharedConstants.MAX_JOINTS), which
+     * every Epic Fight render path would overflow. The last-resort CPU skinning
+     * path has no fixed capacity; outline passes are skipped entirely (a missing
+     * outline beats a crash, and the main pass still renders the model).
+     */
+    private void renderOverCapacity(PoseStack poseStack, MultiBufferSource bufferSources,
+                                    Mesh.DrawingFunction drawingFunction, int packedLight,
+                                    float r, float g, float b, float a, int overlay,
+                                    @Nullable Armature armature, OpenMatrix4f[] poses, String blockedPath) {
+        logOverCapacityOnce(poses, blockedPath);
+        if (bufferSources instanceof net.minecraft.client.renderer.OutlineBufferSource) {
+            return;
+        }
+        com.ysmef.compat.cpu.YsmCpuRenderPath.tryRenderLastResort(this, poseStack, drawingFunction,
+                packedLight, r, g, b, a, overlay, armature, poses);
+    }
+
+    private static final Set<String> OVER_CAPACITY_LOGGED = ConcurrentHashMap.newKeySet();
+
+    /** Once per model + path: Epic Fight's pose array is too small for this mesh. */
+    private void logOverCapacityOnce(OpenMatrix4f[] poses, String blockedPath) {
+        String key = (this.runtimeModelId == null ? "n/a" : this.runtimeModelId) + "|" + blockedPath;
+        if (OVER_CAPACITY_LOGGED.add(key)) {
+            com.ysmef.compat.YSMEpicFightCompat.LOGGER.warn(
+                    "YSM-EF Compat: model '{}' has {} joints + {} parts, exceeding Epic Fight's pose array "
+                            + "capacity (MAX_JOINTS={}); the {} path would crash with an ArrayIndexOutOfBoundsException. "
+                            + "Rendering with this mod's CPU skinning path instead (shader packs are bypassed for this model).",
+                    key, poses.length, this.getAllParts().size(),
+                    yesman.epicfight.main.EpicFightSharedConstants.MAX_JOINTS, blockedPath);
+        }
+    }
 
     private static void logCpuFallbackOnce() {
         if (DIAG_CPU_FALLBACK_LOGGED.add("cpu-fallback")) {

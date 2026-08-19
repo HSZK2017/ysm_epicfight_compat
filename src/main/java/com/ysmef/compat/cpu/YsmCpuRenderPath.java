@@ -27,6 +27,7 @@ import yesman.epicfight.api.utils.math.OpenMatrix4f;
 import yesman.epicfight.api.utils.math.Vec4f;
 
 import javax.annotation.Nullable;
+import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
@@ -168,6 +169,27 @@ public final class YsmCpuRenderPath {
     public static boolean tryRender(YSMMesh mesh, PoseStack poseStack, Mesh.DrawingFunction drawingFunction,
                                     int packedLight, float r, float g, float b, float a, int overlay,
                                     @Nullable Armature armature, @Nullable OpenMatrix4f[] poses) {
+        return tryRender(mesh, poseStack, drawingFunction, packedLight, r, g, b, a, overlay, armature, poses, false);
+    }
+
+    /**
+     * Last-resort variant for meshes whose joint+part count exceeds Epic
+     * Fight's static pose-array capacity (EpicFightSharedConstants.MAX_JOINTS):
+     * every Epic Fight render path (compute shader, Iris compute shader and
+     * even drawPosed) would overflow that array and crash the game, so this
+     * path renders even while a shader pack is active. The custom program
+     * bypasses the pack's shaders for the model - degraded visuals, but the
+     * alternative is an ArrayIndexOutOfBoundsException crash.
+     */
+    public static boolean tryRenderLastResort(YSMMesh mesh, PoseStack poseStack, Mesh.DrawingFunction drawingFunction,
+                                              int packedLight, float r, float g, float b, float a, int overlay,
+                                              @Nullable Armature armature, @Nullable OpenMatrix4f[] poses) {
+        return tryRender(mesh, poseStack, drawingFunction, packedLight, r, g, b, a, overlay, armature, poses, true);
+    }
+
+    private static boolean tryRender(YSMMesh mesh, PoseStack poseStack, Mesh.DrawingFunction drawingFunction,
+                                     int packedLight, float r, float g, float b, float a, int overlay,
+                                     @Nullable Armature armature, @Nullable OpenMatrix4f[] poses, boolean lastResort) {
         long t0 = com.ysmef.compat.YsmDiag.isEnabled() ? System.nanoTime() : 0L;
         // The CPU path replicates NEW_ENTITY semantics (position/color/uv/overlay/
         // light/normal); other drawing functions write different vertex layouts.
@@ -179,9 +201,14 @@ public final class YsmCpuRenderPath {
             cpuSkipDiag(mesh, "no-poses");
             return false;
         }
-        if (shaderPackInUse()) {
+        if (shaderPackInUse() && !lastResort) {
             // under a shader pack the custom program would bypass the pack's shaders
             cpuSkipDiag(mesh, "shader-pack-in-use");
+            return false;
+        }
+        if (lastResort && shadowPassActive()) {
+            // see shadowPassActive(): wrong projection in the shadow map
+            cpuSkipDiag(mesh, "shadow-pass");
             return false;
         }
         if (UNSUPPORTED.contains(mesh)) {
@@ -693,6 +720,46 @@ public final class YsmCpuRenderPath {
                 ? arr[0] : new Vector3f(0.2f, 1.0f, -0.7f).normalize();
         currentLights[1] = (arr != null && arr.length > 1 && arr[1] != null)
                 ? arr[1] : new Vector3f(-0.2f, 1.0f, 0.7f).normalize();
+    }
+
+    /** Oculus/Iris shadow-pass state query (reflective: no hard dependency on Oculus). */
+    private static final Class<?> SHADOW_STATE_CLASS = findShadowStateClass();
+    private static final Method SHADOW_ACTIVE_METHOD = findShadowActiveMethod();
+
+    private static Class<?> findShadowStateClass() {
+        try {
+            return Class.forName("net.irisshaders.iris.shadows.ShadowRenderingState");
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private static Method findShadowActiveMethod() {
+        try {
+            return SHADOW_STATE_CLASS == null ? null
+                    : SHADOW_STATE_CLASS.getMethod("areShadowsCurrentlyBeingRendered");
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /**
+     * Whether Oculus/Iris is currently rendering the shadow pass. Only queried
+     * on the last-resort path: the pack's own programs receive the shadow
+     * matrices through Iris-managed uniforms, but this path's custom program
+     * reads plain RenderSystem state, and RenderSystem's model-view matrix
+     * still carries the PLAYER camera rotation during the shadow pass. A
+     * last-resort draw would therefore be projected wrongly into the shadow map
+     * (garbage shadow blobs), so the draw is skipped there - the over-capacity
+     * model simply casts no shadow while the main-pass render is unaffected.
+     */
+    private static boolean shadowPassActive() {
+        try {
+            return SHADOW_ACTIVE_METHOD != null
+                    && Boolean.TRUE.equals(SHADOW_ACTIVE_METHOD.invoke(null));
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     // ------------------------------------------------------------------
