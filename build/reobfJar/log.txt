@@ -327,6 +327,11 @@ Writing Output: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\reo
   com/ysmef/compat/model/YSMMeshLibrary$TextureEntry.class
   com/ysmef/compat/model/YSMMeshLibrary$TextureUploadTask.class
   com/ysmef/compat/model/YSMMeshLibrary.class
+  com/ysmef/compat/model/YsmCameraTargetSolver$CameraUvs.class
+  com/ysmef/compat/model/YsmCameraTargetSolver$FrontProjection.class
+  com/ysmef/compat/model/YsmCameraTargetSolver$QuadN.class
+  com/ysmef/compat/model/YsmCameraTargetSolver$WorldQuad.class
+  com/ysmef/compat/model/YsmCameraTargetSolver.class
   com/ysmef/compat/model/YsmExtraAnimationLibrary$ModelMapping.class
   com/ysmef/compat/model/YsmExtraAnimationLibrary$TemplateDescriptor.class
   com/ysmef/compat/model/YsmExtraAnimationLibrary$WheelEntry.class
@@ -345,6 +350,7 @@ Writing Output: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\reo
   com/ysmef/compat/model/runtime/YSMRuntimeBridge.class
   com/ysmef/compat/model/runtime/YSMRuntimeModel$1.class
   com/ysmef/compat/model/runtime/YSMRuntimeModel$BoneRt.class
+  com/ysmef/compat/model/runtime/YSMRuntimeModel$CameraTarget.class
   com/ysmef/compat/model/runtime/YSMRuntimeModel$CompiledAnim.class
   com/ysmef/compat/model/runtime/YSMRuntimeModel$CompiledChannel.class
   com/ysmef/compat/model/runtime/YSMRuntimeModel$CompiledChannels.class
@@ -364,6 +370,9 @@ Writing Output: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\reo
   com/ysmef/compat/network/message/C2SVersionCheckPacket.class
   com/ysmef/compat/network/message/S2CSetModelAndTexturePacket.class
   com/ysmef/compat/network/message/S2CVersionCheckPacket.class
+  com/ysmef/compat/realcamera/
+  com/ysmef/compat/realcamera/YsmRealCameraBridge$PendingTarget.class
+  com/ysmef/compat/realcamera/YsmRealCameraBridge.class
   com/ysmef/compat/renderer/
   com/ysmef/compat/renderer/YSMBattleMode.class
   com/ysmef/compat/renderer/YSMMeshSelector.class

@@ -48,6 +48,9 @@ public class YSMRenderHook {
 
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public static void onRenderLivingPre(RenderLivingEvent.Pre<?, ?> event) {
+        // Render-thread drain of queued Real Camera bind targets (no-op when
+        // Real Camera is absent or nothing was converted since the last drain).
+        com.ysmef.compat.realcamera.YsmRealCameraBridge.drainPending();
         if (!(event.getEntity() instanceof Player player)) {
             return;
         }

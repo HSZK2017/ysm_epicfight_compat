@@ -159,6 +159,27 @@ public final class YsmCpuRenderPath {
     }
 
     /**
+     * Whether a RealCamera vertex-catcher capture is being drawn on this
+     * thread (set by YSMMesh's capture branch). During those passes the
+     * direct-GL CPU path must step aside: it writes nothing into the passed
+     * buffer, so RealCamera's probe / first-person body render would see an
+     * empty catcher and the camera binding would fail.
+     */
+    private static final ThreadLocal<Boolean> CAPTURE_PASS = ThreadLocal.withInitial(() -> Boolean.FALSE);
+
+    public static void pushCapturePass() {
+        CAPTURE_PASS.set(Boolean.TRUE);
+    }
+
+    public static void popCapturePass() {
+        CAPTURE_PASS.set(Boolean.FALSE);
+    }
+
+    public static boolean isCapturePass() {
+        return CAPTURE_PASS.get();
+    }
+
+    /**
      * Try to draw the mesh with the CPU skinning path. Returns true when the
      * draw happened; false lets the caller use Epic Fight's drawPosed.
      *
@@ -191,6 +212,14 @@ public final class YsmCpuRenderPath {
                                      int packedLight, float r, float g, float b, float a, int overlay,
                                      @Nullable Armature armature, @Nullable OpenMatrix4f[] poses, boolean lastResort) {
         long t0 = com.ysmef.compat.YsmDiag.isEnabled() ? System.nanoTime() : 0L;
+        // Real Camera vertex-catcher pass: the catcher only sees vertices
+        // written into its own buffer; this path renders to the screen via
+        // direct GL, so it must step aside and let Epic Fight's drawPosed
+        // emit the vertices instead (otherwise the camera binding breaks
+        // whenever a shader pack is NOT active).
+        if (isCapturePass()) {
+            return false;
+        }
         // The CPU path replicates NEW_ENTITY semantics (position/color/uv/overlay/
         // light/normal); other drawing functions write different vertex layouts.
         if (drawingFunction != Mesh.DrawingFunction.NEW_ENTITY) {

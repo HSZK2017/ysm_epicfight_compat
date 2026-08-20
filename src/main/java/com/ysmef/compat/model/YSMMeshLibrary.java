@@ -84,8 +84,26 @@ public class YSMMeshLibrary {
      *
      * 5: binary animation length is now converted ticks -> seconds (YsmBinaryReader),
      *    which changes the runtime JSON output of converted models.
+     * 6: the runtime JSON gains the optional "camera" section (RealCamera bind
+     *    target UVs, see YsmCameraTargetSolver).
+     * 7: the camera solver restricts the front-face candidates to the eyes
+     *    bone's ancestor chain (variant head subtrees are collapsed in the
+     *    default form), which changes the "camera" UVs of affected models.
+     * 8: the upward side face is flipped to the opposite side of the head
+     *    (the right-side choice rendered the view upside-down), and the
+     *    "camera" section gains the bind-space eyes position + face normals
+     *    (consumed by the RealCamera API bind function for non-battle mode).
+     * 9: the "camera" UVs are nudged off UV regions shared with
+     *    differently-facing quads of other parts (RealCamera's probe resolves
+     *    a UV to the first captured triangle containing it, so an overlapped
+     *    point could bind to a hair quad instead of the head's side face).
+     * 10: the camera solver's front-face pick is restricted to quads near the
+     *    head box (accessories parented under the eyes bone, e.g. a magic
+     *    circle blocks ahead, no longer win the area contest), and the
+     *    reported eyes position is scaled by the model package's width/height
+     *    scales (matching the converted mesh).
      */
-    private static final int GENERATOR_VERSION = 5;
+    private static final int GENERATOR_VERSION = 10;
 
     private static final String MESH_NAMESPACE = YSMEpicFightCompat.MODID;
 
@@ -235,9 +253,24 @@ public class YSMMeshLibrary {
         return RUNTIME_DIR.resolve(meshId + ".json");
     }
 
+    /** The directory holding every converted model's runtime JSON (recursive: per-namespace subdirs). */
+    public static Path getRuntimeEntityDir() {
+        return RUNTIME_DIR;
+    }
+
     /** modelId -> meshId (sanitized), for runtime lookup. */
     public static String meshIdOf(String modelId) {
         return sanitize(modelId);
+    }
+
+    /**
+     * The shared path prefix of every generated texture of a model
+     * ("textures/<model>/"). RealCamera bind targets use it as the textureId
+     * matcher: it matches all texture variants of the model (the UV layout is
+     * per-model, the captured texture id is "...:textures/<model>/<tex>.png").
+     */
+    public static String textureIdPrefixOf(String modelId) {
+        return "textures/" + sanitize(modelId) + "/";
     }
 
     /**

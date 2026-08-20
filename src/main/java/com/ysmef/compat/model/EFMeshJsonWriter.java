@@ -178,6 +178,37 @@ public class EFMeshJsonWriter {
 
         root.add("animations", com.ysmef.compat.ysm.script.ScriptJson.animationsToJson(pkg.scriptAnims));
 
+        // RealCamera bind target: front face (the plane the "Eyes" element lies
+        // in) for the target plane + forward vector, the head's west side face
+        // for the upward vector, roll 90 degrees. Consumed by
+        // YsmRealCameraBridge when the Real Camera mod is present. The model
+        // package's width/height scales are passed so the reported bind-space
+        // eyes position matches the scaled rendered mesh.
+        YsmCameraTargetSolver.CameraUvs cameraUvs = YsmCameraTargetSolver.solve(geoModel, pkg.widthScale, pkg.heightScale);
+        if (cameraUvs != null) {
+            JsonObject camera = new JsonObject();
+            camera.addProperty("posU", cameraUvs.posU);
+            camera.addProperty("posV", cameraUvs.posV);
+            camera.addProperty("forwardU", cameraUvs.forwardU);
+            camera.addProperty("forwardV", cameraUvs.forwardV);
+            camera.addProperty("upwardU", cameraUvs.upwardU);
+            camera.addProperty("upwardV", cameraUvs.upwardV);
+            camera.addProperty("roll", 90.0f);
+            // bind-space eyes position + face normals, used by the RealCamera
+            // API-function path (non-battle mode, where the probe/texture
+            // matching is unavailable)
+            camera.addProperty("eyesX", cameraUvs.eyesX);
+            camera.addProperty("eyesY", cameraUvs.eyesY);
+            camera.addProperty("eyesZ", cameraUvs.eyesZ);
+            camera.addProperty("normalX", cameraUvs.normalX);
+            camera.addProperty("normalY", cameraUvs.normalY);
+            camera.addProperty("normalZ", cameraUvs.normalZ);
+            camera.addProperty("upX", cameraUvs.upX);
+            camera.addProperty("upY", cameraUvs.upY);
+            camera.addProperty("upZ", cameraUvs.upZ);
+            root.add("camera", camera);
+        }
+
         writeFileAtomic(runtimeFile, new GsonBuilder().create().toJson(root).getBytes(StandardCharsets.UTF_8));
     }
 

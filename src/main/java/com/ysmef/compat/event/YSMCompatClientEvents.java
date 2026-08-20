@@ -87,6 +87,18 @@ public class YSMCompatClientEvents {
     }
 
     /**
+     * Register the Real Camera API bind function during client setup. Doing
+     * this here (not lazily from a render hook) is load-bearing: registering
+     * while RealCamera iterates its function list - its probe functions render
+     * the entity, which re-enters our render hooks - crashes with a
+     * ConcurrentModificationException (verified in game).
+     */
+    @SubscribeEvent
+    public static void onClientSetup(net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent event) {
+        event.enqueueWork(com.ysmef.compat.realcamera.YsmRealCameraBridge::initApiFunction);
+    }
+
+    /**
      * On resource reload (F3+T): drop the registered meshes, texture state and
      * compiled runtime models so the next mesh lookup re-validates and lazily
      * re-converts whatever changed (cheap for unchanged models: verified cache

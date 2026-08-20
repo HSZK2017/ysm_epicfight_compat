@@ -205,6 +205,34 @@ public class YSMMesh extends HumanoidMesh {
             poseStack.scale(MAID_SCALE_COMPENSATION, MAID_SCALE_COMPENSATION, MAID_SCALE_COMPENSATION);
         }
         try {
+            // Real Camera's vertex-catcher passes (its tetrahedral binding
+            // probes and its first-person body render) only see vertices
+            // written into their own buffer source: the direct-GL paths (GPU
+            // skinning, CPU skinning, compute shaders) would bypass it, so the
+            // camera could neither find the head plane nor render the body.
+            // Draw those passes through Epic Fight's CPU-skinned drawPosed,
+            // which emits into the catcher. Over-capacity meshes (drawPosed
+            // would overflow Epic Fight's static pose array) skip the draw.
+            // The capture flag keeps SkinnedMeshCpuRenderMixin's CPU-skinning
+            // hijack (which renders direct-GL, bypassing the catcher) from
+            // intercepting this drawPosed when no shader pack is active.
+            if (com.ysmef.compat.realcamera.YsmRealCameraBridge.isCameraCapture(bufferSources)) {
+                if (poses != null && poses.length <= yesman.epicfight.main.EpicFightSharedConstants.MAX_JOINTS) {
+                    RenderType captureRenderType = texture != null
+                            ? EpicFightRenderTypes.replaceTexture(texture, renderType)
+                            : renderType;
+                    com.ysmef.compat.cpu.YsmCpuRenderPath.pushCapturePass();
+                    try {
+                        this.drawPosed(poseStack, bufferSources.getBuffer(EpicFightRenderTypes.makeTriangulated(captureRenderType)),
+                                drawingFunction, packedLight, r, g, b, a, overlay, armature, poses);
+                    } finally {
+                        com.ysmef.compat.cpu.YsmCpuRenderPath.popCapturePass();
+                    }
+                }
+                logDrawDiagOnce(runtimeModelId, armature, poses, rebindApplied, maidEntity, "realcamera", poseStack);
+                com.ysmef.compat.YsmDiag.onMeshDrawEnd();
+                return;
+            }
             // ModernYSM-style direct GPU skinning path (bone SSBO + skinning shader):
             // one glDrawArrays per model, vertex skinning fully on the GPU. Falls back
             // to Epic Fight's compute-shader path automatically when unavailable.

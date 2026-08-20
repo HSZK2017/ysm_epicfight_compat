@@ -337,6 +337,17 @@ public final class YsmBindArmature {
     private static final Set<String> HAND_BONE_NAMES = new HashSet<>(List.of(
             "righthand", "handright", "lefthand", "handleft"));
 
+    /**
+     * Directly-mapped ACCESSORY bones (YSMJointMapper maps cape/elytra/backpack
+     * to Chest): they must still be driven by Epic Fight's animations, but their
+     * geometry extends far beyond the body (a cape/wing reaches above the head,
+     * a backpack behind/above the shoulders), so they must NOT contribute to the
+     * segment-pivot computation - otherwise the "neck" (top of the chest
+     * geometry) lands on the accessory and the head detaches from the body.
+     */
+    private static final Set<String> PIVOT_EXCLUDED_BONE_NAMES = new HashSet<>(List.of(
+            "cape", "elytra", "elytralocator", "backpack"));
+
     /** Ring height tolerance for the segment-top centroid (Minecraft frame, up = +Y). */
     private static final float TOP_RING_EPSILON = 0.05f;
 
@@ -503,6 +514,12 @@ public final class YsmBindArmature {
             // geometry at the base form's (or a completely different) position;
             // they would pollute the per-joint pivot computation.
             if (!bone.name.isEmpty() && Character.isDigit(bone.name.charAt(bone.name.length() - 1))) {
+                continue;
+            }
+            // Directly-mapped accessory bones (cape/elytra/backpack) animate with
+            // the body but their geometry extends beyond it - exclude them from
+            // the pivot computation so they don't drag the segment pivots.
+            if (PIVOT_EXCLUDED_BONE_NAMES.contains(normalize(bone.name))) {
                 continue;
             }
             List<Vector3f> list = byBone.computeIfAbsent(boneIdx, k -> new ArrayList<>());

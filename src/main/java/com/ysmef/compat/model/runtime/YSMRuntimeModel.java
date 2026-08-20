@@ -69,6 +69,47 @@ public final class YSMRuntimeModel {
     final Set<String> roamingNames;
     /** Number of compiled keyframe channels; used to size per-animator cursor arrays. */
     final int channelCount;
+    /**
+     * The RealCamera bind target solved at conversion time (front face = the
+     * plane the "Eyes" element lies in for position + forward, the adjacent
+     * right side face for upward, roll 90 degrees), or null when the model has
+     * no usable eyes/head geometry.
+     */
+    public final CameraTarget cameraTarget;
+
+    /** RealCamera bind-target UVs (texture space) + roll offset + bind-space head data, from the runtime JSON. */
+    public static final class CameraTarget {
+        public final float posU, posV, forwardU, forwardV, upwardU, upwardV, roll;
+        /** Bind-space position of the front plane (the eyes plate center). */
+        public final float eyesX, eyesY, eyesZ;
+        /** Bind-space normal of the front plane. */
+        public final float normalX, normalY, normalZ;
+        /** Bind-space normal of the upward side face. */
+        public final float upX, upY, upZ;
+
+        public CameraTarget(float posU, float posV, float forwardU, float forwardV,
+                            float upwardU, float upwardV, float roll,
+                            float eyesX, float eyesY, float eyesZ,
+                            float normalX, float normalY, float normalZ,
+                            float upX, float upY, float upZ) {
+            this.posU = posU;
+            this.posV = posV;
+            this.forwardU = forwardU;
+            this.forwardV = forwardV;
+            this.upwardU = upwardU;
+            this.upwardV = upwardV;
+            this.roll = roll;
+            this.eyesX = eyesX;
+            this.eyesY = eyesY;
+            this.eyesZ = eyesZ;
+            this.normalX = normalX;
+            this.normalY = normalY;
+            this.normalZ = normalZ;
+            this.upX = upX;
+            this.upY = upY;
+            this.upZ = upZ;
+        }
+    }
 
     private final Map<UUID, YSMPlayerAnimator> animators = new ConcurrentHashMap<>();
 
@@ -90,7 +131,8 @@ public final class YSMRuntimeModel {
 
     private YSMRuntimeModel(String modelId, BoneRt[] bones, Map<String, Integer> boneIndex,
                             List<CompiledAnim> parallels, Map<String, CompiledAnim> states,
-                            Map<String, CompiledAnim> conditionAnims, Set<String> roamingNames, int channelCount) {
+                            Map<String, CompiledAnim> conditionAnims, Set<String> roamingNames, int channelCount,
+                            CameraTarget cameraTarget) {
         this.modelId = modelId;
         this.bones = bones;
         this.boneIndex = boneIndex;
@@ -99,6 +141,7 @@ public final class YSMRuntimeModel {
         this.conditionAnims = conditionAnims;
         this.roamingNames = roamingNames;
         this.channelCount = channelCount;
+        this.cameraTarget = cameraTarget;
     }
 
     public YSMPlayerAnimator animatorFor(LivingEntity entity) {
@@ -416,7 +459,11 @@ public final class YSMRuntimeModel {
 
             @Override
             public double callFunction(String name, double[] args) {
-                return 0.0;
+                // The default-form visibility evaluation must honor math.* calls
+                // in scale channels (e.g. math.clamp driving an eye plate's
+                // blink scale); returning 0 for every call collapsed those bones
+                // and hid the geometry (the sta model's "missing eyes").
+                return evalMathFunction(name, args);
             }
 
             @Override
@@ -424,6 +471,65 @@ public final class YSMRuntimeModel {
                 return 0.0;
             }
         };
+    }
+
+    /**
+     * The math.* function set available to the default-form visibility
+     * evaluation (mirrors the per-frame animator env in YSMPlayerAnimator).
+     * Unknown functions evaluate to 0.
+     */
+    private static double evalMathFunction(String name, double[] args) {
+        switch (name) {
+            case "math.sin":
+                return Math.sin(Math.toRadians(args[0]));
+            case "math.cos":
+                return Math.cos(Math.toRadians(args[0]));
+            case "math.tan":
+                return Math.tan(Math.toRadians(args[0]));
+            case "math.asin":
+                return Math.toDegrees(Math.asin(args[0]));
+            case "math.acos":
+                return Math.toDegrees(Math.acos(args[0]));
+            case "math.atan":
+                return Math.toDegrees(Math.atan(args[0]));
+            case "math.atan2":
+                return Math.toDegrees(Math.atan2(args[0], args[1]));
+            case "math.abs":
+                return Math.abs(args[0]);
+            case "math.floor":
+                return Math.floor(args[0]);
+            case "math.ceil":
+                return Math.ceil(args[0]);
+            case "math.round":
+                return Math.round(args[0]);
+            case "math.trunc":
+                return (long) (args[0] >= 0 ? Math.floor(args[0]) : Math.ceil(args[0]));
+            case "math.sqrt":
+                return args[0] < 0 ? 0 : Math.sqrt(args[0]);
+            case "math.pow":
+                return Math.pow(args[0], args[1]);
+            case "math.exp":
+                return Math.exp(args[0]);
+            case "math.ln":
+            case "math.log":
+                return args[0] <= 0 ? 0 : Math.log(args[0]);
+            case "math.lerp":
+                return args[0] + (args[1] - args[0]) * args[2];
+            case "math.min":
+                return Math.min(args[0], args[1]);
+            case "math.max":
+                return Math.max(args[0], args[1]);
+            case "math.clamp":
+                return Math.max(args[1], Math.min(args[2], args[0]));
+            case "math.mod":
+                return args[1] == 0 ? 0 : args[0] % args[1];
+            case "math.pi":
+                return Math.PI;
+            case "math.sign":
+                return Math.signum(args[0]);
+            default:
+                return 0.0;
+        }
     }
 
     private static final int Q_HEALTH = Molang.idOf("query.health");
@@ -618,8 +724,40 @@ public final class YSMRuntimeModel {
         // pre_parallel* first, then parallel*, each in numeric order
         parallels.sort(Comparator.comparing((CompiledAnim a) -> a.name.startsWith("pre_parallel") ? 0 : 1)
                 .thenComparing(a -> a.name));
-        return new YSMRuntimeModel(modelId, bones, boneIndex, parallels, states, conditions,
-                collectRoamingNames(root), nextChannelId);
+        CameraTarget cameraTarget = parseCameraTarget(root);
+        YSMRuntimeModel model = new YSMRuntimeModel(modelId, bones, boneIndex, parallels, states, conditions,
+                collectRoamingNames(root), nextChannelId, cameraTarget);
+        if (cameraTarget != null) {
+            com.ysmef.compat.realcamera.YsmRealCameraBridge.onRuntimeModelLoaded(modelId, cameraTarget);
+        }
+        return model;
+    }
+
+    /** The optional "camera" section written by EFMeshJsonWriter (RealCamera bind target). */
+    private static CameraTarget parseCameraTarget(JsonObject root) {
+        if (!root.has("camera") || !root.get("camera").isJsonObject()) {
+            return null;
+        }
+        try {
+            JsonObject camera = root.getAsJsonObject("camera");
+            return new CameraTarget(
+                    camera.get("posU").getAsFloat(), camera.get("posV").getAsFloat(),
+                    camera.get("forwardU").getAsFloat(), camera.get("forwardV").getAsFloat(),
+                    camera.get("upwardU").getAsFloat(), camera.get("upwardV").getAsFloat(),
+                    camera.has("roll") ? camera.get("roll").getAsFloat() : 90.0f,
+                    camera.has("eyesX") ? camera.get("eyesX").getAsFloat() : 0.0f,
+                    camera.has("eyesY") ? camera.get("eyesY").getAsFloat() : 0.0f,
+                    camera.has("eyesZ") ? camera.get("eyesZ").getAsFloat() : 0.0f,
+                    camera.has("normalX") ? camera.get("normalX").getAsFloat() : 0.0f,
+                    camera.has("normalY") ? camera.get("normalY").getAsFloat() : 0.0f,
+                    camera.has("normalZ") ? camera.get("normalZ").getAsFloat() : -1.0f,
+                    camera.has("upX") ? camera.get("upX").getAsFloat() : 0.0f,
+                    camera.has("upY") ? camera.get("upY").getAsFloat() : 1.0f,
+                    camera.has("upZ") ? camera.get("upZ").getAsFloat() : 0.0f);
+        } catch (Exception e) {
+            YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: skipped broken camera section of runtime model: {}", e.toString());
+            return null;
+        }
     }
 
     /** Extract every distinct v.roaming.<name> variable referenced anywhere in the runtime JSON. */
