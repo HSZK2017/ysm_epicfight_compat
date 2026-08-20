@@ -360,6 +360,35 @@ public final class YSMRuntimeModel {
         return computeHidden(newDefaultEnv());
     }
 
+    /**
+     * The names of the bones hidden in the model's default (battle-mode) form,
+     * computed at conversion time from a freshly-built runtime JSON. Used by the
+     * camera target solver to exclude hidden variant geometry from its face
+     * picks (a hidden variant's face is never captured by RealCamera's probe).
+     *
+     * The runtime JSON passed here has no "camera" section yet (the solver's
+     * output), so compiling it has no RealCamera side effects; the model is
+     * thrown away (the runtime one is compiled separately from the cache).
+     */
+    public static java.util.Set<String> computeDefaultHiddenBoneNames(com.google.gson.JsonObject runtimeJson) {
+        try {
+            YSMRuntimeModel model = compile("<conversion>", runtimeJson);
+            if (model == null) {
+                return java.util.Set.of();
+            }
+            boolean[] hidden = model.defaultHidden();
+            java.util.Set<String> out = new java.util.HashSet<>();
+            for (int i = 0; i < model.bones.length && i < hidden.length; i++) {
+                if (hidden[i]) {
+                    out.add(model.bones[i].name);
+                }
+            }
+            return out;
+        } catch (Throwable t) {
+            return java.util.Set.of();
+        }
+    }
+
     private boolean[] computeHidden(Molang.Env env) {
         int n = bones.length;
         // evaluate each parallel anim's t=0 scale channels; later anims override

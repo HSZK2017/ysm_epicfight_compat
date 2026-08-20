@@ -102,8 +102,12 @@ public class YSMMeshLibrary {
      *    circle blocks ahead, no longer win the area contest), and the
      *    reported eyes position is scaled by the model package's width/height
      *    scales (matching the converted mesh).
+     * 11: the joint mapper's name normalization strips YSM's "_Default"
+     *    default-form suffix (e.g. the momo wine fox's "RightArm_Default"),
+     *    so default-form bones are marked directly-mapped in the runtime JSON
+     *    and drive their joint (previously unmapped decorations).
      */
-    private static final int GENERATOR_VERSION = 10;
+    private static final int GENERATOR_VERSION = 11;
 
     private static final String MESH_NAMESPACE = YSMEpicFightCompat.MODID;
 

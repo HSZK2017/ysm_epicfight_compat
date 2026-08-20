@@ -155,6 +155,13 @@ public final class YSMJointMapper {
      * removed, and trailing digits stripped so alternate-form subtrees of a model
      * (e.g. "LeftArm2" of a fox variant) map to the same EF joint as the primary
      * form ("LeftArm").
+     *
+     * YSM's default-form bones may carry a "_Default" form suffix (e.g. the momo
+     * wine fox's "RightArm_Default"). After underscore removal that reads as
+     * "rightarmdefault", which is not in the mapping table, so the bone counted
+     * as an unmapped decoration: its geometry was skipped by the pivot
+     * computation (YsmBindArmature) and the arm joints lost their real segment
+     * geometry. Strip the form suffix so the default form maps to its joint.
      */
     private static String normalize(String boneName) {
         String normalized = boneName.toLowerCase().replace("_", "").replace(" ", "");
@@ -162,6 +169,10 @@ public final class YSMJointMapper {
         while (end > 0 && Character.isDigit(normalized.charAt(end - 1))) {
             end--;
         }
-        return normalized.substring(0, end);
+        normalized = normalized.substring(0, end);
+        if (normalized.endsWith("default")) {
+            normalized = normalized.substring(0, normalized.length() - "default".length());
+        }
+        return normalized;
     }
 }

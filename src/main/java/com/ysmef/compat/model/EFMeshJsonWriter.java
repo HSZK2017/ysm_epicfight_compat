@@ -183,8 +183,14 @@ public class EFMeshJsonWriter {
         // for the upward vector, roll 90 degrees. Consumed by
         // YsmRealCameraBridge when the Real Camera mod is present. The model
         // package's width/height scales are passed so the reported bind-space
-        // eyes position matches the scaled rendered mesh.
-        YsmCameraTargetSolver.CameraUvs cameraUvs = YsmCameraTargetSolver.solve(geoModel, pkg.widthScale, pkg.heightScale);
+        // eyes position matches the scaled rendered mesh, and bones hidden in
+        // the model's default (battle-mode) form are excluded from the face
+        // picks (a hidden variant's face is never captured by the probe).
+        // Computed from the bones+animations written above (no camera section
+        // yet, so the conversion-time compile has no RealCamera side effects).
+        java.util.Set<String> hiddenBones = com.ysmef.compat.model.runtime.YSMRuntimeModel
+                .computeDefaultHiddenBoneNames(root);
+        YsmCameraTargetSolver.CameraUvs cameraUvs = YsmCameraTargetSolver.solve(geoModel, pkg.widthScale, pkg.heightScale, hiddenBones);
         if (cameraUvs != null) {
             JsonObject camera = new JsonObject();
             camera.addProperty("posU", cameraUvs.posU);

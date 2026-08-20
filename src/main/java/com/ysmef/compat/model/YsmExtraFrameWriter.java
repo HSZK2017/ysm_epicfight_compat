@@ -835,7 +835,13 @@ public final class YsmExtraFrameWriter {
         while (end > 0 && Character.isDigit(normalized.charAt(end - 1))) {
             end--;
         }
-        return normalized.substring(0, end);
+        normalized = normalized.substring(0, end);
+        // YSM's default-form bones may carry a "_Default" form suffix; strip it
+        // (mirrors YSMJointMapper, e.g. the momo wine fox's "RightHand_Default").
+        if (normalized.endsWith("default")) {
+            normalized = normalized.substring(0, normalized.length() - "default".length());
+        }
+        return normalized;
     }
 
     // ------------------------------------------------------------------

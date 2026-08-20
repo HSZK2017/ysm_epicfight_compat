@@ -88,8 +88,14 @@ public final class YsmCameraTargetSolver {
      * (EFMeshJsonWriter.walkBone), so the bind-space eyes position reported
      * for the API bind function must be scaled too, or the camera hovers
      * above the rendered head.
+     *
+     * hiddenBones: the bones hidden in the model's default (battle-mode) form
+     * (computed from the runtime animations at conversion time). Their quads
+     * are excluded from every face pick - a hidden variant's face is never
+     * captured by RealCamera's probe, so binding to it would fail.
      */
-    public static CameraUvs solve(YSMGeoModel geoModel, float scaleW, float scaleH) {
+    public static CameraUvs solve(YSMGeoModel geoModel, float scaleW, float scaleH,
+                                  java.util.Set<String> hiddenBones) {
         YSMGeoModel.Bone eyes = findEyesBone(geoModel);
         if (eyes == null) {
             return null;
@@ -110,7 +116,7 @@ public final class YsmCameraTargetSolver {
         // detached faces.
         List<WorldQuad> eyeQuads = new ArrayList<>();
         java.util.Set<YSMGeoModel.Bone> eyeSubtree = new java.util.HashSet<>();
-        collectQuads(eyes, eyeQuads, eyeSubtree);
+        collectQuads(eyes, eyeQuads, eyeSubtree, hiddenBones);
         float[] headBox = headBox(geoModel, head);
         WorldQuad front = pickFrontQuad(eyeQuads, headBox, true);
         if (front == null) {
@@ -138,14 +144,17 @@ public final class YsmCameraTargetSolver {
         // the eyes bone's parent chain, then any nearby quad with a matching
         // normal.
         YSMGeoModel.Quad upQuad = null;
-        if (head != null) {
+        if (head != null && !hiddenBones.contains(head.name)) {
             upQuad = pickSideQuad(head, up);
         }
         for (YSMGeoModel.Bone current = eyes.parent; upQuad == null && current != null; current = current.parent) {
+            if (hiddenBones.contains(current.name)) {
+                continue;
+            }
             upQuad = pickSideQuad(current, up);
         }
         if (upQuad == null) {
-            upQuad = pickSideQuadGlobal(geoModel, up, frontCenter);
+            upQuad = pickSideQuadGlobal(geoModel, up, frontCenter, hiddenBones);
         }
         if (upQuad == null) {
             return null;
@@ -159,9 +168,9 @@ public final class YsmCameraTargetSolver {
         // are collapsed in the default form, and a quad picked from them would
         // never be rendered for RealCamera's probe to find. Falls back to a
         // global coplanar search, then to the eyes plate's own UV center.
-        FrontProjection frontProj = projectOntoFrontFace(geoModel, eyes, eyeSubtree, frontNormal, frontCenter);
+        FrontProjection frontProj = projectOntoFrontFace(geoModel, eyes, eyeSubtree, frontNormal, frontCenter, hiddenBones);
         if (frontProj == null) {
-            frontProj = projectOntoFrontFaceGlobal(geoModel, eyeSubtree, frontNormal, frontCenter);
+            frontProj = projectOntoFrontFaceGlobal(geoModel, eyeSubtree, frontNormal, frontCenter, hiddenBones);
         }
         float[] frontUv;
         YSMGeoModel.Quad frontQuad;
@@ -179,7 +188,7 @@ public final class YsmCameraTargetSolver {
         // Nudge both probe points - within their intended face - to a spot no
         // differently-facing quad covers, so the probe always lands on the
         // intended face no matter the part draw order.
-        List<QuadN> allQuads = allQuads(geoModel);
+        List<QuadN> allQuads = allQuads(geoModel, hiddenBones);
         frontUv = findClearUv(allQuads, frontQuad, frontNormal, frontUv[0], frontUv[1]);
         float[] upUv = uvCenter(upQuad);
         upUv = findClearUv(allQuads, upQuad, up, upUv[0], upUv[1]);
@@ -225,9 +234,14 @@ public final class YsmCameraTargetSolver {
     private static final int CLEAR_UV_GRID = 9;
 
     /** Every quad of the model with its bind-space normal (for the UV-collision checks). */
-    private static List<QuadN> allQuads(YSMGeoModel geoModel) {
+    private static List<QuadN> allQuads(YSMGeoModel geoModel, java.util.Set<String> hiddenBones) {
         List<QuadN> out = new ArrayList<>();
         for (YSMGeoModel.Bone bone : geoModel.bonesByName.values()) {
+            // Hidden-in-battle quads are never captured by the probe, so they
+            // are not colliders either.
+            if (hiddenBones.contains(bone.name)) {
+                continue;
+            }
             Matrix4f world = boneWorld(bone);
             for (YSMGeoModel.Quad quad : bone.quads) {
                 Vector3f normal = new Vector3f(quad.normal).mulDirection(world);
@@ -419,19 +433,26 @@ public final class YsmCameraTargetSolver {
     }
 
     /** Collect the quads of a bone and its whole descendant subtree (each with its own world transform). */
-    private static void collectQuads(YSMGeoModel.Bone bone, List<WorldQuad> out, java.util.Set<YSMGeoModel.Bone> subtree) {
+    private static void collectQuads(YSMGeoModel.Bone bone, List<WorldQuad> out, java.util.Set<YSMGeoModel.Bone> subtree,
+                                     java.util.Set<String> hiddenBones) {
         subtree.add(bone);
         Matrix4f world = boneWorld(bone);
-        for (YSMGeoModel.Quad quad : bone.quads) {
-            Vector3f normal = new Vector3f(quad.normal).mulDirection(world);
-            if (normal.lengthSquared() < 1.0e-8f) {
-                continue;
+        // Bones hidden in the default (battle) form are never captured by the
+        // probe: skip their quads (their children are hidden too - the default
+        // form's effective scale multiplies down the chain - so this filters
+        // the whole hidden subtree).
+        if (!hiddenBones.contains(bone.name)) {
+            for (YSMGeoModel.Quad quad : bone.quads) {
+                Vector3f normal = new Vector3f(quad.normal).mulDirection(world);
+                if (normal.lengthSquared() < 1.0e-8f) {
+                    continue;
+                }
+                normal.normalize();
+                out.add(new WorldQuad(quad, normal, centerOf(quad, world)));
             }
-            normal.normalize();
-            out.add(new WorldQuad(quad, normal, centerOf(quad, world)));
         }
         for (YSMGeoModel.Bone child : bone.children) {
-            collectQuads(child, out, subtree);
+            collectQuads(child, out, subtree, hiddenBones);
         }
     }
 
@@ -462,9 +483,10 @@ public final class YsmCameraTargetSolver {
      */
     private static FrontProjection projectOntoFrontFace(YSMGeoModel geoModel, YSMGeoModel.Bone eyes,
                                                         java.util.Set<YSMGeoModel.Bone> eyeSubtree,
-                                                        Vector3f frontNormal, Vector3f frontCenter) {
+                                                        Vector3f frontNormal, Vector3f frontCenter,
+                                                        java.util.Set<String> hiddenBones) {
         for (YSMGeoModel.Bone current = eyes.parent; current != null; current = current.parent) {
-            FrontProjection candidate = projectOntoFrontFaceOf(current, eyeSubtree, frontNormal, frontCenter);
+            FrontProjection candidate = projectOntoFrontFaceOf(current, eyeSubtree, frontNormal, frontCenter, hiddenBones);
             if (candidate != null) {
                 return candidate;
             }
@@ -478,10 +500,11 @@ public final class YsmCameraTargetSolver {
      * chain carries no box geometry itself).
      */
     private static FrontProjection projectOntoFrontFaceGlobal(YSMGeoModel geoModel, java.util.Set<YSMGeoModel.Bone> eyeSubtree,
-                                                              Vector3f frontNormal, Vector3f frontCenter) {
+                                                              Vector3f frontNormal, Vector3f frontCenter,
+                                                              java.util.Set<String> hiddenBones) {
         FrontProjection best = null;
         for (YSMGeoModel.Bone bone : geoModel.bonesByName.values()) {
-            FrontProjection candidate = projectOntoFrontFaceOf(bone, eyeSubtree, frontNormal, frontCenter);
+            FrontProjection candidate = projectOntoFrontFaceOf(bone, eyeSubtree, frontNormal, frontCenter, hiddenBones);
             if (candidate != null && (best == null || candidate.offset < best.offset
                     || (candidate.offset == best.offset && candidate.lateral < best.lateral))) {
                 best = candidate;
@@ -495,8 +518,9 @@ public final class YsmCameraTargetSolver {
      * or null when the bone has no acceptable front quad.
      */
     private static FrontProjection projectOntoFrontFaceOf(YSMGeoModel.Bone bone, java.util.Set<YSMGeoModel.Bone> eyeSubtree,
-                                                          Vector3f frontNormal, Vector3f frontCenter) {
-        if (eyeSubtree.contains(bone)) {
+                                                          Vector3f frontNormal, Vector3f frontCenter,
+                                                          java.util.Set<String> hiddenBones) {
+        if (eyeSubtree.contains(bone) || hiddenBones.contains(bone.name)) {
             return null;
         }
         Matrix4f world = boneWorld(bone);
@@ -592,10 +616,14 @@ public final class YsmCameraTargetSolver {
     }
 
     /** Global fallback: the nearest quad whose normal matches the right direction. */
-    private static YSMGeoModel.Quad pickSideQuadGlobal(YSMGeoModel geoModel, Vector3f right, Vector3f frontCenter) {
+    private static YSMGeoModel.Quad pickSideQuadGlobal(YSMGeoModel geoModel, Vector3f right, Vector3f frontCenter,
+                                                       java.util.Set<String> hiddenBones) {
         YSMGeoModel.Quad best = null;
         float bestDist = MAX_SIDE_DISTANCE;
         for (YSMGeoModel.Bone bone : geoModel.bonesByName.values()) {
+            if (hiddenBones.contains(bone.name)) {
+                continue;
+            }
             Matrix4f world = boneWorld(bone);
             for (YSMGeoModel.Quad quad : bone.quads) {
                 Vector3f normal = new Vector3f(quad.normal).mulDirection(world);
@@ -656,6 +684,12 @@ public final class YsmCameraTargetSolver {
     }
 
     private static String normalize(String boneName) {
-        return boneName.toLowerCase().replace("_", "").replace(" ", "");
+        String normalized = boneName.toLowerCase().replace("_", "").replace(" ", "");
+        // YSM's default-form bones may carry a "_Default" form suffix (e.g.
+        // "Head_Default"); strip it so the head/eyes lookup still matches.
+        if (normalized.endsWith("default")) {
+            normalized = normalized.substring(0, normalized.length() - "default".length());
+        }
+        return normalized;
     }
 }
