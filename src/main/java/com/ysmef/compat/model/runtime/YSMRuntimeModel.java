@@ -389,6 +389,24 @@ public final class YSMRuntimeModel {
         }
     }
 
+    /**
+     * The names of the bones hidden in the model's default (battle-mode) form,
+     * computed from the live runtime model. Used by the bind armature's pivot
+     * computation to exclude hidden variant/accessory geometry (a hidden part -
+     * e.g. the Yukikaze shipgirl's rigging - must not pollute the segment
+     * pivots).
+     */
+    public java.util.Set<String> defaultHiddenBoneNames() {
+        boolean[] hidden = defaultHidden();
+        java.util.Set<String> out = new java.util.HashSet<>();
+        for (int i = 0; i < bones.length && i < hidden.length; i++) {
+            if (hidden[i]) {
+                out.add(bones[i].name);
+            }
+        }
+        return out;
+    }
+
     private boolean[] computeHidden(Molang.Env env) {
         int n = bones.length;
         // evaluate each parallel anim's t=0 scale channels; later anims override

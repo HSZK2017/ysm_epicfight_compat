@@ -303,6 +303,14 @@ public final class YsmIrisComputePath {
         if (DISABLED || !REFLECTION_OK || poses == null) {
             return false;
         }
+        // GUI entity previews (the YSM model selection screen, the inventory
+        // player model, ...) are not drawn by the pack's entity shader: this
+        // path would dispatch the Iris compute shader and draw nothing there.
+        // Decline so the caller falls back to the CPU skinning path, which
+        // renders GUI previews correctly even under a shader pack.
+        if (YsmGpuRenderPath.isGuiEntityProjection() || YsmGpuRenderPath.isYsmPreviewMode()) {
+            return false;
+        }
         ComputeProgram program = ComputeShaderProvider.meshComputeIris;
         if (program == null || !(setup instanceof IrisComputeShaderSetup)) {
             return false;

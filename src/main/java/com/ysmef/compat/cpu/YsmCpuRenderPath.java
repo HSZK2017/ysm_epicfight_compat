@@ -230,8 +230,14 @@ public final class YsmCpuRenderPath {
             cpuSkipDiag(mesh, "no-poses");
             return false;
         }
-        if (shaderPackInUse() && !lastResort) {
-            // under a shader pack the custom program would bypass the pack's shaders
+        boolean guiPreview = com.ysmef.compat.gpu.YsmGpuRenderPath.isGuiEntityProjection()
+                || com.ysmef.compat.gpu.YsmGpuRenderPath.isYsmPreviewMode();
+        if (shaderPackInUse() && !lastResort && !guiPreview) {
+            // under a shader pack the custom program would bypass the pack's shaders.
+            // GUI previews are the exception: they are not drawn by the pack's
+            // entity shader at all, so this plain vertex-pipeline draw is the
+            // correct (and only) way to render them - the Iris compute path
+            // would produce nothing there.
             cpuSkipDiag(mesh, "shader-pack-in-use");
             return false;
         }

@@ -131,6 +131,9 @@ public final class YsmExtraAnimationLibrary {
                 entries.add(new WheelEntry(wheelAnimation, descriptor.id(), clip.loop, clip.length));
             }
         }
+        // Flush the descriptor file once for the whole batch (serializing every
+        // template's frame data per template was the model-switch freeze).
+        flushDescriptors();
         updateMapping(pkg.modelId, entries);
         if (!entries.isEmpty()) {
             YSMEpicFightCompat.LOGGER.info(
@@ -175,8 +178,10 @@ public final class YsmExtraAnimationLibrary {
         }
 
         TEMPLATES.put(templateId, descriptor);
+        // Only mark the descriptor file dirty here: the flush (which serializes
+        // every template's frame data) is batched to the end of the conversion
+        // (flushDescriptors), not done per template.
         descriptorFileDirty = true;
-        writeDescriptors();
         enqueueRegistration(json);
         return descriptor;
     }
@@ -351,9 +356,35 @@ public final class YsmExtraAnimationLibrary {
             return;
         }
         descriptorFileDirty = false;
+        List<TemplateDescriptor> sorted = new ArrayList<>(TEMPLATES.values());
+        writeDescriptorsNow(sorted);
+    }
+
+    /**
+     * Flush the descriptor file immediately if it is dirty, then any templates
+     * added while the (heavy) serialization was in flight are caught by a
+     * follow-up flush. Called once per conversion batch - never per template.
+     */
+    private static void flushDescriptors() {
+        writeDescriptors();
+        // A template registered while the previous flush serialized could have
+        // re-dirtied the flag without being included; flush again in that case.
+        if (descriptorFileDirty) {
+            writeDescriptors();
+        }
+    }
+
+    /**
+     * Serialize + write the descriptor file. NOT synchronized: the snapshot is
+     * taken by the caller under the class lock, but the JSON serialization of
+     * hundreds of templates (each carrying thousands of frame floats) and the
+     * disk write run unlocked, so the render thread's class-lock acquisitions
+     * (clientTick's registration drain) are never blocked by it.
+     */
+    private static void writeDescriptorsNow(List<TemplateDescriptor> sortedSnapshot) {
+        List<TemplateDescriptor> sorted = new ArrayList<>(sortedSnapshot);
         JsonObject root = new JsonObject();
         JsonArray templates = new JsonArray();
-        List<TemplateDescriptor> sorted = new ArrayList<>(TEMPLATES.values());
         sorted.sort((a, b) -> a.id().compareTo(b.id()));
         for (TemplateDescriptor descriptor : sorted) {
             templates.add(GSON.toJsonTree(descriptor));
@@ -522,8 +553,21 @@ public final class YsmExtraAnimationLibrary {
      * "epicfight:entity/biped", and the old name fails at clip load time with
      * "Can't find resource file: epicfight:animmodels/biped.json". Rewrite those
      * already-written template files in place once so existing caches work.
+     *
+     * Called every render-thread tick by clientTick: the volatile fast-path
+     * check below must NOT acquire the class lock after the one-time migration
+     * (a synchronized method would contend with the conversion pool's
+     * findOrCreateTemplate lock and freeze the render thread during model
+     * switches).
      */
-    private static synchronized void migrateLegacyTemplateConstructors() {
+    private static void migrateLegacyTemplateConstructors() {
+        if (LEGACY_TEMPLATES_MIGRATED) {
+            return;
+        }
+        migrateLegacyTemplateConstructorsLocked();
+    }
+
+    private static synchronized void migrateLegacyTemplateConstructorsLocked() {
         if (LEGACY_TEMPLATES_MIGRATED) {
             return;
         }

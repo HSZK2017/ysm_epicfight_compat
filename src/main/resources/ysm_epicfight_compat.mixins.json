@@ -22,6 +22,7 @@
     "LivingEntityRenderDiagMixin",
     "RenderEngineDiagMixin",
     "RenderEngineEventsDiagMixin",
+    "RenderItemBaseMixin",
     "RenderSystemAccessorMixin",
     "SkinnedMeshCpuRenderMixin",
     "YsmAnimationTransitionGuardMixin",

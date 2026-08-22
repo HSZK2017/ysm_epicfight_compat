@@ -302,6 +302,7 @@ public final class YsmBindArmature {
     /** Forget every re-bound armature and captured pose (model reload paths). */
     public static void invalidateAll() {
         BY_MODEL.clear();
+        FIST_BY_MODEL.clear();
         WHEEL_JOINTS.clear();
         synchronized (POSES) {
             POSES.clear();
@@ -364,22 +365,33 @@ public final class YsmBindArmature {
             return null;
         }
 
-        Map<Integer, List<Vector3f>> byBone = collectGeometry(runtime, mesh);
+        GeometryData geometry = collectGeometry(runtime, mesh);
 
         // Segment pivots derived from the model's own geometry (Minecraft frame).
-        Vector3f thighR = topOf(geometryOf(byBone, runtime, JOINT_THIGH_R));
-        Vector3f thighL = topOf(geometryOf(byBone, runtime, JOINT_THIGH_L));
+        Vector3f thighR = topOf(geometryOf(geometry.byJoint(), runtime, JOINT_THIGH_R));
+        Vector3f thighL = topOf(geometryOf(geometry.byJoint(), runtime, JOINT_THIGH_L));
         Vector3f hip = midpoint(thighR, thighL);
-        Vector3f neck = topOf(geometryOf(byBone, runtime, JOINT_CHEST));
+        Vector3f neck = topOf(geometryOf(geometry.byJoint(), runtime, JOINT_CHEST));
         Vector3f chest = midpoint(hip, neck);
-        Vector3f kneeR = topOf(geometryOf(byBone, runtime, JOINT_LEG_R));
-        Vector3f kneeL = topOf(geometryOf(byBone, runtime, JOINT_LEG_L));
-        Vector3f shoulderR = topOf(geometryOf(byBone, runtime, JOINT_ARM_R));
-        Vector3f shoulderL = topOf(geometryOf(byBone, runtime, JOINT_ARM_L));
-        Vector3f elbowR = topOf(geometryOf(byBone, runtime, JOINT_HAND_R));
-        Vector3f elbowL = topOf(geometryOf(byBone, runtime, JOINT_HAND_L));
-        Vector3f wristR = handPivot(runtime, byBone, JOINT_HAND_R);
-        Vector3f wristL = handPivot(runtime, byBone, JOINT_HAND_L);
+        Vector3f kneeR = topOf(geometryOf(geometry.byJoint(), runtime, JOINT_LEG_R));
+        Vector3f kneeL = topOf(geometryOf(geometry.byJoint(), runtime, JOINT_LEG_L));
+        Vector3f shoulderR = topOf(geometryOf(geometry.byJoint(), runtime, JOINT_ARM_R));
+        Vector3f shoulderL = topOf(geometryOf(geometry.byJoint(), runtime, JOINT_ARM_L));
+        Vector3f elbowR = topOf(geometryOf(geometry.byJoint(), runtime, JOINT_HAND_R));
+        Vector3f elbowL = topOf(geometryOf(geometry.byJoint(), runtime, JOINT_HAND_L));
+        Vector3f wristR = handPivot(runtime, geometry.byBone(), JOINT_HAND_R);
+        Vector3f wristL = handPivot(runtime, geometry.byBone(), JOINT_HAND_L);
+
+        // Geometric fist positions for the weapon-coordinate correction
+        // (RenderItemBaseMixin): the model's actual hand, located from geometry
+        // regardless of bone naming (covers Chinese-named hand bones). The fist
+        // is the centroid of the hand joint's most distal body bone (the bone
+        // farthest from the elbow), weapon bones excluded.
+        Vector3f fistR = geometricFist(geometry.byBone(), runtime, JOINT_HAND_R, elbowR);
+        Vector3f fistL = geometricFist(geometry.byBone(), runtime, JOINT_HAND_L, elbowL);
+        if (fistR != null || fistL != null) {
+            FIST_BY_MODEL.put(modelId, new Vector3f[]{fistR, fistL});
+        }
 
         Map<Integer, OpenMatrix4f> pivots = new HashMap<>();
         putPivot(pivots, JOINT_ROOT, hip);
@@ -484,14 +496,34 @@ public final class YsmBindArmature {
     }
 
     /**
-     * Collect the bind-pose geometry of every mesh part, keyed by the runtime
-     * bone index. At runtime the mesh positions are in Minecraft frame (up = +Y,
-     * Epic Fight's loader rotated them out of the JSON's Blender frame while
+     * Collect the bind-pose geometry of every mesh part, keyed by EF joint id.
+     * At runtime the mesh positions are in Minecraft frame (up = +Y, Epic
+     * Fight's loader rotated them out of the JSON's Blender frame while
      * loading), the same frame the pivot matrices are expressed in.
+     *
+     * Inclusion rule: every bone that resolves to the joint (the runtime JSON's
+     * joint field already walked the parent chain) contributes its geometry,
+     * EXCEPT trailing-digit variant bones and accessory bones (cape/elytra/
+     * backpack). But the mapped/unmapped status matters: a joint that HAS
+     * directly-mapped geometry uses only that - this keeps hand-carried items
+     * (swords, brooms, key tools: unmapped bones parented under the hand/chest
+     * bones) out of the pivot computation. Only when a joint has NO mapped
+     * geometry at all (models whose body geometry sits on non-English bones -
+     * the Yamashiro shipgirl's "youdabi" arms, the momo wine fox's
+     * "RightArm_Default") does the joint fall back to its unmapped bones, so
+     * such models no longer lose every segment pivot and fall back to Steve
+     * proportions.
      */
-    private static Map<Integer, List<Vector3f>> collectGeometry(YSMRuntimeModel runtime, YSMMesh mesh) {
-        Map<Integer, List<Vector3f>> byBone = new HashMap<>();
+    private static GeometryData collectGeometry(YSMRuntimeModel runtime, YSMMesh mesh) {
+        Map<Integer, List<Vector3f>> mappedByJoint = new HashMap<>();
+        Map<Integer, List<Vector3f>> unmappedByJoint = new HashMap<>();
         float[] positions = mesh.positions();
+        // Bones hidden in the default (battle-mode) form never render, so their
+        // geometry must not pollute the segment pivots - e.g. the Yukikaze
+        // shipgirl's rigging (hidden by default) sits forward of the chest and
+        // would otherwise drag the neck pivot off the body.
+        java.util.Set<String> hiddenBones = runtime.defaultHiddenBoneNames();
+        Map<Integer, List<Vector3f>> byBone = new HashMap<>();
         for (Map.Entry<String, MeshPart> entry : mesh.getPartEntrySetSafe()) {
             String partName = entry.getKey();
             if (!partName.startsWith(EFMeshJsonWriter.BONE_PART_PREFIX)) {
@@ -502,12 +534,7 @@ public final class YsmBindArmature {
                 continue;
             }
             YSMRuntimeModel.BoneRt bone = runtime.bones[boneIdx];
-            // Only directly-mapped body bones define segment pivots: decorations
-            // (tails, bows, capes...) resolve to a joint by walking up their
-            // ancestor chain (mapped=false) and their geometry can extend far
-            // beyond the body part - e.g. the wine_fox's up-curled tail reaches
-            // ABOVE the head and would become the "neck".
-            if (!bone.mapped) {
+            if (hiddenBones.contains(bone.name)) {
                 continue;
             }
             // Alternate-form variant bones ("RightLeg2", "Head2"...) carry bind
@@ -516,33 +543,42 @@ public final class YsmBindArmature {
             if (!bone.name.isEmpty() && Character.isDigit(bone.name.charAt(bone.name.length() - 1))) {
                 continue;
             }
-            // Directly-mapped accessory bones (cape/elytra/backpack) animate with
-            // the body but their geometry extends beyond it - exclude them from
-            // the pivot computation so they don't drag the segment pivots.
+            // Accessory bones (cape/elytra/backpack) animate with the body but
+            // their geometry extends beyond it - exclude them from the pivot
+            // computation so they don't drag the segment pivots.
             if (PIVOT_EXCLUDED_BONE_NAMES.contains(normalize(bone.name))) {
                 continue;
             }
-            List<Vector3f> list = byBone.computeIfAbsent(boneIdx, k -> new ArrayList<>());
+            List<Vector3f> boneList = byBone.computeIfAbsent(boneIdx, k -> new ArrayList<>());
+            Map<Integer, List<Vector3f>> target = bone.mapped ? mappedByJoint : unmappedByJoint;
+            List<Vector3f> list = target.computeIfAbsent(bone.joint, k -> new ArrayList<>());
             for (VertexBuilder vb : entry.getValue().getVertices()) {
                 int p = vb.position * 3;
                 if (p + 2 < positions.length) {
-                    list.add(new Vector3f(positions[p], positions[p + 1], positions[p + 2]));
+                    Vector3f v = new Vector3f(positions[p], positions[p + 1], positions[p + 2]);
+                    boneList.add(v);
+                    list.add(v);
                 }
             }
         }
-        return byBone;
-    }
-
-    /** All bind-pose vertices bound to one EF joint. */
-    private static List<Vector3f> geometryOf(Map<Integer, List<Vector3f>> byBone,
-                                             YSMRuntimeModel runtime, int joint) {
-        List<Vector3f> merged = new ArrayList<>();
-        for (Map.Entry<Integer, List<Vector3f>> entry : byBone.entrySet()) {
-            if (runtime.bones[entry.getKey()].joint == joint) {
-                merged.addAll(entry.getValue());
+        // Per joint: prefer the mapped geometry; fall back to the unmapped
+        // bones only when the joint has no mapped geometry at all.
+        Map<Integer, List<Vector3f>> byJoint = new HashMap<>(unmappedByJoint);
+        for (Map.Entry<Integer, List<Vector3f>> entry : mappedByJoint.entrySet()) {
+            if (!entry.getValue().isEmpty()) {
+                byJoint.put(entry.getKey(), entry.getValue());
             }
         }
-        return merged;
+        return new GeometryData(byJoint, byBone);
+    }
+
+    /** byJoint: joint-indexed geometry (mapped preferred) for segment pivots; byBone: bone-indexed for the hand-bone lookup. */
+    private record GeometryData(Map<Integer, List<Vector3f>> byJoint, Map<Integer, List<Vector3f>> byBone) {}
+
+    /** All bind-pose vertices bound to one EF joint (mapped geometry preferred). */
+    private static List<Vector3f> geometryOf(Map<Integer, List<Vector3f>> byJoint,
+                                             YSMRuntimeModel runtime, int joint) {
+        return byJoint.getOrDefault(joint, List.of());
     }
 
     /**
@@ -589,6 +625,115 @@ public final class YsmBindArmature {
             }
         }
         return null;
+    }
+
+    // ------------------------------------------------------------------
+    // Geometric fist positions (weapon-coordinate correction)
+    // ------------------------------------------------------------------
+
+    /** modelId -> {fistR, fistL} geometric fist positions (bind space), used by RenderItemBaseMixin. */
+    private static final Map<String, Vector3f[]> FIST_BY_MODEL = new ConcurrentHashMap<>();
+
+    /** Weapon-ish name fragments excluded from the fist pick (a held item is not the fist itself). */
+    private static final String[] WEAPON_NAME_PARTS = {
+            "sword", "gun", "weapon", "blade", "knife", "axe", "bow", "tool", "item", "besom", "key", "wand", "staff", "spear", "dagger", "katana", "shield"
+    };
+
+    /**
+     * The model's geometric fist position for a hand ("right" = main hand,
+     * "left" = off hand), in model bind space, or null when the model has no
+     * usable hand geometry. Consumed by the weapon-coordinate correction
+     * (RenderItemBaseMixin) to anchor the weapon in the model's actual hand.
+     */
+    public static Vector3f fistPosition(String modelId, boolean leftHand) {
+        Vector3f[] fists = FIST_BY_MODEL.get(modelId);
+        if (fists == null) {
+            return null;
+        }
+        return leftHand ? fists[1] : fists[0];
+    }
+
+    /** Hand/finger name fragments that mark the bone as the fist itself (any language). */
+    private static final String[] HAND_NAME_PARTS = {"hand", "shou", "zhi", "finger", "fist", "palm"};
+
+    /**
+     * The geometric fist of one hand joint: the centroid of the joint's most
+     * distal hand/finger bone (hand-named bones preferred - they are the fist
+     * itself; otherwise the body bone farthest from the elbow), weapon bones
+     * excluded. Preferring hand-named bones keeps long sleeves / cuffs / cups
+     * from being mistaken for the fist (e.g. the Yamashiro shipgirl's sleeve).
+     * Returns null when no usable body bone exists.
+     */
+    private static Vector3f geometricFist(Map<Integer, List<Vector3f>> byBone, YSMRuntimeModel runtime, int joint, Vector3f elbow) {
+        if (elbow == null) {
+            return null;
+        }
+        // Pass 1: hand/finger-named body bones (the actual fist), farthest from the elbow.
+        Vector3f best = farthestBodyBone(byBone, runtime, joint, elbow, true);
+        if (best != null) {
+            return best;
+        }
+        // Pass 2: any non-weapon body bone farthest from the elbow.
+        return farthestBodyBone(byBone, runtime, joint, elbow, false);
+    }
+
+    /** The centroid of the Hand-joint body bone farthest from the elbow. handNamedOnly restricts to hand/finger-named bones. */
+    private static Vector3f farthestBodyBone(Map<Integer, List<Vector3f>> byBone, YSMRuntimeModel runtime, int joint,
+                                             Vector3f elbow, boolean handNamedOnly) {
+        Vector3f best = null;
+        float bestDist = -1.0f;
+        for (Map.Entry<Integer, List<Vector3f>> entry : byBone.entrySet()) {
+            if (runtime.bones[entry.getKey()].joint != joint) {
+                continue;
+            }
+            String normalized = normalize(runtime.bones[entry.getKey()].name);
+            if (isWeaponBone(normalized)) {
+                continue;
+            }
+            if (handNamedOnly && !isHandBone(normalized)) {
+                continue;
+            }
+            Vector3f centroid = centroidOf(entry.getValue());
+            if (centroid == null) {
+                continue;
+            }
+            float dist = centroid.distance(elbow);
+            if (dist > bestDist) {
+                bestDist = dist;
+                best = centroid;
+            }
+        }
+        return best;
+    }
+
+    private static boolean isHandBone(String normalized) {
+        for (String part : HAND_NAME_PARTS) {
+            if (normalized.contains(part)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isWeaponBone(String normalized) {
+        for (String part : WEAPON_NAME_PARTS) {
+            if (normalized.contains(part)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** The centroid (mean position) of a vertex list, or null when empty. */
+    private static Vector3f centroidOf(List<Vector3f> vertices) {
+        if (vertices == null || vertices.isEmpty()) {
+            return null;
+        }
+        Vector3f acc = new Vector3f();
+        for (Vector3f v : vertices) {
+            acc.add(v);
+        }
+        return acc.div(vertices.size());
     }
 
     /** Mirrors YSMJointMapper's name normalization (lower case, no spaces/underscores, no trailing digits, no "_Default" form suffix). */

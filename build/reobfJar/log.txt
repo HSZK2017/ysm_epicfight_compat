@@ -294,6 +294,7 @@ Writing Output: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\reo
   com/ysmef/compat/mixin/PatchedLivingRenderDiagMixin.class
   com/ysmef/compat/mixin/RenderEngineDiagMixin.class
   com/ysmef/compat/mixin/RenderEngineEventsDiagMixin.class
+  com/ysmef/compat/mixin/RenderItemBaseMixin.class
   com/ysmef/compat/mixin/RenderSystemAccessorMixin.class
   com/ysmef/compat/mixin/SkinnedMeshCpuRenderMixin.class
   com/ysmef/compat/mixin/YsmAnimationTransitionGuardMixin.class
@@ -357,6 +358,7 @@ Writing Output: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\reo
   com/ysmef/compat/model/runtime/YSMRuntimeModel$CompiledTimeline.class
   com/ysmef/compat/model/runtime/YSMRuntimeModel.class
   com/ysmef/compat/model/runtime/YsmBindArmature$Entry.class
+  com/ysmef/compat/model/runtime/YsmBindArmature$GeometryData.class
   com/ysmef/compat/model/runtime/YsmBindArmature.class
   com/ysmef/compat/network/
   com/ysmef/compat/network/ModelSyncClient$SyncedModel.class
