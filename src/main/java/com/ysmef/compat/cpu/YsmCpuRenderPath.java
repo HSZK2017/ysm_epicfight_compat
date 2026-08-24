@@ -615,6 +615,8 @@ public final class YsmCpuRenderPath {
         RenderSystem.getModelViewMatrix().get(mvScratch);
         RenderSystem.getInverseViewRotationMatrix().get(ivrScratch);
 
+        com.ysmef.compat.renderer.GlRenderState.Snapshot glState =
+                com.ysmef.compat.renderer.GlRenderState.capture();
         RenderSystem.disableCull();
         RenderSystem.enableDepthTest();
         RenderSystem.depthMask(true);
@@ -636,6 +638,13 @@ public final class YsmCpuRenderPath {
         GlStateManager._bindTexture(modelTexId);
 
         GlStateManager._glBindBuffer(GL15.GL_ARRAY_BUFFER, cpu.vbo);
+        // Orphaning: re-allocate the storage with no data pointer before the
+        // subdata. The GL server keeps the previous storage alive for draws
+        // still in flight (an earlier player's draw of this shared VBO), while
+        // this player's vertices go into fresh storage - otherwise the
+        // glBufferSubData could race the asynchronous draw on weak drivers.
+        GL15.glBufferData(GL15.GL_ARRAY_BUFFER, (long) cpu.capacity * YsmCpuMesh.VERTEX_STRIDE,
+                GL15.GL_STREAM_DRAW);
         GL15.glBufferSubData(GL15.GL_ARRAY_BUFFER, 0L, cpu.cpuBuffer);
         GlStateManager._glBindBuffer(GL15.GL_ARRAY_BUFFER, 0);
 
@@ -693,16 +702,23 @@ public final class YsmCpuRenderPath {
         if (translucent) {
             RenderSystem.enableBlend();
             RenderSystem.defaultBlendFunc();
+            // vanilla translucent semantics: the blended pass must not write
+            // depth (otherwise it occludes entities behind it); restored after
+            RenderSystem.depthMask(false);
             if (YsmCpuSkinShader.locAlphaMode() >= 0) {
                 GL20.glUniform1i(YsmCpuSkinShader.locAlphaMode(), 2);
             }
             GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, writtenCount);
+            RenderSystem.depthMask(true);
             RenderSystem.disableBlend();
         }
 
         GlStateManager._glUseProgram(0);
         BufferUploader.invalidate();
         GlStateManager._glBindVertexArray(0);
+
+        // restore the GL state this path changed (cull/blend/depth-test/depth-mask)
+        com.ysmef.compat.renderer.GlRenderState.restore(glState);
 
         mc.gameRenderer.lightTexture().turnOffLightLayer();
     }

@@ -73,8 +73,10 @@ public final class YsmCpuMesh {
 
         GL30.glBindVertexArray(vao);
         GlStateManager._glBindBuffer(GL15.GL_ARRAY_BUFFER, vbo);
-        // capacity only: the per-frame skinned data is streamed via glBufferSubData
-        GL15.glBufferData(GL15.GL_ARRAY_BUFFER, (long) totalVertices * VERTEX_STRIDE, GL15.GL_DYNAMIC_DRAW);
+        // capacity only: the per-frame skinned data is streamed via
+        // glBufferSubData after an orphaning glBufferData(NULL) - the access
+        // pattern is write-once-per-frame (STREAM), not modify-reuse (DYNAMIC)
+        GL15.glBufferData(GL15.GL_ARRAY_BUFFER, (long) totalVertices * VERTEX_STRIDE, GL15.GL_STREAM_DRAW);
 
         GL20.glEnableVertexAttribArray(0);
         GL20.glVertexAttribPointer(0, 3, GL11.GL_FLOAT, false, VERTEX_STRIDE, 0L);

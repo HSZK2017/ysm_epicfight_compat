@@ -1,4 +1,0 @@
-Manifest-Version: 1.0
-MixinConfigs: ysm_epicfight_compat.mixins.json,ysm_epicfight_compat.eftl
- m.mixins.json
-

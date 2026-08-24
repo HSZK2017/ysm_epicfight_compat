@@ -1,0 +1,31 @@
+# Gradle / build output
+.gradle/
+build/
+out/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+.factorypath
+
+# ForgeGradle dev run directory: generated configs, logs, crashes, saves and
+# downloaded/installed mod jars are runtime artifacts, not sources.
+# NOTE: run/tlm_custom_pack is deliberately KEPT tracked (test fixture data).
+run/config/
+run/crash-reports/
+run/defaultconfigs/
+run/logs/
+run/mods/
+run/reports/
+run/resourcepacks/
+run/saves/
+run/screenshots/
+
+# OS / editor noise
+Thumbs.db
+.DS_Store
+*.log

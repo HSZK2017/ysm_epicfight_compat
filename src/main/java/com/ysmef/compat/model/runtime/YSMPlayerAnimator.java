@@ -186,14 +186,40 @@ public final class YSMPlayerAnimator implements Molang.Env {
         if (shouldFullEval(entity)) {
             EvalInputs inputs = captureEvalInputs(entity);
             if (!evaluatedOnce || !useAsyncEval(entity)) {
-                evaluate(entity, partialTick, now, inputs);
-                evaluatedOnce = true;
+                evaluateSync(entity, partialTick, now, inputs);
             } else {
                 submitAsyncEval(entity, partialTick, now, inputs);
             }
         }
         pushToMesh(mesh);
         com.ysmef.compat.YsmDiag.addNanos(com.ysmef.compat.YsmDiag.SLOT_SCRIPT_EVAL, System.nanoTime() - t0);
+    }
+
+    /**
+     * Render-thread evaluation with the same mutual exclusion as the async
+     * path: when a worker evaluation is still in flight (evalPending), the
+     * synchronous evaluation is skipped for this frame - both paths write the
+     * same double-buffer slot ({@code writeBuf = 1 - readyBuffer}) and the
+     * same shared state (animStart/animLastT HashMaps, varsById, channelCursor,
+     * ...), and running them concurrently corrupted the buffers and could hang
+     * the HashMap. Skipping one frame is invisible (the in-flight worker's
+     * result is published when it finishes; the next sync frame re-evaluates).
+     */
+    private void evaluateSync(LivingEntity entity, float partialTick, double now, EvalInputs inputs) {
+        if (!evalPending.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            evaluate(entity, partialTick, now, inputs);
+            evaluatedOnce = true;
+        } catch (Throwable t) {
+            // Never break the render path: keep the last published result.
+            YSMEpicFightCompat.LOGGER.warn(
+                    "YSM-EF Compat: synchronous script evaluation failed for model '{}'",
+                    model.modelId, t);
+        } finally {
+            evalPending.set(false);
+        }
     }
 
     private boolean useAsyncEval(LivingEntity entity) {

@@ -158,6 +158,13 @@ public class YSMMeshLibrary {
     private static final Set<String> PENDING_TEXTURE_DECODES = ConcurrentHashMap.newKeySet();
     private static final java.util.Queue<TextureUploadTask> COMPLETED_UPLOADS = new java.util.concurrent.ConcurrentLinkedQueue<>();
     private static final Map<String, Integer> PENDING_RELEASES = new ConcurrentHashMap<>();
+    /**
+     * Evicted shared meshes whose GL resources are released a few ticks later
+     * (see {@link #processPendingMeshReleases}): the instance may still be
+     * drawn later in the current frame by entities that selected it earlier.
+     * Same delayed-release pattern as {@link #PENDING_RELEASES}.
+     */
+    private static final Map<YSMMesh, Integer> PENDING_MESH_RELEASES = new ConcurrentHashMap<>();
     private static final int RELEASE_DELAY_TICKS = 5;
     private static final long TEXTURE_UPLOAD_BUDGET_NANOS = 10_000_000L;
 
@@ -168,6 +175,20 @@ public class YSMMeshLibrary {
 
     /** Models currently being converted on the background pool. */
     private static final Set<String> PENDING_MODELS = ConcurrentHashMap.newKeySet();
+
+    /**
+     * EF accessor registrations queued by worker threads and executed on the
+     * render thread: Epic Fight's {@code Meshes.ACCESSORS} is a plain HashMap
+     * (Meshes.java:40), so {@code MeshAccessor.create} (which writes it) must
+     * never run off the render thread - a concurrent put can corrupt the table
+     * while EF's own render-thread code reads it. Workers therefore construct
+     * nothing and enqueue (modelId, meshId, generation); the render thread
+     * drains the queue in {@link #ensureModel} and registers the accessors.
+     */
+    private record PendingMeshRegistration(String modelId, String meshId, int generation) {}
+
+    private static final java.util.Queue<PendingMeshRegistration> PENDING_MESH_REGISTRATIONS =
+            new java.util.concurrent.ConcurrentLinkedQueue<>();
 
     /**
      * ModernYSM-style LRU usage tracking (access order): every successful mesh
@@ -325,6 +346,11 @@ public class YSMMeshLibrary {
      * disk before the cache is trusted.
      */
     public static synchronized boolean ensureModel(String modelId) {
+        // Register conversions finished on worker threads. Must run on the
+        // render thread (EF's ACCESSORS HashMap), and inside the class lock so
+        // the state transitions (PENDING_MODELS -> registered) are atomic for
+        // the check below.
+        drainPendingMeshRegistrations();
         if (MESHES.containsKey(modelId)) {
             touch(modelId);
             return true;
@@ -404,10 +430,10 @@ public class YSMMeshLibrary {
                 return;
             }
             if (verified && registerFromCache(modelId, modelEntry, textureBytes)) {
-                YSMRuntimeModel.invalidate(modelId);
-                touch(modelId);
-                trimIfNeeded();
-                PENDING_MODELS.remove(modelId);
+                // The accessor registration is queued (EF's ACCESSORS HashMap
+                // must only be written on the render thread); MESHES.put,
+                // touch/trim and PENDING_MODELS.remove happen in
+                // drainPendingMeshRegistrations on the next ensureModel.
                 YsmExtraAnimationLibrary.ensureConvertedAsync(modelId);
                 return;
             }
@@ -420,6 +446,46 @@ public class YSMMeshLibrary {
         } else {
             FAILED_MODELS.add(modelId);
         }
+    }
+
+    /**
+     * Render-thread only: register accessors queued by worker threads. Epic
+     * Fight's {@code Meshes.ACCESSORS} is a plain HashMap, so
+     * {@code MeshAccessor.create} (which writes it) must run on the same thread
+     * that reads it (the render thread). Stale registrations from a previous
+     * load generation are dropped.
+     *
+     * Called from {@link #ensureModel} (render thread, class lock held); the
+     * worker side keeps PENDING_MODELS set until this method registers the
+     * model, so no duplicate conversion can be scheduled in between.
+     */
+    private static void drainPendingMeshRegistrations() {
+        if (!RenderSystem.isOnRenderThread()) {
+            return;
+        }
+        PendingMeshRegistration registration;
+        while ((registration = PENDING_MESH_REGISTRATIONS.poll()) != null) {
+            if (registration.generation() != LOAD_GENERATION.get()) {
+                // stale result of a previous load generation: drop, never register
+                PENDING_MODELS.remove(registration.modelId());
+                continue;
+            }
+            try {
+                Meshes.MeshAccessor<YSMMesh> accessor = Meshes.MeshAccessor.create(
+                        MESH_NAMESPACE, "entity/" + registration.meshId(),
+                        (loader) -> loader.loadSkinnedMesh(YSMMesh::new));
+                MESHES.put(registration.modelId(), accessor);
+                YSMRuntimeModel.invalidate(registration.modelId());
+                touch(registration.modelId());
+            } catch (Throwable t) {
+                FAILED_MODELS.add(registration.modelId());
+                YSMEpicFightCompat.LOGGER.warn(
+                        "YSM-EF Compat: failed to register converted mesh for '{}'", registration.modelId(), t);
+            } finally {
+                PENDING_MODELS.remove(registration.modelId());
+            }
+        }
+        trimIfNeeded();
     }
 
     /** Worker: convert one model off-thread and merge the result under the lock. */
@@ -445,14 +511,14 @@ public class YSMMeshLibrary {
                     return;
                 }
                 if (result != null) {
+                    // Registration is queued (see PendingMeshRegistration); the
+                    // accessor + MESHES.put + PENDING_MODELS.remove are done by
+                    // drainPendingMeshRegistrations on the render thread.
                     registerModelResult(result);
-                    YSMRuntimeModel.invalidate(modelId);
-                    touch(modelId);
-                    trimIfNeeded();
                 } else {
                     FAILED_MODELS.add(modelId);
+                    PENDING_MODELS.remove(modelId);
                 }
-                PENDING_MODELS.remove(modelId);
             }
             if (result != null) {
                 // compile the freshly written runtime JSON on this worker thread, so
@@ -557,14 +623,13 @@ public class YSMMeshLibrary {
                 }
             }
             if (mesh != null) {
-                try {
-                    mesh.destroy();
-                    com.ysmef.compat.gpu.YsmGpuRenderPath.disposeMesh(mesh);
-                    com.ysmef.compat.cpu.YsmCpuRenderPath.disposeMesh(mesh);
-                    com.ysmef.compat.gpu.YsmIrisComputePath.disposeMesh(mesh);
-                } catch (Throwable t) {
-                    YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to release evicted model '{}'", modelId, t);
-                }
+                // Delayed release (5 ticks, like the evicted textures): the
+                // YSMMesh instance is shared by every entity using the model
+                // and may still be drawn later in this frame (shadow/outline/
+                // capture passes select meshes before the main pass draws
+                // them). Destroying it immediately would use freed GL objects.
+                // The next accessor.get() rebuilds a fresh instance meanwhile.
+                PENDING_MESH_RELEASES.put(mesh, RELEASE_DELAY_TICKS);
             }
         }
         java.util.List<ResourceLocation> toRelease = new java.util.ArrayList<>();
@@ -720,10 +785,6 @@ public class YSMMeshLibrary {
     private static boolean registerFromCache(String modelId, JsonObject modelEntry, Map<String, byte[]> textureBytes) {
         try {
             String meshId = modelEntry.get("mesh").getAsString();
-            Meshes.MeshAccessor<YSMMesh> accessor = Meshes.MeshAccessor.create(
-                    MESH_NAMESPACE, "entity/" + meshId,
-                    (loader) -> loader.loadSkinnedMesh(YSMMesh::new));
-            MESHES.put(modelId, accessor);
 
             if (modelEntry.has("textures") && modelEntry.get("textures").isJsonObject()) {
                 for (Map.Entry<String, JsonElement> texEntry : modelEntry.getAsJsonObject("textures").entrySet()) {
@@ -745,6 +806,12 @@ public class YSMMeshLibrary {
                     }
                 }
             }
+            // The accessor itself is created on the render thread (see
+            // PendingMeshRegistration / drainPendingMeshRegistrations): EF's
+            // MeshAccessor.create writes its non-thread-safe ACCESSORS map.
+            // Enqueued last so a texture-registration failure cannot leave a
+            // zombie registration behind (the caller re-converts then).
+            PENDING_MESH_REGISTRATIONS.add(new PendingMeshRegistration(modelId, meshId, LOAD_GENERATION.get()));
             // restore path: compile the runtime scripts on the background pool so
             // the first draw does not compile them inline on the render thread
             preloadRuntimeAsync(modelId);
@@ -778,10 +845,11 @@ public class YSMMeshLibrary {
             }
         }
 
-        Meshes.MeshAccessor<YSMMesh> accessor = Meshes.MeshAccessor.create(
-                MESH_NAMESPACE, "entity/" + result.meshId(),
-                (loader) -> loader.loadSkinnedMesh(YSMMesh::new));
-        MESHES.put(result.modelId(), accessor);
+        // The accessor is created on the render thread (see
+        // PendingMeshRegistration / drainPendingMeshRegistrations): EF's
+        // MeshAccessor.create writes its non-thread-safe ACCESSORS map.
+        PENDING_MESH_REGISTRATIONS.add(new PendingMeshRegistration(
+                result.modelId(), result.meshId(), LOAD_GENERATION.get()));
 
         JsonObject modelEntry = new JsonObject();
         modelEntry.addProperty("sig", result.fingerprint());
@@ -846,6 +914,10 @@ public class YSMMeshLibrary {
      */
     public static synchronized void invalidateAll() {
         LOAD_GENERATION.incrementAndGet();
+        // Queued accessor registrations of the previous generation are stale
+        // (drainPendingMeshRegistrations checks the generation); drop them so
+        // the queue cannot grow across repeated reloads.
+        PENDING_MESH_REGISTRATIONS.clear();
         // Release every loaded mesh from Epic Fight's own mesh cache too (its
         // key is our accessor, which is dropped below): without this the mesh
         // instances and their compute buffers stay referenced until Epic
@@ -880,6 +952,9 @@ public class YSMMeshLibrary {
         PENDING_TEXTURE_DECODES.clear();
         COMPLETED_UPLOADS.clear();
         PENDING_RELEASES.clear();
+        // Delayed-released meshes are covered by the disposeAll() calls below;
+        // drop the queue so they are not destroyed a second time on a later tick.
+        PENDING_MESH_RELEASES.clear();
         synchronized (ACCESS_ORDER) {
             ACCESS_ORDER.clear();
         }
@@ -1455,6 +1530,41 @@ public class YSMMeshLibrary {
             } else {
                 entry.setValue(left);
             }
+        }
+    }
+
+    /**
+     * Release evicted meshes whose delay elapsed (same cadence as
+     * {@link #processPendingTextureReleases}, called from the client tick).
+     * Must run on the render thread: the GL deletions require it. The mesh was
+     * already removed from Epic Fight's mesh cache by the eviction, so any
+     * later draw uses a freshly rebuilt instance.
+     */
+    public static void processPendingMeshReleases() {
+        if (PENDING_MESH_RELEASES.isEmpty()) {
+            return;
+        }
+        for (java.util.Iterator<Map.Entry<YSMMesh, Integer>> it = PENDING_MESH_RELEASES.entrySet().iterator(); it.hasNext(); ) {
+            Map.Entry<YSMMesh, Integer> entry = it.next();
+            int left = entry.getValue() - 1;
+            if (left <= 0) {
+                it.remove();
+                releaseMesh(entry.getKey());
+            } else {
+                entry.setValue(left);
+            }
+        }
+    }
+
+    /** Release one mesh's GL resources across every render path (render thread). */
+    private static void releaseMesh(YSMMesh mesh) {
+        try {
+            mesh.destroy();
+            com.ysmef.compat.gpu.YsmGpuRenderPath.disposeMesh(mesh);
+            com.ysmef.compat.cpu.YsmCpuRenderPath.disposeMesh(mesh);
+            com.ysmef.compat.gpu.YsmIrisComputePath.disposeMesh(mesh);
+        } catch (Throwable t) {
+            YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to release evicted mesh", t);
         }
     }
 

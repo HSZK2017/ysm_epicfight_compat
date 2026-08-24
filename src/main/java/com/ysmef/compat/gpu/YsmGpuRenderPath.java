@@ -529,6 +529,8 @@ public final class YsmGpuRenderPath {
             return false;
         }
 
+        com.ysmef.compat.renderer.GlRenderState.Snapshot glState =
+                com.ysmef.compat.renderer.GlRenderState.capture();
         RenderSystem.disableCull();
         RenderSystem.enableDepthTest();
         RenderSystem.depthMask(true);
@@ -611,10 +613,14 @@ public final class YsmGpuRenderPath {
         if (translucent) {
             RenderSystem.enableBlend();
             RenderSystem.defaultBlendFunc();
+            // vanilla translucent semantics: the blended pass must not write
+            // depth (otherwise it occludes entities behind it); restored after
+            RenderSystem.depthMask(false);
             if (YsmBoneSkinShader.locAlphaMode() >= 0) {
                 GL20.glUniform1i(YsmBoneSkinShader.locAlphaMode(), 2);
             }
             GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, gpu.vertexCount);
+            RenderSystem.depthMask(true);
             RenderSystem.disableBlend();
         }
 
@@ -623,6 +629,9 @@ public final class YsmGpuRenderPath {
         GlStateManager._glUseProgram(0);
         BufferUploader.invalidate();
         GlStateManager._glBindVertexArray(0);
+
+        // restore the GL state this path changed (cull/blend/depth-test/depth-mask)
+        com.ysmef.compat.renderer.GlRenderState.restore(glState);
 
         mc.gameRenderer.lightTexture().turnOffLightLayer();
 
