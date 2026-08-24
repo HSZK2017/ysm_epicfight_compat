@@ -44,14 +44,16 @@
                                                · Molang 动画 (parallel/state/condition)
                                                      │
                                                      ▼
-                                           YSMMeshLibrary（懒转换 + 缓存恢复 + LRU）
+                                           YSMMeshLibrary（懒转换 + 缓存恢复 + LRU + 渲染注册）
+                                            TextureStore（纹理管线）/ ManifestStore（缓存清单）
+                                            ——渲染分派/资源释放经 MeshReleaser / RenderBridgeRegistry 接口，
+                                              model 包与 gpu/cpu 渲染包无循环依赖
                                                      │
                                                      ▼
                                            渲染：YsmGpuRenderPath（GPU 蒙皮，GL 4.3+ / GLES 3.1+）
-                                             → EF 计算着色器路径（回退）
-                                             → YsmCpuRenderPath（CPU 蒙皮，GL 3.3+ / GLES 3.0+，
-                                               mixin 拦截 EF drawPosed 回退，无缺面）
-                                             → EF drawPosed（最后回退，三角化已修复）
+                                             → YsmCpuRenderPath（CPU 蒙皮，GL 3.3+ / GLES 3.0+，mixin 拦截 EF drawPosed 回退，无缺面）
+                                             → YsmIrisComputePath（光影包下优化计算路径，无 MAX_JOINTS 上限）
+                                             → EF 计算着色器路径 / drawPosed（最后回退，三角化已修复）
 ```
 
 ---
@@ -75,7 +77,10 @@
 | `EFMeshJsonWriter` | 生成 EF animmodels JSON + 运行时 JSON。骨骼级部件 (`y/<boneName>`)、预三角化（每四边形 6 角点）匹配 EF 的三角绘制约定；顶点焊接、关节映射、宽高缩放 |
 | `YSMJointMapper` | YSM 骨骼名 → EF biped 关节 ID 映射 (Root=0..Elbow_L=19) |
 | `YSMMesh` | EF `HumanoidMesh` 子类——贴图替换、运行时模型 ID、按部件序号的运行时变换注入（O(1) 数组访问） |
-| `YSMMeshLibrary` | 网格/贴图注册中心 + 懒转换门禁 + **LRU 淘汰**（见性能节）。manifest 记录输出 SHA-256 与大小，缓存恢复前逐文件校验；原子写 |
+| `YSMMeshLibrary` | 网格注册/懒转换门禁 + **LRU 淘汰**（见性能节）+ `MeshReleaser`/`RenderBridgeRegistry` 注册表（与 gpu/cpu 渲染包解耦） |
+| `TextureStore` | 纹理管线全域：字节注册、PNG/JPEG/WebP/AVIF 解码、异步上传（每帧时间预算）、延迟释放、pack/缓存文件布局、`sanitize` 路径穿越防护 |
+| `ManifestStore` | 生成缓存清单：内存镜像 + 版本合并后台写（渲染线程零文件 I/O） |
+| `JointTable` | EF 参考双足骨架 20 关节表单一数据源（原三处重复） |
 | `YsmMaidMeshSupport` | 女仆 YSM 模型网格选择桥（`EntityMaid.isYsmModel()` → 转换后的 YSM 网格；仅 EFTLM 安装时生效） |
 
 ### 运行时脚本系统 (`com.ysmef.compat.model.runtime`)
@@ -95,6 +100,7 @@
 | `YsmBoneSkinShader` | 皮肤着色器（桌面 `bone_skin.vsh/fsh` GL 4.3 / Android `bone_skin_es.vsh/fsh` GLES 310 自动选择）：`boneMat = joint×part` 与 EF 计算着色器逐项一致；复刻 MC 光照/雾/overlay/光照贴图语义；半透明纹理双 Pass |
 | `YsmGpuCapability` | GL 能力探测（桌面 SSBO/420pack/显式属性位置/2_10_10_10，**Android OpenGL ES 3.1**），失败自动回退 |
 | `YsmGpuRenderEnable` | **YSM 分支检测 + GPU 开关联动**（见下节） |
+| `YsmIrisComputePath` / `YsmIrisMesh` | 光影包下的优化计算路径：关节-only 上传、部件段变更门控、缓存 uniform/顶点格式；按网格动态大小 SSBO，渲染超出 EF MAX_JOINTS 的模型 |
 
 ### CPU 渲染 (`com.ysmef.compat.cpu`)
 
@@ -129,7 +135,7 @@
 
 ### 事件与 Mixin
 
-主配置 `ysm_epicfight_compat.mixins.json`（23 个客户端 mixin）：`ModernYsm*`（3）、`OpenYsm*`（4，含配置界面）、`YsmUnobf*`（4）、混淆版 `Ysm*`（8）、`PPlayerRendererMixin`、`RenderSystemAccessorMixin`（着色器光照方向）、`SkinnedMeshCpuRenderMixin`（EF drawPosed 回退拦截 → 本模组 CPU 蒙皮路径）、`YsmExtraPlayerOverlayMixin`（战斗模式抑制纸娃娃，见配置 `disableExtraPlayerInBattleMode`）；可选配置 `ysm_epicfight_compat.eftlm.mixins.json`（TLM 女仆渲染挂钩）。
+主配置 `ysm_epicfight_compat.mixins.json`（31 个客户端 mixin）：`ModernYsm*`（3）、`OpenYsm*`（4，含配置界面）、`YsmUnobf*`（4）、混淆版 `Ysm*`（8）、`PPlayerRendererMixin`、`RenderSystemAccessorMixin`（着色器光照方向）、`SkinnedMeshCpuRenderMixin`（EF drawPosed 回退拦截 → 本模组 CPU 蒙皮路径）、`YsmExtraPlayerOverlayMixin`（战斗模式抑制纸娃娃，见配置 `disableExtraPlayerInBattleMode`）；可选配置 `ysm_epicfight_compat.eftlm.mixins.json`（TLM 女仆渲染挂钩）。
 
 ### 多人联机模型同步 (`com.ysmef.compat.network`)
 
@@ -137,7 +143,7 @@
 |---|---|
 | **通信协议** | 独立通道 `ysm_epicfight_compat:model_sync`；握手版本检查（YSM id 51/52 模式），握手完成前不交换模型数据 |
 | **模型广播包** | `S2CSetModelAndTexturePacket`（YSM id 4 模式）：entityId + modelId + textureId + disabled + UUID（客户端以 UUID 为主键注册，对重生/跨维度更稳） |
-| **服务端广播时机** | 入世界握手 → `PlayerEvent.StartTracking` 推送 → 每 20 tick 差异扫描广播 |
+| **服务端广播时机** | 入世界握手 → `PlayerEvent.StartTracking` 推送 → 每 40 tick 差异扫描广播（检测需序列化全量玩家 NBT，2 秒周期是吞吐折中） |
 | **服务端数据源** | `YsmCapabilityReader` 读 `ServerPlayer` ForgeCaps NBT（`yes_steve_model:model_id`），无 YSM 类依赖 |
 
 ---
@@ -147,7 +153,8 @@
 | 机制 | 细节 |
 |---|---|
 | **懒转换（无开机加载）** | 模型首次渲染时才转换（后台池，≤4 线程），期间回退 EF biped；命中验证缓存则免解密直接恢复 |
-| **LRU 模型缓存** | 超过 `lazyModelCacheSize`（默认 64）时淘汰最久未用模型：释放 GPU 缓冲、纹理（延迟 5 tick 释放，防同帧引用闪烁）、编译脚本与逐玩家动画器；下次使用从验证缓存瞬时恢复 |
+| **LRU 模型缓存** | 超过 `lazyModelCacheSize`（默认 64）时淘汰最久未用模型：释放 GPU 缓冲、纹理与共享网格（均延迟 5 tick 释放，防同帧引用闪烁/use-after-free）、编译脚本与逐玩家动画器；下次使用从验证缓存瞬时恢复 |
+| **模板描述符降采样** | 轮盘动画相似度描述符每 8 帧存 1 帧 + 流式加载（旧全帧格式自动迁移），描述符文件从数百 MB 降至几十 MB 级 |
 | **并发转换信号量** | `Semaphore(2)` 限制同时转换的模型数（每个转换持有解密包 + 几何数组，大模型数百 MB），控制峰值内存 |
 | **逐实体动画器清扫** | 每 15s 清除 60s 未使用的逐玩家动画器（大模型每个 ~300-400KB），玩家离开后不再残留 |
 | **运行时模型后台预编译** | 网格转换/缓存恢复后立即在后台编译 Molang 脚本（大模型 ~100ms 不再卡首帧）；渲染线程遇在途预编译先回退显示 |
@@ -178,6 +185,8 @@
 |---|---|
 | `-Dysm_ef_compat.force_cpu_render=true` | 强制跳过 EF 计算着色器、始终走本模组 CPU 蒙皮路径（在支持计算着色器的硬件上验证回退链） |
 | `-Dysm_ef_compat.disable_gpu=true` | 禁用 GPU 蒙皮路径（回退到 EF 计算着色器 / 本模组 CPU 蒙皮） |
+| `-Dysm_ef_compat.disable_iris_compute_path=true` | 禁用优化 Iris 计算路径（A/B 验证用，回退 EF 自带 Iris 路径） |
+| `-Dysm_ef_compat.diag=true` | 开启诊断日志（渲染路径跳过原因、逐帧计时） |
 
 ---
 
@@ -187,21 +196,40 @@
 ./gradlew build
 ```
 
-- 产物：`build/libs/YSM_EpicFight_Compat-1.20.1-1.7.0-all.jar`（内嵌 `zstd-jni 1.5.6-3`，jar-in-jar）
+- 产物：`build/libs/YSM_EpicFight_Compat-1.20.1-1.8.0-all.jar`（内嵌 `zstd-jni 1.5.6-3`，jar-in-jar）
 - 本机网络证书校验失败时可加 `-Dnet.minecraftforge.gradle.check.certs=false`
 - 依赖：Forge 1.20.1-47.4.16+、Epic Fight 20.14.17+（Modrinth）、YSM 2.6+（`libs/ysm-2.6.5.jar` 本地 flatDir）、zstd-jni（jarJar）；可选 TLM 1.5+ / ef_tlm 1.1+
 - 参考源码： `OpenYSM`（格式/网络协议）、`ModernYSM`（GPU 渲染/懒加载/内存优化）、`LgeacyYSM`（GeckoBuilder 约定）、`YSMParser`（C++ 加密交叉验证）、`EpicFight_TouhouLittleMaid`（补丁渲染器范例）
 
 ---
 
+## 测试
+
+单元测试（`src/test`，JUnit 5，无需 Minecraft 运行时）：
+
+```bash
+./gradlew test
+# 含真实 .ysm 解密链黄金用例：
+./gradlew test "-Dysmef.golden.ysm=C:\path\to\model.ysm"
+```
+
+- **Molang 求值器**（11）：算术/变量/三元/比较/`??`/函数/语句序列/除零 sanitize/错误回退/常量折叠
+- **CityHash 固定向量**（3）：自举向量 + 范围变体一致性（正确性由真实 .ysm 文件尾哈希端到端钉死）
+- **winefox 明文黄金用例**（4）：195 骨骼几何、49 动画、pre/post 关键帧真值（`src/test/resources/golden/winefox/`）
+- **二进制关键帧 pre/post**（3）：按序列化器磁盘布局编码，锁定 pre/post 语义修复
+- **`sanitize` 路径穿越**（5）+ **关节表**（3）
+- **真实 .ysm 解密链**（3，需 `-Dysmef.golden.ysm`）：CityHash 尾哈希校验、XChaCha20+MT19937+zstd、二进制解析
+
+---
+
 ## 已知限制
 
-1. **渲染路径回退链**：GPU 蒙皮需 GL 4.3+（Android 需 OpenGL ES 3.1）；不满足时依次回退 EF 计算着色器 → 本模组 CPU 蒙皮（桌面 GL 3.3+ / OpenGL ES 3.0+，无缺面）→ EF drawPosed（三角化已修复，渲染完整）。macOS（GL 4.1 无计算着色器）走 CPU 蒙皮
-2. **Iris/Oculus 光影包**：光影包激活时 GPU 路径与 CPU 蒙皮路径均让位 EF 计算路径（其内建 Iris 支持），避免绕过光影着色器；计算着色器不可用时由三角化已修复的 drawPosed 兜底
+1. **渲染路径回退链**：GPU 蒙皮需 GL 4.3+（Android 需 OpenGL ES 3.1，ES 路径已去除桌面专属 GL 调用，真机验证待 Android 环境）；不满足时依次回退 EF 计算着色器 → 本模组 CPU 蒙皮（桌面 GL 3.3+ / OpenGL ES 3.0+，无缺面）→ EF drawPosed（三角化已修复，渲染完整）。macOS（GL 4.1 无计算着色器）走 CPU 蒙皮
+2. **Iris/Oculus 光影包**：光影包激活时 GPU/CPU 直连路径让位 EF 计算路径，由本模组优化 Iris 路径（`YsmIrisComputePath`）接管（关节-only 上传、无 MAX_JOINTS 上限），不可用时回退 EF 自带 Iris 路径；计算着色器不可用时由三角化已修复的 drawPosed 兜底
 3. **懒转换首用延迟**：模型首次渲染若缓存未命中，后台转换期间短暂回退 EF biped（几帧）；异步纹理上传同理（纹理出现前 1-2 帧为缺失纹理）
 4. **多人联机同步要求专用服务器安装本模组**（服务端仅做 NBT 读取与广播）；未安装时回退 EF biped
 5. **远程玩家模型需本地可用**：模型包必须在 `config/yes_steve_model/{builtin,custom,auth}`；会话中途新下载的模型需 F3+T 或 `/ysm model reload` 触发重新生成
 6. **混淆目标依赖版本**：混淆构建变体的 mixin 目标为 YSM 2.6.5 特定名（官方/OpenYSM/ModernYSM 由未混淆/新签名 mixin 覆盖，无需维护）；升级 YSM 需按描述符重新定位
-7. **非 PNG/JPEG 贴图**（WebP/AVIF/BMP）不支持解码，跳过并告警
+7. **贴图格式**：PNG/JPEG 直读；WebP/AVIF 经 YSM ImageStream 反射解码（OpenYSM/ModernYSM 内置，官方 2.6.5 缺失时跳过并告警）；BMP 不支持
 8. **战斗模式默认可见性**：以冻结默认环境静态求值 parallel scale 通道决定变体可见性，个别条件化变体可能首帧可见后被运行时覆盖
 9. **缓存健壮性**：manifest 记录输出哈希，缓存恢复前逐文件校验；损坏只重转该模型；所有输出原子写
