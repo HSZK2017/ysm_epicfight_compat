@@ -380,7 +380,7 @@ public class YSMMeshLibrary {
                     JsonObject tex = texEntry.getValue().getAsJsonObject();
                     ResourceLocation rl = ResourceLocation.parse(tex.get("rl").getAsString());
                     Path cacheFile = textureCachePath(rl);
-                    if (Files.isRegularFile(cacheFile)) {
+                    if (cacheFile != null && Files.isRegularFile(cacheFile)) {
                         byte[] bytes = Files.readAllBytes(cacheFile);
                         textureBytes.put(texEntry.getKey(), bytes);
                         int format = tex.has("fmt") ? tex.get("fmt").getAsInt() : 0;
@@ -698,7 +698,7 @@ public class YSMMeshLibrary {
                         return false;
                     }
                     Path cacheFile = textureCachePath(ResourceLocation.parse(tex.get("rl").getAsString()));
-                    if (!hashMatches(cacheFile, tex.get("size").getAsLong(), tex.get("hash").getAsString())) {
+                    if (cacheFile == null || !hashMatches(cacheFile, tex.get("size").getAsLong(), tex.get("hash").getAsString())) {
                         return false;
                     }
                 }
@@ -1085,12 +1085,17 @@ public class YSMMeshLibrary {
     }
 
     private static Path textureCachePath(ResourceLocation rl) {
-        return TEXTURE_CACHE_DIR.resolve(rl.getNamespace()).resolve(rl.getPath());
+        return guardedResolve(TEXTURE_CACHE_DIR, TEXTURE_CACHE_DIR.resolve(rl.getNamespace()).resolve(rl.getPath()));
     }
 
     private static void writeTextureCache(ResourceLocation rl, byte[] data) {
         try {
             Path cacheFile = textureCachePath(rl);
+            if (cacheFile == null) {
+                YSMEpicFightCompat.LOGGER.warn(
+                        "YSM-EF Compat: refused to write texture cache outside the cache root for {}", rl);
+                return;
+            }
             EFMeshJsonWriter.writeFileAtomic(cacheFile, data);
         } catch (IOException e) {
             YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to cache texture bytes for {}", rl);
@@ -1113,6 +1118,13 @@ public class YSMMeshLibrary {
     private static void writePackTexture(ResourceLocation rl, byte[] data, int[] info, boolean forceRewrite) {
         try {
             Path file = PACK_ROOT.resolve("assets").resolve(rl.getNamespace()).resolve(rl.getPath());
+            Path guarded = guardedResolve(PACK_ROOT, file);
+            if (guarded == null) {
+                YSMEpicFightCompat.LOGGER.warn(
+                        "YSM-EF Compat: refused to write pack texture outside the pack root for {}", rl);
+                return;
+            }
+            file = guarded;
             if (Files.isRegularFile(file) && Files.size(file) > 0 && !forceRewrite) {
                 return;
             }
@@ -1254,6 +1266,14 @@ public class YSMMeshLibrary {
         }
     }
 
+    /**
+     * Path-traversal defense: model ids are relative paths ("group/model") and
+     * texture names may contain dots, so '.' and '/' are kept - but any ".." or
+     * lone "." segment is rewritten to '_'. ResourceLocation validation does
+     * NOT block ".." and Files.resolve resolves it for real, so without this an
+     * untrusted .ysm model package could write/read anywhere under the game
+     * directory through the generated pack / cache paths.
+     */
     private static String sanitize(String value) {
         StringBuilder sb = new StringBuilder();
         boolean stripped = false;
@@ -1268,7 +1288,37 @@ public class YSMMeshLibrary {
         if (stripped) {
             sb.append('_').append(Integer.toHexString(value.hashCode()));
         }
+        // Collapse empty segments (leading/doubled slashes, i.e. no
+        // absolute-path form) and neutralize traversal segments.
+        String[] segments = sb.toString().split("/");
+        sb.setLength(0);
+        for (String segment : segments) {
+            if (segment.isEmpty()) {
+                continue;
+            }
+            if (segment.equals("..") || segment.equals(".")) {
+                sb.append('_');
+                stripped = true;
+            } else {
+                sb.append(segment);
+            }
+            sb.append('/');
+        }
+        if (sb.length() > 0) {
+            sb.setLength(sb.length() - 1);
+        }
         return sb.toString();
+    }
+
+    /**
+     * Return {@code candidate} normalized only when it stays inside
+     * {@code root}; null otherwise. Defense in depth for the file sites fed by
+     * resource locations (sanitize() already blocks traversal segments; this
+     * catches any future caller that forgets).
+     */
+    private static Path guardedResolve(Path root, Path candidate) {
+        Path normalized = candidate.normalize();
+        return normalized.startsWith(root.normalize()) ? normalized : null;
     }
 
     /**

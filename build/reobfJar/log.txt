@@ -139,8 +139,8 @@ Adding Libraries to Inheritance
 Reading Input: E:\program\JAVA\epic mod suitable\ysm_epicfight_compat\build\libs\YSM_EpicFight_Compat-1.20.1-1.7.0.jar
 Adding input to inheritance map
 Processing entries
-Conflicting propagated mapping for com/ysmef/compat/gui/YsmGpuRenderCheckbox/onPress()V from net/minecraft/client/gui/components/Checkbox/onPress()V: onPress -> m_5691_
 Conflicting propagated mapping for net/minecraft/world/entity/LivingEntity/lambda$addAdditionalSaveData$3(Lnet/minecraft/nbt/CompoundTag;Lnet/minecraft/nbt/Tag;)V from net/minecraft/world/entity/player/Player/lambda$addAdditionalSaveData$3(Lnet/minecraft/nbt/CompoundTag;Lnet/minecraft/nbt/Tag;)V: lambda$addAdditionalSaveData$3 -> m_219754_
+Conflicting propagated mapping for com/ysmef/compat/gui/YsmGpuRenderCheckbox/onPress()V from net/minecraft/client/gui/components/Checkbox/onPress()V: onPress -> m_5691_
 Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/entity/passive/EntityMaid/getHurtSound(Lnet/minecraft/world/damagesource/DamageSource;)Lnet/minecraft/sounds/SoundEvent; from net/minecraft/world/entity/LivingEntity/getHurtSound(Lnet/minecraft/world/damagesource/DamageSource;)Lnet/minecraft/sounds/SoundEvent;: getHurtSound -> m_7975_
 Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/entity/passive/EntityMaid/getBreedOffspring(Lnet/minecraft/server/level/ServerLevel;Lnet/minecraft/world/entity/AgeableMob;)Lnet/minecraft/world/entity/AgeableMob; from net/minecraft/world/entity/AgeableMob/getBreedOffspring(Lnet/minecraft/server/level/ServerLevel;Lnet/minecraft/world/entity/AgeableMob;)Lnet/minecraft/world/entity/AgeableMob;: getBreedOffspring -> m_142606_
 Conflicting propagated mapping for com/github/tartaricacid/touhoulittlemaid/entity/passive/EntityMaid/getTarget()Lnet/minecraft/world/entity/LivingEntity; from net/minecraft/world/entity/Mob/getTarget()Lnet/minecraft/world/entity/LivingEntity;: getTarget -> m_5448_

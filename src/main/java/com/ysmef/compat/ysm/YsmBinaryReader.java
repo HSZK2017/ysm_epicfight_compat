@@ -731,10 +731,20 @@ public class YsmBinaryReader {
             com.ysmef.compat.ysm.script.ScriptAnim.Key key = new com.ysmef.compat.ysm.script.ScriptAnim.Key();
             key.time = r.readFloat() / 20.0f;
             key.lerp = r.readVarInt();
-            key.post = readScriptValue(r);
+            // Disk order is (firstTriple, hasPreData, [secondTriple]) - the
+            // serializer writes preData FIRST when the keyframe has one (see
+            // YSMBinarySerializer#writeChannel: pre, flag=1, post) and the
+            // reference deserializer assigns firstData -> preData / secondData ->
+            // postData (YSMBinaryDeserializer#parseChannel). Swapping them made
+            // every keyframe with pre data evaluate with inverted pre/post
+            // semantics (silent animation corruption on binary packages).
+            com.ysmef.compat.ysm.script.ScriptAnim.Value first = readScriptValue(r);
             boolean hasPreData = r.readVarInt() > 0;
             if (hasPreData) {
-                key.pre = readScriptValue(r);
+                key.pre = first;
+                key.post = readScriptValue(r);
+            } else {
+                key.post = first;
             }
             if (key.post != null) {
                 channel.keys.add(key);

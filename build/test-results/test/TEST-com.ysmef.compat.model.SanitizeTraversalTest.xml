@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.ysmef.compat.model.SanitizeTraversalTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-08-24T02:57:44" hostname="DESKTOP-ULLPHO2" time="0.037">
+  <properties/>
+  <testcase name="traversalSegmentsAreNeutralized()" classname="com.ysmef.compat.model.SanitizeTraversalTest" time="0.024"/>
+  <testcase name="legitimateNamesArePreserved()" classname="com.ysmef.compat.model.SanitizeTraversalTest" time="0.001"/>
+  <testcase name="absolutePathFormIsRemoved()" classname="com.ysmef.compat.model.SanitizeTraversalTest" time="0.001"/>
+  <testcase name="windowsSeparatorsAreStripped()" classname="com.ysmef.compat.model.SanitizeTraversalTest" time="0.0"/>
+  <testcase name="hostileNamesStillResolveInsideRoot()" classname="com.ysmef.compat.model.SanitizeTraversalTest" time="0.008"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

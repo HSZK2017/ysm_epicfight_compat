@@ -105,6 +105,18 @@ dependencies {
     // Zstandard decompression for YSM .ysm binary model packages (nested via Jar-in-Jar)
     implementation "com.github.luben:zstd-jni:1.5.6-3"
     jarJar "com.github.luben:zstd-jni:[1.5.6-3,1.5.6-3]"
+
+    // Golden-case unit tests (pure-Java parsers/crypto/sanitize, no Minecraft runtime needed)
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test {
+    useJUnitPlatform()
+    // The end-to-end .ysm decryption golden test reads a real model package from
+    // the local YSM folder; it is skipped unless the path is given explicitly:
+    //   gradlew test -Dysmef.golden.ysm="C:\...\config\yes_steve_model\custom\xxx.ysm"
+    systemProperty 'ysmef.golden.ysm', System.getProperty('ysmef.golden.ysm', '')
 }
 
 jar.finalizedBy('reobfJar')

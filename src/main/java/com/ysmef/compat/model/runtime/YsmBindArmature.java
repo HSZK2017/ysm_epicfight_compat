@@ -299,6 +299,18 @@ public final class YsmBindArmature {
         return built;
     }
 
+    /**
+     * The already-built re-bound armature for a model (its CURRENT pose
+     * matrices reflect the latest combat animation, updated by YSMMesh#draw),
+     * or null when the model's mesh has not been drawn yet. Used by the
+     * weapon-coordinate correction to position held weapons with the MODEL's
+     * proportions instead of the entity's biped armature.
+     */
+    public static HumanoidArmature getBuiltArmature(String modelId) {
+        Entry entry = BY_MODEL.get(modelId);
+        return entry == null ? null : entry.armature;
+    }
+
     /** Forget every re-bound armature and captured pose (model reload paths). */
     public static void invalidateAll() {
         BY_MODEL.clear();
@@ -412,8 +424,12 @@ public final class YsmBindArmature {
         putPivot(pivots, JOINT_SHOULDER_L, shoulderL);
         putPivot(pivots, JOINT_ELBOW_R, elbowR);
         putPivot(pivots, JOINT_ELBOW_L, elbowL);
-        putPivot(pivots, JOINT_TOOL_R, wristR != null ? wristR : elbowR);
-        putPivot(pivots, JOINT_TOOL_L, wristL != null ? wristL : elbowL);
+        // The Tool joint is where held weapons attach: anchor it at the model's
+        // geometric fist (the hand's far end). A bare wrist/elbow fallback
+        // leaves the weapon floating above the model's actual hand for models
+        // without a hand-named bone.
+        putPivot(pivots, JOINT_TOOL_R, fistR != null ? fistR : (wristR != null ? wristR : elbowR));
+        putPivot(pivots, JOINT_TOOL_L, fistL != null ? fistL : (wristL != null ? wristL : elbowL));
 
         if (BIND_PIVOT_LOG_LOGGED.add(modelId)) {
             YSMEpicFightCompat.LOGGER.info(
@@ -549,6 +565,13 @@ public final class YsmBindArmature {
             if (PIVOT_EXCLUDED_BONE_NAMES.contains(normalize(bone.name))) {
                 continue;
             }
+            // Held-item bones (swords, spoons, phones, ...) resolve to the Hand
+            // joint but extend far past the fist; they must not pollute the
+            // elbow/fist computation or the weapon ends up anchored to the
+            // held item instead of the hand.
+            if (isWeaponBone(normalize(bone.name))) {
+                continue;
+            }
             List<Vector3f> boneList = byBone.computeIfAbsent(boneIdx, k -> new ArrayList<>());
             Map<Integer, List<Vector3f>> target = bone.mapped ? mappedByJoint : unmappedByJoint;
             List<Vector3f> list = target.computeIfAbsent(bone.joint, k -> new ArrayList<>());
@@ -636,7 +659,10 @@ public final class YsmBindArmature {
 
     /** Weapon-ish name fragments excluded from the fist pick (a held item is not the fist itself). */
     private static final String[] WEAPON_NAME_PARTS = {
-            "sword", "gun", "weapon", "blade", "knife", "axe", "bow", "tool", "item", "besom", "key", "wand", "staff", "spear", "dagger", "katana", "shield"
+            "sword", "gun", "weapon", "blade", "knife", "axe", "bow", "tool", "item", "besom", "key", "wand",
+            "staff", "spear", "dagger", "katana", "shield", "scythe", "sickle", "hammer", "pole", "stick",
+            "spoon", "fork", "cup", "coaster", "phone", "computer", "book", "grimoire", "lantern", "circle",
+            "arrow", "quiver", "mic"
     };
 
     /**
@@ -657,31 +683,49 @@ public final class YsmBindArmature {
     private static final String[] HAND_NAME_PARTS = {"hand", "shou", "zhi", "finger", "fist", "palm"};
 
     /**
-     * The geometric fist of one hand joint: the centroid of the joint's most
-     * distal hand/finger bone (hand-named bones preferred - they are the fist
-     * itself; otherwise the body bone farthest from the elbow), weapon bones
-     * excluded. Preferring hand-named bones keeps long sleeves / cuffs / cups
-     * from being mistaken for the fist (e.g. the Yamashiro shipgirl's sleeve).
-     * Returns null when no usable body bone exists.
+     * The geometric fist of one hand joint: the centroid of the joint's
+     * hand/finger bones (the hand region's center - where a held weapon grips),
+     * weapon/held-item bones excluded. When the model has no hand-named bones,
+     * falls back to the centroid of the non-weapon geometry in the far half from
+     * the elbow. Returns null when no usable body geometry exists.
      */
     private static Vector3f geometricFist(Map<Integer, List<Vector3f>> byBone, YSMRuntimeModel runtime, int joint, Vector3f elbow) {
         if (elbow == null) {
             return null;
         }
-        // Pass 1: hand/finger-named body bones (the actual fist), farthest from the elbow.
-        Vector3f best = farthestBodyBone(byBone, runtime, joint, elbow, true);
-        if (best != null) {
-            return best;
+        // Pass 1: the center of the hand region (all hand/finger-named bones combined).
+        Vector3f handCenter = handRegionCentroid(byBone, runtime, joint, elbow);
+        if (handCenter != null) {
+            return handCenter;
         }
-        // Pass 2: any non-weapon body bone farthest from the elbow.
-        return farthestBodyBone(byBone, runtime, joint, elbow, false);
+        // Pass 2: the center of the far half of the joint's non-weapon geometry.
+        return farHalfCentroid(byBone, runtime, joint, elbow);
     }
 
-    /** The centroid of the Hand-joint body bone farthest from the elbow. handNamedOnly restricts to hand/finger-named bones. */
-    private static Vector3f farthestBodyBone(Map<Integer, List<Vector3f>> byBone, YSMRuntimeModel runtime, int joint,
-                                             Vector3f elbow, boolean handNamedOnly) {
-        Vector3f best = null;
-        float bestDist = -1.0f;
+    /** The combined centroid of the joint's hand/finger-named bones (the hand region's center). */
+    private static Vector3f handRegionCentroid(Map<Integer, List<Vector3f>> byBone, YSMRuntimeModel runtime, int joint, Vector3f elbow) {
+        Vector3f acc = new Vector3f();
+        int count = 0;
+        for (Map.Entry<Integer, List<Vector3f>> entry : byBone.entrySet()) {
+            if (runtime.bones[entry.getKey()].joint != joint) {
+                continue;
+            }
+            String normalized = normalize(runtime.bones[entry.getKey()].name);
+            if (isWeaponBone(normalized) || !isHandBone(normalized)) {
+                continue;
+            }
+            for (Vector3f v : entry.getValue()) {
+                acc.add(v);
+                count++;
+            }
+        }
+        return count == 0 ? null : acc.div(count);
+    }
+
+    /** The centroid of the joint's non-weapon geometry in the far half from the elbow (the hand region). */
+    private static Vector3f farHalfCentroid(Map<Integer, List<Vector3f>> byBone, YSMRuntimeModel runtime, int joint, Vector3f elbow) {
+        float maxDist = 0.0f;
+        Map<Integer, Float> distByBone = new HashMap<>();
         for (Map.Entry<Integer, List<Vector3f>> entry : byBone.entrySet()) {
             if (runtime.bones[entry.getKey()].joint != joint) {
                 continue;
@@ -690,20 +734,38 @@ public final class YsmBindArmature {
             if (isWeaponBone(normalized)) {
                 continue;
             }
-            if (handNamedOnly && !isHandBone(normalized)) {
-                continue;
-            }
             Vector3f centroid = centroidOf(entry.getValue());
             if (centroid == null) {
                 continue;
             }
             float dist = centroid.distance(elbow);
-            if (dist > bestDist) {
-                bestDist = dist;
-                best = centroid;
+            distByBone.put(entry.getKey(), dist);
+            maxDist = Math.max(maxDist, dist);
+        }
+        if (maxDist <= 0.0f) {
+            return null;
+        }
+        // The far half: bones whose centroid is beyond half the max distance from the elbow.
+        Vector3f acc = new Vector3f();
+        int count = 0;
+        for (Map.Entry<Integer, List<Vector3f>> entry : byBone.entrySet()) {
+            if (runtime.bones[entry.getKey()].joint != joint) {
+                continue;
+            }
+            String normalized = normalize(runtime.bones[entry.getKey()].name);
+            if (isWeaponBone(normalized)) {
+                continue;
+            }
+            Float dist = distByBone.get(entry.getKey());
+            if (dist == null || dist < maxDist * 0.5f) {
+                continue;
+            }
+            for (Vector3f v : entry.getValue()) {
+                acc.add(v);
+                count++;
             }
         }
-        return best;
+        return count == 0 ? null : acc.div(count);
     }
 
     private static boolean isHandBone(String normalized) {
