@@ -2,24 +2,20 @@ package com.ysmef.compat.model;
 
 import org.junit.jupiter.api.Test;
 
-import java.lang.reflect.Method;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Locks the path-traversal defense of YSMMeshLibrary#sanitize (the H2 fix):
+ * Locks the path-traversal defense of TextureStore#sanitize (the H2 fix):
  * model ids are relative paths and texture names may contain dots, so '.', '/'
  * and '-' stay legal - but '..' / lone '.' segments must never survive into a
  * path that later hits Files.resolve.
  */
 public class SanitizeTraversalTest {
 
-    private static String sanitize(String value) throws Exception {
-        Method m = YSMMeshLibrary.class.getDeclaredMethod("sanitize", String.class);
-        m.setAccessible(true);
-        return (String) m.invoke(null, value);
+    private static String sanitize(String value) {
+        return TextureStore.sanitize(value);
     }
 
     @Test

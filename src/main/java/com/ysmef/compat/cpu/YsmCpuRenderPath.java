@@ -67,6 +67,56 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class YsmCpuRenderPath {
 
+    // Registered on first class load (render thread, when the path is first
+    // used): resource release goes through the MeshReleaser interface and the
+    // draw dispatch through RenderBridgeRegistry, so the model package never
+    // imports this class (the model <-> gpu/cpu package cycle is broken).
+    static {
+        com.ysmef.compat.model.YSMMeshLibrary.registerMeshReleaser(new com.ysmef.compat.model.MeshReleaser() {
+            @Override
+            public void disposeMesh(YSMMesh mesh) {
+                YsmCpuRenderPath.disposeMesh(mesh);
+            }
+
+            @Override
+            public void disposeAll() {
+                YsmCpuRenderPath.disposeAll();
+            }
+        });
+        com.ysmef.compat.model.RenderBridgeRegistry.registerCpu(new com.ysmef.compat.model.RenderBridgeRegistry.CpuSkinRender() {
+            @Override
+            public boolean isForced() {
+                return YsmCpuRenderPath.isForced();
+            }
+
+            @Override
+            public boolean tryRender(YSMMesh mesh, PoseStack poseStack, Mesh.DrawingFunction drawingFunction,
+                                     int packedLight, float r, float g, float b, float a, int overlay,
+                                     Armature armature, OpenMatrix4f[] poses) {
+                return YsmCpuRenderPath.tryRender(mesh, poseStack, drawingFunction,
+                        packedLight, r, g, b, a, overlay, armature, poses);
+            }
+
+            @Override
+            public boolean tryRenderLastResort(YSMMesh mesh, PoseStack poseStack, Mesh.DrawingFunction drawingFunction,
+                                               int packedLight, float r, float g, float b, float a, int overlay,
+                                               Armature armature, OpenMatrix4f[] poses) {
+                return YsmCpuRenderPath.tryRenderLastResort(mesh, poseStack, drawingFunction,
+                        packedLight, r, g, b, a, overlay, armature, poses);
+            }
+
+            @Override
+            public void pushCapturePass() {
+                YsmCpuRenderPath.pushCapturePass();
+            }
+
+            @Override
+            public void popCapturePass() {
+                YsmCpuRenderPath.popCapturePass();
+            }
+        });
+    }
+
     private static final float[] projScratch = new float[16];
     private static final float[] mvScratch = new float[16];
     private static final float[] ivrScratch = new float[9];

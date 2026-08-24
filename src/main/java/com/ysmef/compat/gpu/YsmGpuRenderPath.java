@@ -54,6 +54,44 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class YsmGpuRenderPath {
 
+    // Registered on first class load (render thread, when the path is first
+    // used): resource release goes through the MeshReleaser interface and the
+    // draw dispatch through RenderBridgeRegistry, so the model package never
+    // imports this class (the model <-> gpu/cpu package cycle is broken).
+    static {
+        com.ysmef.compat.model.YSMMeshLibrary.registerMeshReleaser(new com.ysmef.compat.model.MeshReleaser() {
+            @Override
+            public void disposeMesh(YSMMesh mesh) {
+                YsmGpuRenderPath.disposeMesh(mesh);
+            }
+
+            @Override
+            public void disposeAll() {
+                YsmGpuRenderPath.disposeAll();
+            }
+        });
+        com.ysmef.compat.model.RenderBridgeRegistry.registerGpu(new com.ysmef.compat.model.RenderBridgeRegistry.GpuSkinRender() {
+            @Override
+            public boolean tryRender(YSMMesh mesh, PoseStack poseStack, MultiBufferSource bufferSources,
+                                     ResourceLocation texture, int packedLight,
+                                     float r, float g, float b, float a, int overlay,
+                                     Armature armature, OpenMatrix4f[] poses) {
+                return YsmGpuRenderPath.tryRender(mesh, poseStack, bufferSources, texture,
+                        packedLight, r, g, b, a, overlay, armature, poses);
+            }
+
+            @Override
+            public boolean isGuiEntityProjection() {
+                return YsmGpuRenderPath.isGuiEntityProjection();
+            }
+
+            @Override
+            public boolean isYsmPreviewMode() {
+                return YsmGpuRenderPath.isYsmPreviewMode();
+            }
+        });
+    }
+
     private static final float[] projScratch = new float[16];
     private static final Matrix4f projMVScratch = new Matrix4f();
     private static final float[] mvScratch = new float[16];

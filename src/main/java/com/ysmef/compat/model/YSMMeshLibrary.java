@@ -3,22 +3,15 @@ package com.ysmef.compat.model;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.mojang.blaze3d.platform.NativeImage;
 import com.ysmef.compat.YSMEpicFightCompat;
 import com.ysmef.compat.config.YSMCompatConfig;
 import com.ysmef.compat.model.runtime.YSMRuntimeModel;
 import com.ysmef.compat.ysm.YsmModelPackage;
 import com.mojang.blaze3d.systems.RenderSystem;
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.resources.ResourceLocation;
 import yesman.epicfight.api.client.model.Meshes;
 
-import java.awt.image.BufferedImage;
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -26,7 +19,6 @@ import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
-import javax.imageio.ImageIO;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -70,12 +62,10 @@ import java.util.concurrent.Future;
 public class YSMMeshLibrary {
 
     private static final Path CONFIG_ROOT = Paths.get("config", "ysm_epicfight_compat");
-    private static final Path PACK_ROOT = CONFIG_ROOT.resolve("resourcepack");
-    private static final Path MESH_DIR = PACK_ROOT.resolve("assets").resolve(YSMEpicFightCompat.MODID).resolve("animmodels").resolve("entity");
-    private static final Path RUNTIME_DIR = PACK_ROOT.resolve("assets").resolve(YSMEpicFightCompat.MODID).resolve("ysm_runtime").resolve("entity");
-    private static final Path PACK_META = PACK_ROOT.resolve("pack.mcmeta");
-    private static final Path MANIFEST = CONFIG_ROOT.resolve("manifest.json");
-    private static final Path TEXTURE_CACHE_DIR = CONFIG_ROOT.resolve("texturecache");
+    /** Mesh JSON output dir inside the generated pack (pack root lives in TextureStore). */
+    private static final Path MESH_DIR = TextureStore.PACK_ROOT.resolve("assets").resolve(YSMEpicFightCompat.MODID).resolve("animmodels").resolve("entity");
+    /** Runtime script JSON output dir inside the generated pack. */
+    private static final Path RUNTIME_DIR = TextureStore.PACK_ROOT.resolve("assets").resolve(YSMEpicFightCompat.MODID).resolve("ysm_runtime").resolve("entity");
 
     /**
      * Bumped whenever the conversion algorithm or the manifest format changes
@@ -107,68 +97,12 @@ public class YSMMeshLibrary {
      *    so default-form bones are marked directly-mapped in the runtime JSON
      *    and drive their joint (previously unmapped decorations).
      */
-    private static final int GENERATOR_VERSION = 11;
-
-    private static final String MESH_NAMESPACE = YSMEpicFightCompat.MODID;
-
     /**
      * modelId -> registered mesh accessor. Read lock-free from the render
      * thread (findMesh) while worker threads register conversion results, so
      * it must be concurrent.
      */
     private static final Map<String, Meshes.MeshAccessor<YSMMesh>> MESHES = new ConcurrentHashMap<>();
-
-    /** textureRL string -> original encoded texture bytes (registered into the texture manager on demand). */
-    private static final Map<String, byte[]> TEXTURE_DATA = new ConcurrentHashMap<>();
-
-    /** textureRL string -> [width, height, format] (format: -1=raw RGBA, 2=PNG, 3=JPEG, 4=WEBP, 5=AVIF). */
-    private static final Map<String, int[]> TEXTURE_INFO = new ConcurrentHashMap<>();
-
-    /**
-     * OpenYSM/ModernYSM ship the ImageStream decoders (WebP/AVIF) inside their
-     * jar (jar-in-jar). The compat mod cannot compile against them (the libs
-     * YSM jar is obfuscated), so they are looked up reflectively at runtime.
-     * Null when a legacy fork without ImageStream is installed.
-     */
-    private static final Class<?> YSM_WEBP_DECODER_CLASS = findImageStreamDecoder("rip.ysm.imagestream.webp.WebpDecoder");
-    private static final Class<?> YSM_AVIF_DECODER_CLASS = findImageStreamDecoder("rip.ysm.imagestream.avif.AvifDecoder");
-    private static final Map<Class<?>, Method> IMAGE_STREAM_READ_METHODS = new ConcurrentHashMap<>();
-    private static final Map<Class<?>, Constructor<?>> IMAGE_STREAM_CTORS = new ConcurrentHashMap<>();
-    private static volatile boolean IMAGE_STREAM_MISSING_LOGGED = false;
-    private static volatile boolean IMAGE_STREAM_FAILED_LOGGED = false;
-
-    /**
-     * modelId + '#' + textureName -> textureRL. Kept as a lock-guarded
-     * LinkedHashMap: findTexture's fallback returns the model's first texture
-     * and relies on insertion order. Every access must hold the map's monitor -
-     * the render thread reads while worker threads register new models.
-     */
-    private static final Map<String, ResourceLocation> TEXTURE_LOCATIONS = new LinkedHashMap<>();
-
-    /** textureRL string -> true once registered in the texture manager */
-    private static final Map<String, Boolean> UPLOADED_TEXTURES = new ConcurrentHashMap<>();
-
-    /**
-     * ModernYSM-style texture pipeline (see UploadManager): image decoding runs
-     * on the background pool, and the GL uploads are drained on the render
-     * thread with a small per-frame time budget, so large textures no longer
-     * hitch the first draw. Texture releases are delayed a few ticks so a
-     * texture still referenced by the current frame is never dropped mid-frame.
-     */
-    private static final Set<String> PENDING_TEXTURE_DECODES = ConcurrentHashMap.newKeySet();
-    private static final java.util.Queue<TextureUploadTask> COMPLETED_UPLOADS = new java.util.concurrent.ConcurrentLinkedQueue<>();
-    private static final Map<String, Integer> PENDING_RELEASES = new ConcurrentHashMap<>();
-    /**
-     * Evicted shared meshes whose GL resources are released a few ticks later
-     * (see {@link #processPendingMeshReleases}): the instance may still be
-     * drawn later in the current frame by entities that selected it earlier.
-     * Same delayed-release pattern as {@link #PENDING_RELEASES}.
-     */
-    private static final Map<YSMMesh, Integer> PENDING_MESH_RELEASES = new ConcurrentHashMap<>();
-    private static final int RELEASE_DELAY_TICKS = 5;
-    private static final long TEXTURE_UPLOAD_BUDGET_NANOS = 10_000_000L;
-
-    private record TextureUploadTask(ResourceLocation location, NativeImage image, boolean translucent) {}
 
     /** Models whose lazy conversion already failed; not retried until invalidateAll. */
     private static final Set<String> FAILED_MODELS = ConcurrentHashMap.newKeySet();
@@ -232,6 +166,40 @@ public class YSMMeshLibrary {
             });
 
     /**
+     * Render-path resource releasers (GPU/CPU/Iris skinning), registered by the
+     * implementing classes' static initializers. Using the interface keeps this
+     * class (and TextureStore) free of gpu/cpu package imports - the model
+     * &lt;-&gt; gpu/cpu package cycle is broken at the resource-release edge.
+     */
+    private static final java.util.List<MeshReleaser> RELEASERS = new ArrayList<>();
+
+    public static synchronized void registerMeshReleaser(MeshReleaser releaser) {
+        if (!RELEASERS.contains(releaser)) {
+            RELEASERS.add(releaser);
+        }
+    }
+
+    /** Release one mesh across every registered render path (render thread). */
+    static void releaseMeshAcrossPaths(YSMMesh mesh) {
+        for (MeshReleaser releaser : RELEASERS) {
+            try {
+                releaser.disposeMesh(mesh);
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    /** Release every mesh resource across every registered render path (render thread). */
+    private static void disposeAllPaths() {
+        for (MeshReleaser releaser : RELEASERS) {
+            try {
+                releaser.disposeAll();
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    /**
      * ModernYSM-style peak-memory control (preparedModelSlots): at most this
      * many model conversions run at once - each conversion holds the decrypted
      * package plus the parsed geometry/mesh arrays in memory, so converting
@@ -253,7 +221,7 @@ public class YSMMeshLibrary {
      * The resource pack root that should be registered as a client resource pack.
      */
     public static Path getPackRoot() {
-        return PACK_ROOT;
+        return TextureStore.getPackRoot();
     }
 
     /**
@@ -274,10 +242,7 @@ public class YSMMeshLibrary {
      * @return the resource location the bytes were registered under
      */
     public static ResourceLocation registerTextureBytes(String relativePath, byte[] data) {
-        ResourceLocation rl = ResourceLocation.fromNamespaceAndPath(MESH_NAMESPACE,
-                "textures/" + relativePath + ".png");
-        TEXTURE_DATA.put(rl.toString(), data);
-        return rl;
+        return TextureStore.registerTextureBytes(relativePath, data);
     }
 
     /**
@@ -295,7 +260,7 @@ public class YSMMeshLibrary {
 
     /** modelId -> meshId (sanitized), for runtime lookup. */
     public static String meshIdOf(String modelId) {
-        return sanitize(modelId);
+        return TextureStore.sanitize(modelId);
     }
 
     /**
@@ -305,7 +270,7 @@ public class YSMMeshLibrary {
      * per-model, the captured texture id is "...:textures/<model>/<tex>.png").
      */
     public static String textureIdPrefixOf(String modelId) {
-        return "textures/" + sanitize(modelId) + "/";
+        return TextureStore.textureIdPrefixOf(modelId);
     }
 
     /**
@@ -313,20 +278,10 @@ public class YSMMeshLibrary {
      * repository is built).
      */
     public static void preparePackFolder() {
+        TextureStore.preparePackFolder();
         try {
             Files.createDirectories(MESH_DIR);
             Files.createDirectories(RUNTIME_DIR);
-            Files.createDirectories(TEXTURE_CACHE_DIR);
-            if (!Files.exists(PACK_META)) {
-                Files.writeString(PACK_META, """
-                        {
-                            "pack": {
-                                "description": "YSM-EF Compat generated meshes",
-                                "pack_format": 15
-                            }
-                        }
-                        """, StandardCharsets.UTF_8);
-            }
         } catch (IOException e) {
             YSMEpicFightCompat.LOGGER.error("YSM-EF Compat: failed to prepare generated pack folder", e);
         }
@@ -369,7 +324,7 @@ public class YSMMeshLibrary {
             return false;
         }
 
-        JsonObject modelEntry = manifestEntry(modelId);
+        JsonObject modelEntry = ManifestStore.entry(modelId);
         if (modelEntry != null) {
             // Verify + restore from the on-disk cache on the background pool:
             // hashing the mesh/runtime/texture outputs of a large model on the
@@ -415,18 +370,17 @@ public class YSMMeshLibrary {
                 try {
                     JsonObject tex = texEntry.getValue().getAsJsonObject();
                     ResourceLocation rl = ResourceLocation.parse(tex.get("rl").getAsString());
-                    Path cacheFile = textureCachePath(rl);
-                    if (cacheFile != null && Files.isRegularFile(cacheFile)) {
-                        byte[] bytes = Files.readAllBytes(cacheFile);
+                    byte[] bytes = TextureStore.readTextureCache(rl);
+                    if (bytes != null) {
                         textureBytes.put(texEntry.getKey(), bytes);
                         int format = tex.has("fmt") ? tex.get("fmt").getAsInt() : 0;
                         // WebP/AVIF pack textures written by older builds may be
                         // blank transparent PNGs (decoded as raw RGBA), so they
                         // are rewritten on every cache restore.
-                        writePackTexture(rl, bytes, format != 0
+                        TextureStore.writePackTexture(rl, bytes, format != 0
                                 ? new int[]{tex.has("w") ? tex.get("w").getAsInt() : 0,
                                 tex.has("h") ? tex.get("h").getAsInt() : 0, format} : null,
-                                format == 4 || format == 5 || isRiffWebp(bytes) || isFtypAvif(bytes));
+                                format == 4 || format == 5 || TextureStore.isRiffWebp(bytes) || TextureStore.isFtypAvif(bytes));
                     }
                 } catch (Exception ignored) {
                     // a missing/broken cached texture makes the registration skip
@@ -482,7 +436,7 @@ public class YSMMeshLibrary {
             }
             try {
                 Meshes.MeshAccessor<YSMMesh> accessor = Meshes.MeshAccessor.create(
-                        MESH_NAMESPACE, "entity/" + registration.meshId(),
+                        YSMEpicFightCompat.MODID, "entity/" + registration.meshId(),
                         (loader) -> loader.loadSkinnedMesh(YSMMesh::new));
                 MESHES.put(registration.modelId(), accessor);
                 YSMRuntimeModel.invalidate(registration.modelId());
@@ -643,30 +597,10 @@ public class YSMMeshLibrary {
                 // capture passes select meshes before the main pass draws
                 // them). Destroying it immediately would use freed GL objects.
                 // The next accessor.get() rebuilds a fresh instance meanwhile.
-                PENDING_MESH_RELEASES.put(mesh, RELEASE_DELAY_TICKS);
+                TextureStore.scheduleMeshRelease(mesh);
             }
         }
-        java.util.List<ResourceLocation> toRelease = new java.util.ArrayList<>();
-        synchronized (TEXTURE_LOCATIONS) {
-            java.util.Iterator<Map.Entry<String, ResourceLocation>> it = TEXTURE_LOCATIONS.entrySet().iterator();
-            while (it.hasNext()) {
-                Map.Entry<String, ResourceLocation> entry = it.next();
-                if (entry.getKey().startsWith(modelId + "#")) {
-                    toRelease.add(entry.getValue());
-                    it.remove();
-                }
-            }
-        }
-        for (ResourceLocation rl : toRelease) {
-            String key = rl.toString();
-            TEXTURE_DATA.remove(key);
-            TEXTURE_INFO.remove(key);
-            UPLOADED_TEXTURES.remove(key);
-            TEXTURE_TRANSLUCENT.remove(key);
-            // delayed release: the texture may still be referenced by the current
-            // frame's draws; release it a few ticks later (see processPendingTextureReleases)
-            PENDING_RELEASES.put(key, RELEASE_DELAY_TICKS);
-        }
+        java.util.List<ResourceLocation> toRelease = TextureStore.releaseTexturesOfModel(modelId);
         YSMRuntimeModel.invalidate(modelId);
         YSMEpicFightCompat.LOGGER.debug("YSM-EF Compat: evicted model '{}' ({} textures released)", modelId, toRelease.size());
         return true;
@@ -703,57 +637,6 @@ public class YSMMeshLibrary {
     }
 
     /**
-     * In-memory manifest mirror (modelId -> entry). Written by workers, read by
-     * ensureModel on the render thread - the old code re-read and re-parsed
-     * the whole manifest file on every lookup, and every conversion rewrote
-     * the whole file under the class lock (O(N^2) file I/O on the render
-     * thread's critical path). Persisted by batched background writes
-     * (scheduleManifestWrite), so the render thread never touches the file.
-     */
-    private static final Map<String, JsonObject> MANIFEST_MODELS = new ConcurrentHashMap<>();
-
-    /** Incremented on every entry change; the background writer re-runs while the version moved. */
-    private static final java.util.concurrent.atomic.AtomicInteger MANIFEST_VERSION = new java.util.concurrent.atomic.AtomicInteger();
-
-    private static final Object MANIFEST_WRITE_LOCK = new Object();
-    private static volatile boolean manifestWriteInFlight = false;
-
-    /**
-     * The manifest entry of one model, or null when the manifest is missing,
-     * predates the current generator version, or has no entry for the model.
-     * Served from the in-memory mirror (single disk read + parse on first
-     * access); callers get a copy, so a worker's sig-refresh mutation of its
-     * own entry can never race a render-thread read.
-     */
-    private static JsonObject manifestEntry(String modelId) {
-        JsonObject cached = MANIFEST_MODELS.get(modelId);
-        if (cached != null) {
-            return cached.deepCopy();
-        }
-        try {
-            if (!Files.isRegularFile(MANIFEST)) {
-                return null;
-            }
-            JsonObject manifest = JsonParser.parseString(Files.readString(MANIFEST, StandardCharsets.UTF_8)).getAsJsonObject();
-            if (!manifest.has("generator") || manifest.get("generator").getAsInt() != GENERATOR_VERSION
-                    || !manifest.has("models") || !manifest.get("models").isJsonObject()) {
-                return null;
-            }
-            JsonObject modelEntry = manifest.getAsJsonObject("models").getAsJsonObject(modelId);
-            if (modelEntry == null
-                    || !modelEntry.has("sig") || !modelEntry.has("csig")
-                    || !modelEntry.has("mesh") || !modelEntry.has("mhash") || !modelEntry.has("msize")
-                    || !modelEntry.has("rhash") || !modelEntry.has("rsize")) {
-                return null;
-            }
-            MANIFEST_MODELS.put(modelId, modelEntry);
-            return modelEntry.deepCopy();
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    /**
      * Cheap metadata fingerprint check for one model; a mismatch falls back to
      * the content fingerprint (mirrors the old whole-set gate). A sig-only
      * refresh (YSM re-writes model files without content changes) updates the
@@ -769,7 +652,7 @@ public class YSMMeshLibrary {
                 long refreshed = YsmModelPackage.fingerprint(modelId);
                 if (refreshed != -1L) {
                     modelEntry.addProperty("sig", refreshed);
-                    updateManifestModel(modelId, modelEntry);
+                    ManifestStore.update(modelId, modelEntry);
                 }
                 return true;
             }
@@ -800,8 +683,8 @@ public class YSMMeshLibrary {
                     if (!tex.has("rl") || !tex.has("hash") || !tex.has("size")) {
                         return false;
                     }
-                    Path cacheFile = textureCachePath(ResourceLocation.parse(tex.get("rl").getAsString()));
-                    if (cacheFile == null || !hashMatches(cacheFile, tex.get("size").getAsLong(), tex.get("hash").getAsString())) {
+                    if (!TextureStore.verifyTextureCache(ResourceLocation.parse(tex.get("rl").getAsString()),
+                            tex.get("size").getAsLong(), tex.get("hash").getAsString())) {
                         return false;
                     }
                 }
@@ -828,19 +711,12 @@ public class YSMMeshLibrary {
                 for (Map.Entry<String, JsonElement> texEntry : modelEntry.getAsJsonObject("textures").entrySet()) {
                     JsonObject tex = texEntry.getValue().getAsJsonObject();
                     ResourceLocation rl = ResourceLocation.parse(tex.get("rl").getAsString());
-                    synchronized (TEXTURE_LOCATIONS) {
-                        TEXTURE_LOCATIONS.put(modelId + "#" + texEntry.getKey(), rl);
-                    }
                     int format = tex.has("fmt") ? tex.get("fmt").getAsInt() : 0;
-                    if (format != 0) {
-                        TEXTURE_INFO.put(rl.toString(), new int[]{
-                                tex.has("w") ? tex.get("w").getAsInt() : 0,
-                                tex.has("h") ? tex.get("h").getAsInt() : 0,
-                                format});
-                    }
                     byte[] bytes = textureBytes.get(texEntry.getKey());
                     if (bytes != null) {
-                        TEXTURE_DATA.put(rl.toString(), bytes);
+                        TextureStore.registerTexture(modelId, texEntry.getKey(), rl, bytes, format != 0
+                                ? new int[]{tex.has("w") ? tex.get("w").getAsInt() : 0,
+                                tex.has("h") ? tex.get("h").getAsInt() : 0, format} : null);
                     }
                 }
             }
@@ -874,13 +750,7 @@ public class YSMMeshLibrary {
      */
     private static void registerModelResult(ModelResult result) {
         for (TextureEntry tex : result.textures()) {
-            synchronized (TEXTURE_LOCATIONS) {
-                TEXTURE_LOCATIONS.put(result.modelId() + "#" + tex.textureName(), tex.location());
-            }
-            TEXTURE_DATA.put(tex.location().toString(), tex.data());
-            if (tex.info() != null) {
-                TEXTURE_INFO.put(tex.location().toString(), tex.info());
-            }
+            TextureStore.registerTexture(result.modelId(), tex.textureName(), tex.location(), tex.data(), tex.info());
         }
 
         // The accessor is created on the render thread (see
@@ -890,8 +760,7 @@ public class YSMMeshLibrary {
                 result.modelId(), result.meshId(), LOAD_GENERATION.get()));
 
         JsonObject modelEntry = new JsonObject();
-        modelEntry.addProperty("sig", result.fingerprint());
-        modelEntry.addProperty("csig", result.contentFingerprint());
+        modelEntry.addProperty("sig", result.fingerprint());        modelEntry.addProperty("csig", result.contentFingerprint());
         modelEntry.addProperty("mesh", result.meshId());
         modelEntry.addProperty("mhash", result.meshHash());
         modelEntry.addProperty("msize", result.meshSize());
@@ -911,62 +780,9 @@ public class YSMMeshLibrary {
             texturesObj.add(tex.textureName(), texObj);
         }
         modelEntry.add("textures", texturesObj);
-        updateManifestModel(result.modelId(), modelEntry);
-
+        ManifestStore.update(result.modelId(), modelEntry);
         if (YSMEpicFightCompat.LOGGER.isDebugEnabled()) {
             YSMEpicFightCompat.LOGGER.debug("YSM-EF Compat: converted model '{}' -> {} quads", result.modelId(), result.quads());
-        }
-    }
-
-    /**
-     * Merge one model's entry into the manifest mirror and schedule a batched
-     * background persist. Lock-free: the old implementation re-read and
-     * rewrote the WHOLE manifest file under the class lock for every model
-     * conversion (O(N^2) I/O that blocked the render thread's ensureModel).
-     */
-    private static void updateManifestModel(String modelId, JsonObject modelEntry) {
-        MANIFEST_MODELS.put(modelId, modelEntry);
-        MANIFEST_VERSION.incrementAndGet();
-        scheduleManifestWrite();
-    }
-
-    /**
-     * Persist the manifest mirror in the background, coalescing concurrent
-     * updates: one writer serializes snapshots and re-runs while entries
-     * changed during its write (see MANIFEST_VERSION). Never runs on the
-     * render thread and never holds the class lock.
-     */
-    private static void scheduleManifestWrite() {
-        if (manifestWriteInFlight) {
-            return;
-        }
-        synchronized (MANIFEST_WRITE_LOCK) {
-            if (manifestWriteInFlight) {
-                return;
-            }
-            manifestWriteInFlight = true;
-            LAZY_POOL.execute(() -> {
-                try {
-                    while (true) {
-                        int version = MANIFEST_VERSION.get();
-                        JsonObject models = new JsonObject();
-                        for (Map.Entry<String, JsonObject> entry : MANIFEST_MODELS.entrySet()) {
-                            models.add(entry.getKey(), entry.getValue().deepCopy());
-                        }
-                        writeManifest(models);
-                        if (MANIFEST_VERSION.get() == version) {
-                            break;
-                        }
-                        // Entries changed while writing: persist again (coalesced).
-                    }
-                } catch (Throwable t) {
-                    YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to write generation manifest", t);
-                } finally {
-                    synchronized (MANIFEST_WRITE_LOCK) {
-                        manifestWriteInFlight = false;
-                    }
-                }
-            });
         }
     }
 
@@ -1005,30 +821,16 @@ public class YSMMeshLibrary {
             }
         }
         MESHES.clear();
-        TEXTURE_DATA.clear();
-        TEXTURE_INFO.clear();
-        synchronized (TEXTURE_LOCATIONS) {
-            TEXTURE_LOCATIONS.clear();
-        }
-        UPLOADED_TEXTURES.clear();
-        TEXTURE_TRANSLUCENT.clear();
+        TextureStore.invalidateAll();
         FAILED_MODELS.clear();
         PENDING_MODELS.clear();
-        PENDING_TEXTURE_DECODES.clear();
-        COMPLETED_UPLOADS.clear();
-        PENDING_RELEASES.clear();
-        // Delayed-released meshes are covered by the disposeAll() calls below;
-        // drop the queue so they are not destroyed a second time on a later tick.
-        PENDING_MESH_RELEASES.clear();
         // No registration survives the invalidation, so nothing left to prewarm.
         PENDING_PREWARM.clear();
         synchronized (ACCESS_ORDER) {
             ACCESS_ORDER.clear();
         }
         LOADED_MODELS.clear();
-        com.ysmef.compat.gpu.YsmGpuRenderPath.disposeAll();
-        com.ysmef.compat.cpu.YsmCpuRenderPath.disposeAll();
-        com.ysmef.compat.gpu.YsmIrisComputePath.disposeAll();
+        disposeAllPaths();
         YSMRuntimeModel.invalidateAll();
         com.ysmef.compat.model.runtime.YsmBindArmature.invalidateAll();
         YsmExtraAnimationLibrary.invalidateAll();
@@ -1089,7 +891,7 @@ public class YSMMeshLibrary {
                 }
 
                 Meshes.MeshAccessor<YSMMesh> accessor = Meshes.MeshAccessor.create(
-                        MESH_NAMESPACE, "entity/" + result.meshId(),
+                        YSMEpicFightCompat.MODID, "entity/" + result.meshId(),
                         (loader) -> loader.loadSkinnedMesh(YSMMesh::new));
                 newMeshes.put(result.modelId(), accessor);
 
@@ -1127,27 +929,13 @@ public class YSMMeshLibrary {
 
         MESHES.clear();
         MESHES.putAll(newMeshes);
-        TEXTURE_DATA.clear();
-        TEXTURE_DATA.putAll(newTexData);
-        TEXTURE_INFO.clear();
-        TEXTURE_INFO.putAll(newTexInfo);
-        synchronized (TEXTURE_LOCATIONS) {
-            TEXTURE_LOCATIONS.clear();
-            TEXTURE_LOCATIONS.putAll(newTexLocations);
-        }
-        UPLOADED_TEXTURES.clear();
+        TextureStore.replaceAll(newTexLocations, newTexData, newTexInfo);
 
         cleanupStaleFiles(manifestModels);
-        writeManifest(manifestModels);
-        // Keep the in-memory mirror consistent with the full rewrite so later
-        // lazy conversions merge into the right baseline.
-        MANIFEST_MODELS.clear();
-        for (Map.Entry<String, JsonElement> entry : manifestModels.entrySet()) {
-            if (entry.getValue().isJsonObject()) {
-                MANIFEST_MODELS.put(entry.getKey(), entry.getValue().getAsJsonObject());
-            }
-        }
-        MANIFEST_VERSION.incrementAndGet();
+        // Full rewrite: persist synchronously and keep the mirror consistent
+        // (ManifestStore owns both), so later lazy conversions merge into the
+        // right baseline.
+        ManifestStore.replaceAll(manifestModels);
 
         YSMEpicFightCompat.LOGGER.info(
                 "YSM-EF Compat: generated {} base meshes from {} YSM model packages on {} threads in {} ms",
@@ -1169,16 +957,15 @@ public class YSMMeshLibrary {
 
             List<TextureEntry> textures = new ArrayList<>();
             for (Map.Entry<String, byte[]> entry : pkg.textures.entrySet()) {
-                ResourceLocation rl = textureLocation(modelId, entry.getKey());
+                ResourceLocation rl = TextureStore.locationOf(modelId, entry.getKey());
                 int[] info = pkg.textureInfo.get(entry.getKey());
                 byte[] data = entry.getValue();
-                writeTextureCache(rl, data);
-                writePackTexture(rl, data, info, false);
+                TextureStore.persistTexture(modelId, entry.getKey(), data, info);
                 textures.add(new TextureEntry(entry.getKey(), rl, data, info, sha256Hex(data), data.length));
             }
-            String defaultTextureRL = defaultTextureOf(modelId, pkg);
+            String defaultTextureRL = TextureStore.defaultTextureOf(modelId, pkg);
 
-            String meshId = sanitize(modelId);
+            String meshId = TextureStore.sanitize(modelId);
             Path outFile = MESH_DIR.resolve(meshId + ".json");
             Path runtimeFile = RUNTIME_DIR.resolve(meshId + ".json");
             int quads = EFMeshJsonWriter.write(pkg, outFile, runtimeFile, defaultTextureRL);
@@ -1205,119 +992,6 @@ public class YSMMeshLibrary {
         } catch (Exception e) {
             YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to convert model {}", modelId, e);
             return null;
-        }
-    }
-
-    /**
-     * Resolve the resource location of the model's default texture (mirrors the
-     * fallback order used at render time).
-     */
-    private static String defaultTextureOf(String modelId, YsmModelPackage pkg) {
-        ResourceLocation defaultRL = null;
-        if (!pkg.defaultTexture.isEmpty()) {
-            defaultRL = ResourceLocation.fromNamespaceAndPath(MESH_NAMESPACE,
-                    "textures/" + sanitize(modelId) + "/" + sanitize(pkg.defaultTexture) + ".png");
-            if (!pkg.textures.containsKey(pkg.defaultTexture)) {
-                defaultRL = null;
-            }
-        }
-        if (defaultRL == null && !pkg.textures.isEmpty()) {
-            String first = pkg.textures.keySet().iterator().next();
-            defaultRL = ResourceLocation.fromNamespaceAndPath(MESH_NAMESPACE,
-                    "textures/" + sanitize(modelId) + "/" + sanitize(first) + ".png");
-        }
-        return defaultRL != null ? defaultRL.toString()
-                : ResourceLocation.withDefaultNamespace("textures/entity/steve.png").toString();
-    }
-
-    private static ResourceLocation textureLocation(String modelId, String textureName) {
-        return ResourceLocation.fromNamespaceAndPath(MESH_NAMESPACE,
-                "textures/" + sanitize(modelId) + "/" + sanitize(textureName) + ".png");
-    }
-
-    private static Path textureCachePath(ResourceLocation rl) {
-        return guardedResolve(TEXTURE_CACHE_DIR, TEXTURE_CACHE_DIR.resolve(rl.getNamespace()).resolve(rl.getPath()));
-    }
-
-    private static void writeTextureCache(ResourceLocation rl, byte[] data) {
-        try {
-            Path cacheFile = textureCachePath(rl);
-            if (cacheFile == null) {
-                YSMEpicFightCompat.LOGGER.warn(
-                        "YSM-EF Compat: refused to write texture cache outside the cache root for {}", rl);
-                return;
-            }
-            EFMeshJsonWriter.writeFileAtomic(cacheFile, data);
-        } catch (IOException e) {
-            YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to cache texture bytes for {}", rl);
-        }
-    }
-
-    /**
-     * Write the texture into the generated resource pack folder
-     * (assets/&lt;ns&gt;/&lt;path&gt;), so the texture resolves through the
-     * ResourceManager. The DynamicTexture registration alone is not enough:
-     * Epic Fight's compute-shader path (and GeckoLib's AnimatableTexture
-     * wrapper) bind textures by resource location and fail with a
-     * FileNotFoundException when only a DynamicTexture exists, rendering the
-     * converted mesh with a garbage/missing texture (red edges).
-     *
-     * PNG/JPEG payloads are copied verbatim (stb detects the format by magic
-     * bytes); WebP/AVIF payloads are decoded through YSM's ImageStream and
-     * re-encoded to PNG; legacy raw-RGBA payloads are re-encoded to PNG.
-     */
-    private static void writePackTexture(ResourceLocation rl, byte[] data, int[] info, boolean forceRewrite) {
-        try {
-            Path file = PACK_ROOT.resolve("assets").resolve(rl.getNamespace()).resolve(rl.getPath());
-            Path guarded = guardedResolve(PACK_ROOT, file);
-            if (guarded == null) {
-                YSMEpicFightCompat.LOGGER.warn(
-                        "YSM-EF Compat: refused to write pack texture outside the pack root for {}", rl);
-                return;
-            }
-            file = guarded;
-            if (Files.isRegularFile(file) && Files.size(file) > 0 && !forceRewrite) {
-                return;
-            }
-            Files.createDirectories(file.getParent());
-            boolean png = data.length >= 4 && (data[0] & 0xFF) == 0x89 && data[1] == 0x50
-                    && data[2] == 0x4E && data[3] == 0x47;
-            boolean jpeg = data.length >= 2 && (data[0] & 0xFF) == 0xFF && (data[1] & 0xFF) == 0xD8;
-            if (png || jpeg) {
-                Files.write(file, data);
-                return;
-            }
-            // WebP/AVIF must be decoded before they are written into the pack:
-            // the previous code treated those bytes as raw RGBA and wrote a
-            // valid but fully transparent PNG (mesh visible, texture missing).
-            NativeImage image = null;
-            if (isRiffWebp(data)) {
-                image = decodeWithImageStream(YSM_WEBP_DECODER_CLASS, data, "WebP");
-            } else if (isFtypAvif(data)) {
-                image = decodeWithImageStream(YSM_AVIF_DECODER_CLASS, data, "AVIF");
-            } else {
-                image = readRawRgba(data, info != null ? info[0] : 0, info != null ? info[1] : 0);
-            }
-            if (image != null) {
-                try {
-                    image.writeToFile(file);
-                } finally {
-                    image.close();
-                }
-            }
-        } catch (Exception e) {
-            YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to write pack texture {}", rl);
-        }
-    }
-
-    private static void writeManifest(JsonObject manifestModels) {
-        try {
-            JsonObject manifest = new JsonObject();
-            manifest.addProperty("generator", GENERATOR_VERSION);
-            manifest.add("models", manifestModels);
-            EFMeshJsonWriter.writeFileAtomic(MANIFEST, new com.google.gson.GsonBuilder().create().toJson(manifest).getBytes(StandardCharsets.UTF_8));
-        } catch (IOException e) {
-            YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to write generation manifest", e);
         }
     }
 
@@ -1370,36 +1044,7 @@ public class YSMMeshLibrary {
         }
         deleteStaleJsons(MESH_DIR, keepMeshIds);
         deleteStaleJsons(RUNTIME_DIR, keepMeshIds);
-        // stale textures in the generated pack (kept textures are tracked by
-        // their "textures/<...>.png" relative path)
-        Path packTextures = PACK_ROOT.resolve("assets").resolve(MESH_NAMESPACE).resolve("textures");
-        try (var stream = Files.walk(packTextures)) {
-            stream.filter(Files::isRegularFile)
-                    .filter(path -> path.getFileName().toString().endsWith(".png"))
-                    .filter(path -> !keepTexturePaths.contains(
-                            "textures/" + packTextures.relativize(path).toString().replace('\\', '/')))
-                    .forEach(path -> {
-                        try {
-                            Files.deleteIfExists(path);
-                        } catch (IOException ignored) {
-                        }
-                    });
-        } catch (IOException ignored) {
-        }
-        Path cacheRoot = TEXTURE_CACHE_DIR.resolve(MESH_NAMESPACE);
-        try (var stream = Files.walk(TEXTURE_CACHE_DIR)) {
-            stream.filter(Files::isRegularFile).forEach(path -> {
-                boolean keep = path.startsWith(cacheRoot)
-                        && keepTexturePaths.contains(cacheRoot.relativize(path).toString().replace('\\', '/'));
-                if (!keep) {
-                    try {
-                        Files.deleteIfExists(path);
-                    } catch (IOException ignored) {
-                    }
-                }
-            });
-        } catch (IOException ignored) {
-        }
+        TextureStore.deleteStaleTextureFiles(keepTexturePaths);
     }
 
     private static void deleteStaleJsons(Path dir, Set<String> keepNames) {
@@ -1415,61 +1060,6 @@ public class YSMMeshLibrary {
                     });
         } catch (IOException ignored) {
         }
-    }
-
-    /**
-     * Path-traversal defense: model ids are relative paths ("group/model") and
-     * texture names may contain dots, so '.' and '/' are kept - but any ".." or
-     * lone "." segment is rewritten to '_'. ResourceLocation validation does
-     * NOT block ".." and Files.resolve resolves it for real, so without this an
-     * untrusted .ysm model package could write/read anywhere under the game
-     * directory through the generated pack / cache paths.
-     */
-    private static String sanitize(String value) {
-        StringBuilder sb = new StringBuilder();
-        boolean stripped = false;
-        for (char c : value.toLowerCase().toCharArray()) {
-            if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '/' || c == '-') {
-                sb.append(c);
-            } else {
-                sb.append('_');
-                stripped = true;
-            }
-        }
-        if (stripped) {
-            sb.append('_').append(Integer.toHexString(value.hashCode()));
-        }
-        // Collapse empty segments (leading/doubled slashes, i.e. no
-        // absolute-path form) and neutralize traversal segments.
-        String[] segments = sb.toString().split("/");
-        sb.setLength(0);
-        for (String segment : segments) {
-            if (segment.isEmpty()) {
-                continue;
-            }
-            if (segment.equals("..") || segment.equals(".")) {
-                sb.append('_');
-                stripped = true;
-            } else {
-                sb.append(segment);
-            }
-            sb.append('/');
-        }
-        if (sb.length() > 0) {
-            sb.setLength(sb.length() - 1);
-        }
-        return sb.toString();
-    }
-
-    /**
-     * Return {@code candidate} normalized only when it stays inside
-     * {@code root}; null otherwise. Defense in depth for the file sites fed by
-     * resource locations (sanitize() already blocks traversal segments; this
-     * catches any future caller that forgets).
-     */
-    private static Path guardedResolve(Path root, Path candidate) {
-        Path normalized = candidate.normalize();
-        return normalized.startsWith(root.normalize()) ? normalized : null;
     }
 
     /**
@@ -1504,60 +1094,16 @@ public class YSMMeshLibrary {
      */
     public static ResourceLocation findTexture(String modelId, String textureName) {
         ensureModel(modelId);
-        synchronized (TEXTURE_LOCATIONS) {
-            ResourceLocation rl = TEXTURE_LOCATIONS.get(modelId + "#" + textureName);
-            if (rl == null) {
-                for (Map.Entry<String, ResourceLocation> entry : TEXTURE_LOCATIONS.entrySet()) {
-                    if (entry.getKey().startsWith(modelId + "#")) {
-                        return entry.getValue();
-                    }
-                }
-            }
-            return rl;
-        }
+        return TextureStore.findTexture(modelId, textureName);
     }
 
     /**
-     * Upload the texture bytes to the texture manager if not done yet. The image
-     * decode runs on the background pool; the GL upload is drained on the render
-     * thread (see {@link #processPendingTextureUploads()}), so the first draw of
-     * a model no longer blocks on large PNG decodes (the texture may briefly
-     * render as missing for a frame or two, like ModernYSM's async uploads).
+     * Upload the texture bytes to the texture manager if not done yet (delegated
+     * to {@link TextureStore}; decode on the background pool, GL upload drained
+     * on the render thread with a time budget).
      */
     public static void ensureTextureUploaded(ResourceLocation rl) {
-        if (rl == null || UPLOADED_TEXTURES.containsKey(rl.toString())) {
-            return;
-        }
-        String key = rl.toString();
-        byte[] data = TEXTURE_DATA.get(key);
-        if (data == null) {
-            return;
-        }
-        if (!PENDING_TEXTURE_DECODES.add(key)) {
-            return;
-        }
-        // a re-upload cancels any delayed release of the same resource location
-        PENDING_RELEASES.remove(key);
-        LAZY_POOL.submit(() -> {
-            try {
-                NativeImage image = decodeTexture(rl, data);
-                if (image == null) {
-                    UPLOADED_TEXTURES.put(key, Boolean.TRUE);
-                } else {
-                    // The translucency scan runs here (decode worker thread), not
-                    // on the render thread: the per-frame upload drain has a small
-                    // time budget and must not spend it scanning millions of pixels.
-                    boolean translucent = hasTranslucentPixels(image);
-                    COMPLETED_UPLOADS.add(new TextureUploadTask(rl, image, translucent));
-                    Minecraft.getInstance().execute(YSMMeshLibrary::processPendingTextureUploads);
-                }
-            } catch (Throwable t) {
-                YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to decode texture {}", rl, t);
-                UPLOADED_TEXTURES.put(key, Boolean.TRUE);
-            } finally {
-                PENDING_TEXTURE_DECODES.remove(key);
-            }
-        });
+        TextureStore.ensureTextureUploaded(rl);
     }
 
     /**
@@ -1566,23 +1112,7 @@ public class YSMMeshLibrary {
      * The DynamicTexture takes ownership of the decoded image.
      */
     public static void processPendingTextureUploads() {
-        long deadline = System.nanoTime() + TEXTURE_UPLOAD_BUDGET_NANOS;
-        while (true) {
-            TextureUploadTask task = COMPLETED_UPLOADS.poll();
-            if (task == null) {
-                return;
-            }
-            String key = task.location().toString();
-            PENDING_RELEASES.remove(key);
-            TEXTURE_TRANSLUCENT.put(key, task.translucent());
-            Minecraft.getInstance().getTextureManager().register(task.location(), new DynamicTexture(task.image()));
-            UPLOADED_TEXTURES.put(key, Boolean.TRUE);
-            if (System.nanoTime() > deadline) {
-                // leftover tasks stay queued: re-post the drain for the next frame
-                Minecraft.getInstance().execute(YSMMeshLibrary::processPendingTextureUploads);
-                return;
-            }
-        }
+        TextureStore.processPendingTextureUploads();
     }
 
     /**
@@ -1591,22 +1121,7 @@ public class YSMMeshLibrary {
      * Called from the client tick.
      */
     public static void processPendingTextureReleases() {
-        if (PENDING_RELEASES.isEmpty()) {
-            return;
-        }
-        for (java.util.Iterator<Map.Entry<String, Integer>> it = PENDING_RELEASES.entrySet().iterator(); it.hasNext(); ) {
-            Map.Entry<String, Integer> entry = it.next();
-            int left = entry.getValue() - 1;
-            if (left <= 0) {
-                it.remove();
-                try {
-                    Minecraft.getInstance().getTextureManager().release(ResourceLocation.parse(entry.getKey()));
-                } catch (Throwable ignored) {
-                }
-            } else {
-                entry.setValue(left);
-            }
-        }
+        TextureStore.processPendingTextureReleases();
     }
 
     /**
@@ -1617,31 +1132,7 @@ public class YSMMeshLibrary {
      * later draw uses a freshly rebuilt instance.
      */
     public static void processPendingMeshReleases() {
-        if (PENDING_MESH_RELEASES.isEmpty()) {
-            return;
-        }
-        for (java.util.Iterator<Map.Entry<YSMMesh, Integer>> it = PENDING_MESH_RELEASES.entrySet().iterator(); it.hasNext(); ) {
-            Map.Entry<YSMMesh, Integer> entry = it.next();
-            int left = entry.getValue() - 1;
-            if (left <= 0) {
-                it.remove();
-                releaseMesh(entry.getKey());
-            } else {
-                entry.setValue(left);
-            }
-        }
-    }
-
-    /** Release one mesh's GL resources across every render path (render thread). */
-    private static void releaseMesh(YSMMesh mesh) {
-        try {
-            mesh.destroy();
-            com.ysmef.compat.gpu.YsmGpuRenderPath.disposeMesh(mesh);
-            com.ysmef.compat.cpu.YsmCpuRenderPath.disposeMesh(mesh);
-            com.ysmef.compat.gpu.YsmIrisComputePath.disposeMesh(mesh);
-        } catch (Throwable t) {
-            YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to release evicted mesh", t);
-        }
+        TextureStore.processPendingMeshReleases();
     }
 
     /**
@@ -1683,7 +1174,7 @@ public class YSMMeshLibrary {
      * the caller falls back to Epic Fight's render path in the meantime.
      */
     public static boolean isTextureUploaded(ResourceLocation rl) {
-        return rl != null && UPLOADED_TEXTURES.containsKey(rl.toString());
+        return TextureStore.isTextureUploaded(rl);
     }
 
     /**
@@ -1692,208 +1183,7 @@ public class YSMMeshLibrary {
      * treated as opaque.
      */
     public static boolean isTranslucentTexture(ResourceLocation rl) {
-        if (rl == null) {
-            return false;
-        }
-        return Boolean.TRUE.equals(TEXTURE_TRANSLUCENT.get(rl.toString()));
-    }
-
-    /**
-     * One-time full scan of the decoded texture for translucent pixels
-     * (alpha &lt; 253). Runs on the texture decode worker thread (see
-     * ensureTextureUploaded) - every pixel is checked, because a strided
-     * sampling misses small translucent regions (hair strands, gradients) and
-     * the GPU path's first pass then discards them (alphaMode == 1).
-     */
-    private static boolean hasTranslucentPixels(NativeImage image) {
-        int width = image.getWidth();
-        int height = image.getHeight();
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                if (((image.getPixelRGBA(x, y) >>> 24) & 0xFF) < 253) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Decode texture bytes into a NativeImage, supporting PNG/JPEG encoded data,
-     * WebP/AVIF (through YSM's ImageStream, reflectively) and raw RGBA pixels
-     * (legacy .ysm binary textures).
-     *
-     * Uses the InputStream-based read: NativeImage.read(byte[]) copies the whole
-     * array onto the 64KB LWJGL MemoryStack, which overflows for large textures
-     * ("Out of stack space"), while the InputStream overload buffers off-heap.
-     */
-    private static NativeImage decodeTexture(ResourceLocation rl, byte[] data) throws IOException {
-        if (data.length >= 4 && (data[0] & 0xFF) == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47) {
-            return NativeImage.read(new ByteArrayInputStream(data));
-        }
-        if (data.length >= 2 && (data[0] & 0xFF) == 0xFF && (data[1] & 0xFF) == 0xD8) {
-            return NativeImage.read(new ByteArrayInputStream(data));
-        }
-        if (isRiffWebp(data)) {
-            return decodeWithImageStream(YSM_WEBP_DECODER_CLASS, data, "WebP");
-        }
-        if (isFtypAvif(data)) {
-            return decodeWithImageStream(YSM_AVIF_DECODER_CLASS, data, "AVIF");
-        }
-
-        int[] info = TEXTURE_INFO.get(rl.toString());
-        if (info != null && info[2] == -1) {
-            return readRawRgba(data, info[0], info[1]);
-        }
-
-        if (data.length % 4 == 0) {
-            int pixels = data.length / 4;
-            int side = (int) Math.round(Math.sqrt(pixels));
-            if ((long) side * side == pixels) {
-                return readRawRgba(data, side, side);
-            }
-        }
-        YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: unsupported texture format for {}", rl);
-        return null;
-    }
-
-    /**
-     * Interpret the bytes as raw RGBA pixels (YSM legacy texture format) and
-     * build a NativeImage (Minecraft packs pixels as ABGR).
-     */
-    private static NativeImage readRawRgba(byte[] data, int width, int height) throws IOException {
-        if (width <= 0 || height <= 0 || (long) width * height * 4 > data.length) {
-            int side = (int) Math.round(Math.sqrt(data.length / 4.0));
-            width = side;
-            height = side;
-        }
-        NativeImage image = new NativeImage(NativeImage.Format.RGBA, width, height, true);
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                int i = (y * width + x) * 4;
-                int r = data[i] & 0xFF;
-                int g = data[i + 1] & 0xFF;
-                int b = data[i + 2] & 0xFF;
-                int a = data[i + 3] & 0xFF;
-                image.setPixelRGBA(x, y, (a << 24) | (b << 16) | (g << 8) | r);
-            }
-        }
-        return image;
-    }
-
-    private static Class<?> findImageStreamDecoder(String className) {
-        try {
-            return Class.forName(className, false, YSMMeshLibrary.class.getClassLoader());
-        } catch (Throwable ignored) {
-            try {
-                ClassLoader contextLoader = Thread.currentThread().getContextClassLoader();
-                return contextLoader != null
-                        ? Class.forName(className, false, contextLoader)
-                        : Class.forName(className);
-            } catch (Throwable t) {
-                return null;
-            }
-        }
-    }
-
-    private static boolean isRiffWebp(byte[] data) {
-        return data.length >= 12
-                && data[0] == 'R' && data[1] == 'I' && data[2] == 'F' && data[3] == 'F'
-                && data[8] == 'W' && data[9] == 'E' && data[10] == 'B' && data[11] == 'P';
-    }
-
-    private static boolean isFtypAvif(byte[] data) {
-        return data.length >= 12
-                && data[4] == 'f' && data[5] == 't' && data[6] == 'y' && data[7] == 'p';
-    }
-
-    /**
-     * Decode WebP/AVIF with OpenYSM/ModernYSM's ImageStream decoders
-     * (rip.ysm.imagestream.*). Those classes are loaded from the YSM jar at
-     * runtime; reflection keeps the compat mod buildable against the obfuscated
-     * release jar and still works on LegacyYSM when the classes are absent
-     * (returns null and the model keeps its mesh with an untextured/fallback
-     * texture instead of crashing).
-     */
-    private static NativeImage decodeWithImageStream(Class<?> decoderClass, byte[] data, String formatName) {
-        if (decoderClass == null) {
-            // Some YSM forks register ImageStream as an ImageIO plugin rather
-            // than exposing the decoder class directly.
-            try {
-                BufferedImage imageIoImage = ImageIO.read(new ByteArrayInputStream(data));
-                if (imageIoImage != null) {
-                    return bufferedImageToNative(imageIoImage);
-                }
-            } catch (Throwable ignored) {
-            }
-            if (!IMAGE_STREAM_MISSING_LOGGED) {
-                IMAGE_STREAM_MISSING_LOGGED = true;
-                YSMEpicFightCompat.LOGGER.warn(
-                        "YSM-EF Compat: {} texture found but the YSM ImageStream decoder is not available; "
-                                + "the model will render without this texture", formatName);
-            }
-            return null;
-        }
-        try {
-            Method read = IMAGE_STREAM_READ_METHODS.get(decoderClass);
-            if (read == null) {
-                for (Method candidate : decoderClass.getMethods()) {
-                    if ("read".equals(candidate.getName())
-                            && candidate.getParameterCount() == 1
-                            && candidate.getParameterTypes()[0] == byte[].class
-                            && BufferedImage.class.isAssignableFrom(candidate.getReturnType())) {
-                        read = candidate;
-                        break;
-                    }
-                }
-                if (read == null) {
-                    if (!IMAGE_STREAM_FAILED_LOGGED) {
-                        IMAGE_STREAM_FAILED_LOGGED = true;
-                        YSMEpicFightCompat.LOGGER.warn(
-                                "YSM-EF Compat: cannot find read(byte[]) on {}; {} textures will be skipped",
-                                decoderClass.getName(), formatName);
-                    }
-                    return null;
-                }
-                IMAGE_STREAM_READ_METHODS.put(decoderClass, read);
-            }
-            Constructor<?> ctor = IMAGE_STREAM_CTORS.get(decoderClass);
-            if (ctor == null) {
-                ctor = decoderClass.getDeclaredConstructor();
-                IMAGE_STREAM_CTORS.put(decoderClass, ctor);
-            }
-            Object image = read.invoke(ctor.newInstance(), (Object) data);
-            return image instanceof BufferedImage bufferedImage
-                    ? bufferedImageToNative(bufferedImage)
-                    : null;
-        } catch (Throwable t) {
-            if (!IMAGE_STREAM_FAILED_LOGGED) {
-                IMAGE_STREAM_FAILED_LOGGED = true;
-                YSMEpicFightCompat.LOGGER.warn(
-                        "YSM-EF Compat: failed to decode {} texture with {}", formatName, decoderClass.getName(), t);
-            }
-            return null;
-        }
-    }
-
-    /** Convert an ImageStream BufferedImage to Minecraft's ABGR NativeImage. */
-    private static NativeImage bufferedImageToNative(BufferedImage image) {
-        int width = image.getWidth();
-        int height = image.getHeight();
-        NativeImage out = new NativeImage(NativeImage.Format.RGBA, width, height, true);
-        int[] argb = image.getRGB(0, 0, width, height, null, 0, width);
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                int pixel = argb[y * width + x];
-                int a = (pixel >>> 24) & 0xFF;
-                int r = (pixel >>> 16) & 0xFF;
-                int g = (pixel >>> 8) & 0xFF;
-                int b = pixel & 0xFF;
-                // NativeImage packs pixels as ABGR.
-                out.setPixelRGBA(x, y, (a << 24) | (b << 16) | (g << 8) | r);
-            }
-        }
-        return out;
+        return TextureStore.isTranslucentTexture(rl);
     }
 
     public static boolean isGenerated() {

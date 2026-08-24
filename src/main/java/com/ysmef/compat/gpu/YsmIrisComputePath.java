@@ -64,6 +64,34 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class YsmIrisComputePath {
 
+    // Registered on first class load (render thread, when the path is first
+    // used): resource release goes through the MeshReleaser interface and the
+    // draw dispatch through RenderBridgeRegistry, so the model package never
+    // imports this class (the model <-> gpu/cpu package cycle is broken).
+    static {
+        com.ysmef.compat.model.YSMMeshLibrary.registerMeshReleaser(new com.ysmef.compat.model.MeshReleaser() {
+            @Override
+            public void disposeMesh(YSMMesh mesh) {
+                YsmIrisComputePath.disposeMesh(mesh);
+            }
+
+            @Override
+            public void disposeAll() {
+                YsmIrisComputePath.disposeAll();
+            }
+        });
+        com.ysmef.compat.model.RenderBridgeRegistry.registerIris(new com.ysmef.compat.model.RenderBridgeRegistry.IrisSkinRender() {
+            @Override
+            public boolean tryRender(YSMMesh mesh, ComputeShaderSetup setup, PoseStack poseStack,
+                                     MultiBufferSource bufferSources, RenderType renderType, int packedLight,
+                                     float r, float g, float b, float a, int overlay,
+                                     Armature armature, OpenMatrix4f[] poses) {
+                return YsmIrisComputePath.tryRender(mesh, setup, poseStack, bufferSources,
+                        renderType, packedLight, r, g, b, a, overlay, armature, poses);
+            }
+        });
+    }
+
     private YsmIrisComputePath() {}
 
     // ------------------------------------------------------------------

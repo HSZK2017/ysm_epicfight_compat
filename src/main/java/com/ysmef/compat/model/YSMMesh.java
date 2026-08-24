@@ -1,7 +1,6 @@
 package com.ysmef.compat.model;
 
 import com.mojang.blaze3d.vertex.PoseStack;
-import com.ysmef.compat.gpu.YsmGpuRenderPath;
 import com.ysmef.compat.model.runtime.YSMRuntimeBridge;
 import com.ysmef.compat.model.runtime.YsmBindArmature;
 import net.minecraft.client.renderer.MultiBufferSource;
@@ -215,12 +214,19 @@ public class YSMMesh extends HumanoidMesh {
                     RenderType captureRenderType = texture != null
                             ? EpicFightRenderTypes.replaceTexture(texture, renderType)
                             : renderType;
-                    com.ysmef.compat.cpu.YsmCpuRenderPath.pushCapturePass();
-                    try {
+                    com.ysmef.compat.model.RenderBridgeRegistry.CpuSkinRender cpu =
+                            com.ysmef.compat.model.RenderBridgeRegistry.cpu();
+                    if (cpu != null) {
+                        cpu.pushCapturePass();
+                        try {
+                            this.drawPosed(poseStack, bufferSources.getBuffer(EpicFightRenderTypes.makeTriangulated(captureRenderType)),
+                                    drawingFunction, packedLight, r, g, b, a, overlay, armature, poses);
+                        } finally {
+                            cpu.popCapturePass();
+                        }
+                    } else {
                         this.drawPosed(poseStack, bufferSources.getBuffer(EpicFightRenderTypes.makeTriangulated(captureRenderType)),
                                 drawingFunction, packedLight, r, g, b, a, overlay, armature, poses);
-                    } finally {
-                        com.ysmef.compat.cpu.YsmCpuRenderPath.popCapturePass();
                     }
                 }
                 logDrawDiagOnce(runtimeModelId, armature, poses, rebindApplied, maidEntity, "realcamera", poseStack);
@@ -230,7 +236,9 @@ public class YSMMesh extends HumanoidMesh {
             // ModernYSM-style direct GPU skinning path (bone SSBO + skinning shader):
             // one glDrawArrays per model, vertex skinning fully on the GPU. Falls back
             // to Epic Fight's compute-shader path automatically when unavailable.
-            if (texture != null && YsmGpuRenderPath.tryRender(this, poseStack, bufferSources, texture,
+            com.ysmef.compat.model.RenderBridgeRegistry.GpuSkinRender gpu =
+                    com.ysmef.compat.model.RenderBridgeRegistry.gpu();
+            if (texture != null && gpu != null && gpu.tryRender(this, poseStack, bufferSources, texture,
                     packedLight, r, g, b, a, overlay, armature, poses)) {
                 logDrawDiagOnce(runtimeModelId, armature, poses, rebindApplied, maidEntity, "gpu", poseStack);
                 com.ysmef.compat.YsmDiag.onMeshDrawEnd();
@@ -384,7 +392,11 @@ public class YSMMesh extends HumanoidMesh {
                                        float r, float g, float b, float a, int overlay,
                                        @Nullable Armature armature, OpenMatrix4f[] poses) {
         yesman.epicfight.client.renderer.shader.compute.ComputeShaderSetup setup = computeShaderSetup();
-        if (setup != null && !com.ysmef.compat.cpu.YsmCpuRenderPath.isForced()) {
+        com.ysmef.compat.model.RenderBridgeRegistry.CpuSkinRender cpu =
+                com.ysmef.compat.model.RenderBridgeRegistry.cpu();
+        com.ysmef.compat.model.RenderBridgeRegistry.GpuSkinRender gpu =
+                com.ysmef.compat.model.RenderBridgeRegistry.gpu();
+        if (setup != null && (cpu == null || !cpu.isForced())) {
             int positionCount = this.positions().length / 3;
             // The CPU path skins every visible vertex on the render thread every
             // frame. Large YSM models (10k+ faces, and 51-maid scenes in
@@ -395,14 +407,14 @@ public class YSMMesh extends HumanoidMesh {
             // GUI entity previews keep the CPU preference for every size: only
             // one preview is drawn there, and Epic Fight itself switches its
             // compute path off for those passes.
-            boolean guiEntityPreview = YsmGpuRenderPath.isGuiEntityProjection()
-                    || YsmGpuRenderPath.isYsmPreviewMode();
+            boolean guiEntityPreview = gpu != null
+                    && (gpu.isGuiEntityProjection() || gpu.isYsmPreviewMode());
             if (!guiEntityPreview && positionCount > CPU_PATH_MAX_VERTICES) {
                 logComputePreferredOnce(positionCount);
             }
-            if ((guiEntityPreview || positionCount <= CPU_PATH_MAX_VERTICES)
+            if (cpu != null && (guiEntityPreview || positionCount <= CPU_PATH_MAX_VERTICES)
                     && !(bufferSources instanceof net.minecraft.client.renderer.OutlineBufferSource)
-                    && com.ysmef.compat.cpu.YsmCpuRenderPath.tryRender(this, poseStack, drawingFunction,
+                    && cpu.tryRender(this, poseStack, drawingFunction,
                             packedLight, r, g, b, a, overlay, armature, poses)) {
                 return;
             }
@@ -416,7 +428,9 @@ public class YSMMesh extends HumanoidMesh {
             // MAX_JOINTS capacity. Falls through to Epic Fight's path when
             // unavailable (no Oculus, setup failure).
             long tIris = com.ysmef.compat.YsmDiag.isEnabled() ? System.nanoTime() : 0L;
-            if (com.ysmef.compat.gpu.YsmIrisComputePath.tryRender(this, setup, poseStack, bufferSources,
+            com.ysmef.compat.model.RenderBridgeRegistry.IrisSkinRender iris =
+                    com.ysmef.compat.model.RenderBridgeRegistry.iris();
+            if (iris != null && iris.tryRender(this, setup, poseStack, bufferSources,
                     renderType, packedLight, r, g, b, a, overlay, armature, poses)) {
                 com.ysmef.compat.YsmDiag.addNanos(com.ysmef.compat.YsmDiag.SLOT_COMPUTE_PATH, System.nanoTime() - tIris);
                 return;
@@ -486,8 +500,12 @@ public class YSMMesh extends HumanoidMesh {
         if (bufferSources instanceof net.minecraft.client.renderer.OutlineBufferSource) {
             return;
         }
-        com.ysmef.compat.cpu.YsmCpuRenderPath.tryRenderLastResort(this, poseStack, drawingFunction,
-                packedLight, r, g, b, a, overlay, armature, poses);
+        com.ysmef.compat.model.RenderBridgeRegistry.CpuSkinRender cpu =
+                com.ysmef.compat.model.RenderBridgeRegistry.cpu();
+        if (cpu != null) {
+            cpu.tryRenderLastResort(this, poseStack, drawingFunction,
+                    packedLight, r, g, b, a, overlay, armature, poses);
+        }
     }
 
     private static final Set<String> OVER_CAPACITY_LOGGED = ConcurrentHashMap.newKeySet();
