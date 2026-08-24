@@ -93,9 +93,13 @@ void main() {
     v_uv = a_uv;
     v_normal = nrm;
     v_color = minecraft_mix_light(u_light0, u_light1, nrm, u_color);
-    // Same fog input as Minecraft's entity shader (IViewRotMat * Position with
-    // the model-view matrix); see fogDistance above.
-    v_vertexDistance = fogDistance(u_mv, u_ivr * eyePos.xyz, u_fogShape);
+    // Same fog input as Minecraft's entity shader: the view-transformed
+    // position. eyePos is MODEL-space here (skinned on the GPU); u_mv is the
+    // full model-view matrix (camera rotation x entity translation), so
+    // length(u_mv * eyePos) = |T + x| exactly like vanilla. The previous
+    // u_ivr * eyePos form computed |T + R^-1 * x|, rotating the model-space
+    // offset with the camera (fog distance drifted by up to the model radius).
+    v_vertexDistance = fogDistance(u_mv, eyePos.xyz, u_fogShape);
     v_packedLight = u_packedLight;
     v_cullable = a_cullable;
 }

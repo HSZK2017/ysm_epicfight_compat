@@ -135,8 +135,18 @@ public final class YSMPlayerAnimator implements Molang.Env {
     /** Dedupe flag: only one evaluation may be in flight per animator. */
     private final java.util.concurrent.atomic.AtomicBoolean evalPending = new java.util.concurrent.atomic.AtomicBoolean(false);
 
-    /** Global switch: disabled permanently after the first off-thread failure. */
-    private static volatile boolean ASYNC_EVAL_FAILED = false;
+    /**
+     * Consecutive off-thread evaluation failures. The async path is disabled
+     * after MAX_ASYNC_FAILURES in a row (one transient failure - e.g. an entity
+     * unloaded mid-evaluation - must not kill async eval for the whole session),
+     * and the counter resets after ASYNC_FAILURE_RESET_NANOS without new
+     * failures, so a healthy server/entity set re-enables async evaluation.
+     * Synchronous evaluation (evaluateSync) is always available as the fallback.
+     */
+    private static final int MAX_ASYNC_FAILURES = 3;
+    private static final long ASYNC_FAILURE_RESET_NANOS = 10L * 60L * 1_000_000_000L;
+    private static final java.util.concurrent.atomic.AtomicInteger ASYNC_FAILURES = new java.util.concurrent.atomic.AtomicInteger();
+    private static volatile long asyncFailuresSinceNanos = 0L;
 
     public YSMPlayerAnimator(YSMRuntimeModel model) {
         this.model = model;
@@ -223,8 +233,17 @@ public final class YSMPlayerAnimator implements Molang.Env {
     }
 
     private boolean useAsyncEval(LivingEntity entity) {
-        return YSMCompatConfig.ENABLE_SCRIPT_ASYNC_EVAL.get() && !ASYNC_EVAL_FAILED
-                && Minecraft.getInstance().player != entity;
+        if (!YSMCompatConfig.ENABLE_SCRIPT_ASYNC_EVAL.get() || Minecraft.getInstance().player == entity) {
+            return false;
+        }
+        // Retry window: without fresh failures for a while, re-enable async
+        // evaluation (a transient failure must not disable it for the session).
+        long now = System.nanoTime();
+        if (now - asyncFailuresSinceNanos > ASYNC_FAILURE_RESET_NANOS) {
+            ASYNC_FAILURES.set(0);
+            asyncFailuresSinceNanos = now;
+        }
+        return ASYNC_FAILURES.get() < MAX_ASYNC_FAILURES;
     }
 
     /**
@@ -262,9 +281,16 @@ public final class YSMPlayerAnimator implements Molang.Env {
                 evaluate(entity, partialTick, now, inputs);
                 evaluatedOnce = true;
             } catch (Throwable t) {
-                // never leave the render path broken: fall back to synchronous evaluation
-                ASYNC_EVAL_FAILED = true;
-                YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: async script evaluation failed for model '{}', falling back to synchronous evaluation", model.modelId, t);
+                // never leave the render path broken: fall back to synchronous
+                // evaluation. Counted per failure (not a permanent global
+                // switch): after MAX_ASYNC_FAILURES consecutive failures async
+                // is disabled until the counter resets (see useAsyncEval).
+                int failures = ASYNC_FAILURES.incrementAndGet();
+                asyncFailuresSinceNanos = System.nanoTime();
+                YSMEpicFightCompat.LOGGER.warn(
+                        "YSM-EF Compat: async script evaluation failed for model '{}' ({} consecutive failures, "
+                                + "async eval disabled after {})",
+                        model.modelId, failures, MAX_ASYNC_FAILURES, t);
             } finally {
                 evalPending.set(false);
             }
@@ -798,6 +824,20 @@ public final class YSMPlayerAnimator implements Molang.Env {
                     return anim;
                 }
             }
+            // Off-hand overlays were compiled into conditionAnims but never
+            // resolved - mirror the main-hand logic so models with
+            // hold_offhand:<tag> / hold_offhand:empty animations play them.
+            if (!offHand.isEmpty()) {
+                YSMRuntimeModel.CompiledAnim anim = findConditionAnim("hold_offhand:", offHand);
+                if (anim != null) {
+                    return anim;
+                }
+            } else {
+                YSMRuntimeModel.CompiledAnim anim = model.conditionAnims.get("hold_offhand:empty");
+                if (anim != null) {
+                    return anim;
+                }
+            }
         }
         if (currentVehicleAnim != null && entity.isPassenger()) {
             return model.conditionAnims.get(currentVehicleAnim);
@@ -1052,6 +1092,11 @@ public final class YSMPlayerAnimator implements Molang.Env {
         setQuery("query.is_gliding", entity.isFallFlying() ? 1.0 : 0.0);
         setQuery("query.is_on_fire", entity.isOnFire() ? 1.0 : 0.0);
         setQuery("query.is_playing_dead", entity.isDeadOrDying() ? 1.0 : 0.0);
+        // Previously never written, so the per-frame evaluator reported
+        // is_alive = 0 (dead) while the battle-mode default-form environment
+        // reports 1 (alive) - alive/dead variant scripts evaluated the wrong
+        // branch at render time.
+        setQuery("query.is_alive", entity.isDeadOrDying() ? 0.0 : 1.0);
         setQuery("query.is_spectator", entity instanceof Player player && player.isSpectator() ? 1.0 : 0.0);
         setQuery("query.is_using_item", entity.isUsingItem() ? 1.0 : 0.0);
         setQuery("query.is_eating", entity.getUseItem().getUseAnimation() == net.minecraft.world.item.UseAnim.EAT ? 1.0 : 0.0);

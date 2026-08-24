@@ -1,5 +1,6 @@
 package com.ysmef.compat.network.message;
 
+import com.ysmef.compat.YSMEpicFightCompat;
 import com.ysmef.compat.network.ModelSyncServer;
 import com.ysmef.compat.network.NetworkHandler;
 import net.minecraft.network.FriendlyByteBuf;
@@ -38,8 +39,19 @@ public class C2SVersionCheckPacket {
         NetworkEvent.Context context = contextSupplier.get();
         if (context.getDirection().getReceptionSide().isServer()) {
             ServerPlayer sender = context.getSender();
-            if (sender != null && NetworkHandler.setChannelVersion(context.getNetworkManager(), message.version)) {
-                context.enqueueWork(() -> ModelSyncServer.onClientHandshake(sender));
+            if (sender != null) {
+                if (!NetworkHandler.VERSION.equals(message.version)) {
+                    // The client runs a different protocol version; the
+                    // handshake below would mark it "connected", but its
+                    // isConnectionValid check would reject every model packet.
+                    YSMEpicFightCompat.LOGGER.warn(
+                            "YSM-EF Compat: player '{}' replied model-sync protocol version '{}' (ours '{}'); "
+                                    + "model selections will not sync to this client",
+                            sender.getGameProfile().getName(), message.version, NetworkHandler.VERSION);
+                }
+                if (NetworkHandler.setChannelVersion(context.getNetworkManager(), message.version)) {
+                    context.enqueueWork(() -> ModelSyncServer.onClientHandshake(sender));
+                }
             }
         }
         context.setPacketHandled(true);

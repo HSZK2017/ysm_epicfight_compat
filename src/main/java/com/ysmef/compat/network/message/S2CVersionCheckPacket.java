@@ -35,12 +35,28 @@ public class S2CVersionCheckPacket {
 
     public static void handle(S2CVersionCheckPacket message, Supplier<NetworkEvent.Context> contextSupplier) {
         NetworkEvent.Context context = contextSupplier.get();
-        if (context.getDirection().getReceptionSide().isClient()
-                && NetworkHandler.setChannelVersion(context.getNetworkManager(), message.version)) {
-            context.enqueueWork(() -> YSMEpicFightCompat.LOGGER.debug(
-                    "YSM-EF Compat: model sync handshake, server protocol version '{}'", message.version));
+        if (context.getDirection().getReceptionSide().isClient()) {
+            if (!NetworkHandler.VERSION.equals(message.version)) {
+                // The server runs a different protocol version: model packets
+                // will never pass isConnectionValid on this side. The handshake
+                // stays compatible (we still reply), but the user must know the
+                // sync is off instead of silently rendering bipeds forever.
+                if (!MISMATCH_LOGGED) {
+                    MISMATCH_LOGGED = true;
+                    YSMEpicFightCompat.LOGGER.warn(
+                            "YSM-EF Compat: server model-sync protocol version '{}' does not match ours ('{}'); "
+                                    + "YSM model selections will not sync from this server",
+                            message.version, NetworkHandler.VERSION);
+                }
+            }
+            if (NetworkHandler.setChannelVersion(context.getNetworkManager(), message.version)) {
+                context.enqueueWork(() -> YSMEpicFightCompat.LOGGER.debug(
+                        "YSM-EF Compat: model sync handshake, server protocol version '{}'", message.version));
+            }
         }
         NetworkHandler.CHANNEL.reply(new C2SVersionCheckPacket(), context);
         context.setPacketHandled(true);
     }
+
+    private static volatile boolean MISMATCH_LOGGED = false;
 }

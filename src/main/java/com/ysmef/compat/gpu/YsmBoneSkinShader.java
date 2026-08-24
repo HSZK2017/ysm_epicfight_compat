@@ -62,9 +62,17 @@ public final class YsmBoneSkinShader {
                 GL20.glBindAttribLocation(p, 5, "a_cullable");
             }, vs, fs);
 
-            int ssboBlock = GL43.glGetProgramResourceIndex(prog, GL43.GL_SHADER_STORAGE_BLOCK, "BoneBlock");
-            if (ssboBlock != GL43.GL_INVALID_INDEX) {
-                GL43.glShaderStorageBlockBinding(prog, ssboBlock, SSBO);
+            // Both shader variants declare the BoneBlock with an explicit
+            // layout(std430, binding = 0), so this explicit re-binding is only
+            // belt-and-suspenders for desktop GL. It must NOT run on OpenGL ES:
+            // GL43.glGetProgramResourceIndex is a desktop-only entry point whose
+            // function pointers are absent on GLES contexts (Android launchers),
+            // which previously made every ES compile fail and silently fell back.
+            if (!es) {
+                int ssboBlock = GL43.glGetProgramResourceIndex(prog, GL43.GL_SHADER_STORAGE_BLOCK, "BoneBlock");
+                if (ssboBlock != GL43.GL_INVALID_INDEX) {
+                    GL43.glShaderStorageBlockBinding(prog, ssboBlock, SSBO);
+                }
             }
 
             locProj = GL20.glGetUniformLocation(prog, "u_proj");

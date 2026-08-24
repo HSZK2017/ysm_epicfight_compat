@@ -162,7 +162,10 @@ public final class YsmExtraAnimationLibrary {
             for (int i = 0; i < values.length; i++) {
                 sanitized[i] = finite(values[i]);
             }
-            joints.put(jointName(entry.getKey()), sanitized);
+            // Stored downsampled - see DESCRIPTOR_SAMPLING (keeps the
+            // descriptor file and the similarity scan small; exact matching
+            // still uses the full-clip SHA-256 above).
+            joints.put(jointName(entry.getKey()), downsample(sanitized, DESCRIPTOR_SAMPLING));
         }
         TemplateDescriptor descriptor = new TemplateDescriptor(
                 templateId, clip.loop, clip.length, clip.frameCount, joints, hash);
@@ -203,25 +206,31 @@ public final class YsmExtraAnimationLibrary {
     // Template similarity / exact hash
     // ------------------------------------------------------------------
 
+    /**
+     * Similarity descriptors are stored DOWNSAMPLED: every Nth frame instead of
+     * the full per-frame data (a 120s clip at 60fps is 7201 frames x 9 floats x
+     * 20 joints ~ 5 MB per template). The old full-frame descriptor file grew
+     * to hundreds of MB and its in-memory JSON tree could OOM the client; the
+     * downsampled comparison is still frame-accurate enough for the loose
+     * similarity thresholds below, and the exact SHA-256 hash (computed over
+     * the FULL clip) still deduplicates identical animations bit-for-bit.
+     */
+    private static final int DESCRIPTOR_SAMPLING = 8;
+
     private static float finite(float value) {
         return Float.isFinite(value) ? value : 0.0f;
     }
 
-    private static TemplateDescriptor sanitizeDescriptor(TemplateDescriptor descriptor) {
-        Map<String, float[]> joints = new LinkedHashMap<>();
-        for (Map.Entry<String, float[]> entry : descriptor.joints().entrySet()) {
-            float[] values = entry.getValue();
-            if (values == null) {
-                continue;
-            }
-            float[] sanitized = new float[values.length];
-            for (int i = 0; i < values.length; i++) {
-                sanitized[i] = finite(values[i]);
-            }
-            joints.put(entry.getKey(), sanitized);
+    /** Keep every {@code sampling}-th frame of a per-frame 9-float joint channel. */
+    private static float[] downsample(float[] full, int sampling) {
+        int fullFrames = full.length / 9;
+        int outFrames = Math.max(1, (fullFrames + sampling - 1) / sampling);
+        float[] out = new float[outFrames * 9];
+        for (int f = 0; f < outFrames; f++) {
+            int src = Math.min(f * sampling, fullFrames - 1) * 9;
+            System.arraycopy(full, src, out, f * 9, 9);
         }
-        return new TemplateDescriptor(descriptor.id(), descriptor.loop(), descriptor.length(),
-                descriptor.frameCount(), joints, descriptor.hash());
+        return out;
     }
 
     private static String exactHash(YsmExtraFrameWriter.Clip clip) {
@@ -273,21 +282,25 @@ public final class YsmExtraAnimationLibrary {
         for (Map.Entry<String, float[]> templateJoint : descriptor.joints().entrySet()) {
             float[] template = templateJoint.getValue();
             float[] candidate = clip.sourceDescriptor.get(jointIdOf(templateJoint.getKey()));
-            if (candidate == null || template.length != candidate.length) {
+            if (candidate == null || template.length > candidate.length) {
                 return false;
             }
+            // template is downsampled (DESCRIPTOR_SAMPLING): compare against the
+            // full clip at the same stride.
+            int candidateFrames = candidate.length / 9;
             for (int i = 0; i < template.length; i += 9) {
-                float dx = finite(template[i]) - finite(candidate[i]);
-                float dy = finite(template[i + 1]) - finite(candidate[i + 1]);
-                float dz = finite(template[i + 2]) - finite(candidate[i + 2]);
+                int src = Math.min((i / 9) * DESCRIPTOR_SAMPLING, candidateFrames - 1) * 9;
+                float dx = finite(template[i]) - finite(candidate[src]);
+                float dy = finite(template[i + 1]) - finite(candidate[src + 1]);
+                float dz = finite(template[i + 2]) - finite(candidate[src + 2]);
                 float rot = finite((float) Math.sqrt(dx * dx + dy * dy + dz * dz));
-                float pdx = finite(template[i + 3]) - finite(candidate[i + 3]);
-                float pdy = finite(template[i + 4]) - finite(candidate[i + 4]);
-                float pdz = finite(template[i + 5]) - finite(candidate[i + 5]);
+                float pdx = finite(template[i + 3]) - finite(candidate[src + 3]);
+                float pdy = finite(template[i + 4]) - finite(candidate[src + 4]);
+                float pdz = finite(template[i + 5]) - finite(candidate[src + 5]);
                 float pos = finite((float) Math.sqrt(pdx * pdx + pdy * pdy + pdz * pdz));
-                float sdx = finite(template[i + 6]) - finite(candidate[i + 6]);
-                float sdy = finite(template[i + 7]) - finite(candidate[i + 7]);
-                float sdz = finite(template[i + 8]) - finite(candidate[i + 8]);
+                float sdx = finite(template[i + 6]) - finite(candidate[src + 6]);
+                float sdy = finite(template[i + 7]) - finite(candidate[src + 7]);
+                float sdz = finite(template[i + 8]) - finite(candidate[src + 8]);
                 float scale = Math.max(Math.abs(sdx), Math.max(Math.abs(sdy), Math.abs(sdz)));
                 rotSum += rot;
                 posSum += pos;
@@ -336,14 +349,62 @@ public final class YsmExtraAnimationLibrary {
         }
         try {
             if (Files.isRegularFile(DESCRIPTOR_FILE)) {
-                JsonObject root = JsonParser.parseString(Files.readString(DESCRIPTOR_FILE, StandardCharsets.UTF_8)).getAsJsonObject();
-                if (root.has("templates") && root.get("templates").isJsonArray()) {
-                    for (var element : root.getAsJsonArray("templates")) {
-                        TemplateDescriptor descriptor = GSON.fromJson(element, TemplateDescriptor.class);
-                        if (descriptor != null && descriptor.id() != null) {
-                            TEMPLATES.put(descriptor.id(), sanitizeDescriptor(descriptor));
+                boolean needsRewrite = false;
+                // Stream the file template by template: the legacy format stored
+                // FULL per-frame data and could reach hundreds of MB - parsing it
+                // into one JsonObject tree would OOM the client.
+                try (com.google.gson.stream.JsonReader reader = new com.google.gson.stream.JsonReader(
+                        Files.newBufferedReader(DESCRIPTOR_FILE, StandardCharsets.UTF_8))) {
+                    reader.beginObject();
+                    while (reader.hasNext()) {
+                        String name = reader.nextName();
+                        if (!"templates".equals(name)) {
+                            reader.skipValue();
+                            continue;
                         }
+                        reader.beginArray();
+                        while (reader.hasNext()) {
+                            TemplateDescriptor descriptor = GSON.fromJson(reader, TemplateDescriptor.class);
+                            if (descriptor == null || descriptor.id() == null) {
+                                continue;
+                            }
+                            boolean sampled = false;
+                            Map<String, float[]> joints = new LinkedHashMap<>();
+                            int expectedFrames = Math.max(1,
+                                    (descriptor.frameCount() + DESCRIPTOR_SAMPLING - 1) / DESCRIPTOR_SAMPLING);
+                            for (Map.Entry<String, float[]> entry : descriptor.joints().entrySet()) {
+                                float[] values = entry.getValue();
+                                if (values == null) {
+                                    continue;
+                                }
+                                // Legacy (unsampled) descriptors carry one entry
+                                // per frame; downsample them in place and mark
+                                // the file for a rewrite to the compact format.
+                                if (values.length / 9 > expectedFrames) {
+                                    values = downsample(values, DESCRIPTOR_SAMPLING);
+                                    sampled = true;
+                                }
+                                float[] sanitized = new float[values.length];
+                                for (int i = 0; i < values.length; i++) {
+                                    sanitized[i] = finite(values[i]);
+                                }
+                                joints.put(entry.getKey(), sanitized);
+                            }
+                            TEMPLATES.put(descriptor.id(), new TemplateDescriptor(descriptor.id(),
+                                    descriptor.loop(), descriptor.length(), descriptor.frameCount(), joints, descriptor.hash()));
+                            needsRewrite |= sampled;
+                        }
+                        reader.endArray();
                     }
+                    reader.endObject();
+                }
+                if (needsRewrite) {
+                    // The legacy full-frame file is replaced by the compact
+                    // downsampled form on the next flush.
+                    descriptorFileDirty = true;
+                    YSMEpicFightCompat.LOGGER.info(
+                            "YSM-EF Compat: extra animation descriptors were legacy full-frame format; "
+                                    + "downsampled {} templates in memory, compact rewrite scheduled", TEMPLATES.size());
                 }
             }
         } catch (Exception e) {
