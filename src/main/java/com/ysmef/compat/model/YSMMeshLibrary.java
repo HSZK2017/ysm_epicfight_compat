@@ -170,8 +170,10 @@ public class YSMMeshLibrary {
      * implementing classes' static initializers. Using the interface keeps this
      * class (and TextureStore) free of gpu/cpu package imports - the model
      * &lt;-&gt; gpu/cpu package cycle is broken at the resource-release edge.
+     * Copy-on-write: registrations (class loads) and the render-thread
+     * iteration never contend.
      */
-    private static final java.util.List<MeshReleaser> RELEASERS = new ArrayList<>();
+    private static final java.util.List<MeshReleaser> RELEASERS = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     public static synchronized void registerMeshReleaser(MeshReleaser releaser) {
         if (!RELEASERS.contains(releaser)) {

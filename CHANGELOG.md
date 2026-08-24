@@ -1,5 +1,87 @@
 # 更新日志 / Changelog
 
+## v1.8.0 — 2026-08
+
+### 中文
+
+#### 架构重构（自 v1.5.1 以来的主要代码质量迭代）
+
+- **拆解 `YSMMeshLibrary` 上帝类**（约 1900 行 → 约 1170 行）：按单一职责拆分出
+  - `TextureStore`：纹理管线全域（字节注册、PNG/JPEG/WebP/AVIF 解码、异步上传与每帧时间预算、延迟释放、pack/缓存文件布局、路径穿越防护 `sanitize`）
+  - `ManifestStore`：生成缓存清单（内存镜像 + 版本合并写 + 独立后台写线程）
+  - `JointTable`：Epic Fight 参考双足骨架 20 关节表的单一数据源（原在三个类中重复）
+- **拆解 `model ↔ gpu/cpu` 包环**（依赖倒置）：
+  - 资源释放经 `MeshReleaser` 接口注册表（`YSMMeshLibrary#registerMeshReleaser`），三个渲染路径类静态自注册
+  - 渲染分派经 `RenderBridgeRegistry`（`GpuSkinRender` / `CpuSkinRender` / `IrisSkinRender` 接口），`YSMMesh#draw` 不再直接 import 渲染路径类
+  - `model` 包对 `gpu`/`cpu` 包的引用归零，依赖方向变为单向（渲染路径 → 模型数据）
+- 清理：删除 5 个临时诊断 mixin（Dispatcher/LivingEntityRender/PatchedLivingRender/RenderEngine/RenderEngineEvents Diag）、轮盘姿势校正死代码（约 120 行）、`Clip.descriptor` 死字段等；`.gitignore` 建立（构建产物不再入库）
+
+#### 修复
+
+- **关键帧 pre/post 语义颠倒**（二进制 .ysm 包）：`readScriptChannel` 与参考序列化器对齐（含 pre 数据的关键帧按 `(pre, flag, post)` 磁盘顺序解析）——此前含 pre 数据关键帧的动画会静默错插值
+- **多人模式动画器清扫时钟错误**：清扫改用世界 `gameTime`（原按各实体 `tickCount` 跨实体比较，老玩家触发清扫会每 15 秒误杀其他活跃玩家的动画器）
+- **路径穿越任意文件写入**：`sanitize` 中和 `..` / 孤立 `.` 段 + 写入前 `normalize().startsWith(root)` 围栏（恶意 .ysm 模型包无法再借纹理名逃逸资源包根目录）
+- **EF 非线程安全静态表**：`MeshAccessor.create`（写 `Meshes.ACCESSORS` HashMap）收敛到渲染线程执行（worker 只入队，渲染线程 drain，带代际校验）
+- **同步/异步求值竞争**：同步求值路径与异步 worker 互斥（`evalPending` CAS），消除双线程写同一双缓冲槽与 HashMap 的竞态
+- **LRU 淘汰 use-after-free**：被淘汰共享网格的 GL 资源延迟 5 tick 释放（与纹理同一模式），本帧后续绘制不再使用已销毁缓冲
+- **共享 VBO 跨绘制竞态**：CPU 路径每帧上传前 orphaning（`glBufferData(NULL)` 重分配）+ `GL_STREAM_DRAW`
+- **GL 状态泄漏**：GPU/CPU 两条路径绘制前后保存/还原 cull/blend/depthTest/depthMask；半透明第二遍改 `depthMask(false)`（不再污染深度缓冲）
+- **GPU 路径雾距公式**：`bone_skin.vsh` 改为 `fogDistance(u_mv, eyePos)`，与 vanilla `|T + x|` 一致（原式 `|T + R⁻¹x|` 随相机旋转偏差可达模型半径）
+- **`query.is_alive` 恒 0**：逐帧求值补写，存活/死亡变体脚本不再判反
+- **`hold_offhand:` 动画永不播放**：条件叠加补副手分支
+- **异步求值一次失败永久禁用**：改为连续 3 次失败 + 10 分钟无新失败自动恢复
+- **模型同步版本握手静默失效**：协议版本不匹配时双端各提示一次（WARN）
+- **模板描述符文件膨胀（可达数百 MB）**：相似度描述符降采样存储（每 8 帧取 1）+ 流式加载 + 旧格式自动迁移重写
+- **manifest 锁内 O(N²) 磁盘 I/O**：内存镜像 + 后台合并写（渲染线程不再读盘/写盘）
+- **首帧网格构建卡顿**：新注册网格在客户端 tick 分帧预热（每 tick 8ms 预算）
+- **roaming 变量同步加载卡顿**：模型包加载与 Molang 求值移入后台线程，结果回主线程应用
+- **GLES 上下文桌面入口**：ES 下跳过 `glGetProgramResourceIndex`/`glShaderStorageBlockBinding`（shader 已显式 `binding=0`；真机验证待 Android 环境）
+
+#### 测试
+
+- 新增 17 个单元测试（总数 32）：Molang 求值器（11）、CityHash 固定向量（3）、关节表（3）；winefox 明文黄金用例（几何/动画/pre-post 真值）、真实 .ysm 解密链黄金用例、`sanitize` 路径穿越用例、二进制关键帧 pre/post 用例——覆盖 P0~P3 全部修复点
+
+### English
+
+#### Architecture refactor (main quality iteration since v1.5.1)
+
+- **Split the `YSMMeshLibrary` god class** (~1900 -> ~1170 lines) into single-responsibility classes:
+  - `TextureStore`: the whole texture pipeline (byte registration, PNG/JPEG/WebP/AVIF decoding, async upload with a per-frame time budget, delayed releases, pack/cache layout, `sanitize` path-traversal defense)
+  - `ManifestStore`: generated-cache manifest (in-memory mirror + versioned coalesced writes + dedicated background writer)
+  - `JointTable`: single source of truth for the 20-joint Epic Fight biped table (previously duplicated in three classes)
+- **Break the `model <-> gpu/cpu` package cycle** (dependency inversion):
+  - resource release via the `MeshReleaser` registry (`YSMMeshLibrary#registerMeshReleaser`), self-registered by the three render-path classes
+  - draw dispatch via `RenderBridgeRegistry` (`GpuSkinRender`/`CpuSkinRender`/`IrisSkinRender`); `YSMMesh#draw` no longer imports the render-path classes
+  - zero `model -> gpu/cpu` imports remain; the dependency is now one-way (render paths -> model data)
+- Cleanup: removed 5 temporary diagnostic mixins, the dead wheel-pose correction (~120 lines), the dead `Clip.descriptor` field, etc.; `.gitignore` added (build artifacts no longer tracked)
+
+#### Fixes
+
+- Binary keyframe pre/post semantic swap (`.ysm` packages): `readScriptChannel` now matches the reference serializer's `(pre, flag, post)` disk order - animations with pre-data keyframes no longer interpolate wrongly
+- Multiplayer animator-sweep clock bug: the sweep now uses the world `gameTime` (per-entity `tickCount` comparisons killed other players' live animators every 15 s)
+- Path-traversal arbitrary file write: `sanitize` neutralizes `..` / lone `.` segments + normalize/startsWith guards before writes
+- Epic Fight's non-thread-safe static table: `MeshAccessor.create` (writes `Meshes.ACCESSORS` HashMap) is confined to the render thread (workers enqueue, the render thread drains with a generation check)
+- Sync/async evaluation race: the synchronous path now shares the `evalPending` mutex with the async worker
+- LRU-eviction use-after-free: evicted shared meshes are released 5 ticks later (same pattern as textures)
+- Shared-VBO cross-draw race: per-frame orphaning (`glBufferData(NULL)`) + `GL_STREAM_DRAW` on the CPU path
+- GL state leakage: cull/blend/depthTest/depthMask saved and restored around both direct skinning paths; the translucent second pass uses `depthMask(false)`
+- GPU-path fog distance: `bone_skin.vsh` now computes `fogDistance(u_mv, eyePos)` = vanilla `|T + x|` (the old `|T + R^-1 x|` drifted with the camera)
+- `query.is_alive` never written: now filled per frame (alive/dead variant scripts evaluated the wrong branch)
+- `hold_offhand:` animations never played: off-hand overlay branch added
+- Async evaluation permanently disabled after one failure: now 3 consecutive failures + automatic recovery after 10 min without new failures
+- Silent protocol-version handshake failure: both sides log a one-time WARN on mismatch
+- Template descriptor file bloat (hundreds of MB): downsampled descriptors (1 per 8 frames) + streaming load + automatic legacy migration
+- Manifest O(N^2) disk I/O under the class lock: in-memory mirror + coalesced background writes
+- First-draw mesh-build hitch: freshly registered meshes are prewarmed on the client tick with an 8 ms budget
+- Roaming-variable synchronous package load: moved to a background thread, applied on the main thread
+- Desktop-only GL entry points on GLES: skipped on ES contexts (shader already declares `binding=0`; real-device verification pending)
+
+#### Tests
+
+- 17 new unit tests (32 total): Molang evaluator (11), CityHash fixed vector (3), joint table (3); plus winefox plaintext golden cases (geometry/animations/pre-post truth), a real `.ysm` decryption golden case, `sanitize` traversal cases and binary keyframe pre/post cases - covering every P0-P3 fix
+
+---
+
 ## v1.5.1 — 2026-08
 
 ### 中文
