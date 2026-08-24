@@ -29,3 +29,6 @@ run/screenshots/
 Thumbs.db
 .DS_Store
 *.log
+
+# Test-run output at the project root (ForgeGradle test task)
+logs/

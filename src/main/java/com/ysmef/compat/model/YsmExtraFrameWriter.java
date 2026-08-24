@@ -52,37 +52,33 @@ public final class YsmExtraFrameWriter {
         return String.format("(%.3f,%.3f,%.3f)", m.m30, m.m31, m.m32);
     }
 
-    private static final int JOINT_COUNT = 20;
-    private static final int JOINT_ROOT = 0;
-    private static final int JOINT_THIGH_R = 1;
-    private static final int JOINT_LEG_R = 2;
-    private static final int JOINT_KNEE_R = 3;
-    private static final int JOINT_THIGH_L = 4;
-    private static final int JOINT_LEG_L = 5;
-    private static final int JOINT_KNEE_L = 6;
-    private static final int JOINT_TORSO = 7;
-    private static final int JOINT_CHEST = 8;
-    private static final int JOINT_HEAD = 9;
-    private static final int JOINT_SHOULDER_R = 10;
-    private static final int JOINT_ARM_R = 11;
-    private static final int JOINT_HAND_R = 12;
-    private static final int JOINT_TOOL_R = 13;
-    private static final int JOINT_ELBOW_R = 14;
-    private static final int JOINT_SHOULDER_L = 15;
-    private static final int JOINT_ARM_L = 16;
-    private static final int JOINT_HAND_L = 17;
-    private static final int JOINT_TOOL_L = 18;
-    private static final int JOINT_ELBOW_L = 19;
+    // Joint ids/names/parents alias the shared JointTable (single source of
+    // truth - see JointTable for the biped layout).
+    private static final int JOINT_COUNT = JointTable.COUNT;
+    private static final int JOINT_ROOT = JointTable.ROOT;
+    private static final int JOINT_THIGH_R = JointTable.THIGH_R;
+    private static final int JOINT_LEG_R = JointTable.LEG_R;
+    private static final int JOINT_KNEE_R = JointTable.KNEE_R;
+    private static final int JOINT_THIGH_L = JointTable.THIGH_L;
+    private static final int JOINT_LEG_L = JointTable.LEG_L;
+    private static final int JOINT_KNEE_L = JointTable.KNEE_L;
+    private static final int JOINT_TORSO = JointTable.TORSO;
+    private static final int JOINT_CHEST = JointTable.CHEST;
+    private static final int JOINT_HEAD = JointTable.HEAD;
+    private static final int JOINT_SHOULDER_R = JointTable.SHOULDER_R;
+    private static final int JOINT_ARM_R = JointTable.ARM_R;
+    private static final int JOINT_HAND_R = JointTable.HAND_R;
+    private static final int JOINT_TOOL_R = JointTable.TOOL_R;
+    private static final int JOINT_ELBOW_R = JointTable.ELBOW_R;
+    private static final int JOINT_SHOULDER_L = JointTable.SHOULDER_L;
+    private static final int JOINT_ARM_L = JointTable.ARM_L;
+    private static final int JOINT_HAND_L = JointTable.HAND_L;
+    private static final int JOINT_TOOL_L = JointTable.TOOL_L;
+    private static final int JOINT_ELBOW_L = JointTable.ELBOW_L;
 
-    private static final String[] JOINT_NAMES = {
-            "Root", "Thigh_R", "Leg_R", "Knee_R", "Thigh_L", "Leg_L", "Knee_L",
-            "Torso", "Chest", "Head", "Shoulder_R", "Arm_R", "Hand_R", "Tool_R",
-            "Elbow_R", "Shoulder_L", "Arm_L", "Hand_L", "Tool_L", "Elbow_L"
-    };
+    private static final String[] JOINT_NAMES = JointTable.NAMES;
 
-    private static final int[] JOINT_PARENTS = {
-            -1, 0, 1, 1, 0, 4, 4, 0, 7, 8, 8, 10, 11, 12, 11, 8, 15, 16, 17, 16
-    };
+    private static final int[] JOINT_PARENTS = JointTable.PARENTS;
 
     /** Raw reference-biped joint transforms from assets/epicfight/animmodels/entity/biped.json. */
     private static final float[][] REF_RAW = {
@@ -129,8 +125,6 @@ public final class YsmExtraFrameWriter {
         public final int loop;
         public final float length;
         public final int frameCount;
-        /** Joint id -> descriptor rows (frame-major, 7 floats: quaternion + translation). */
-        public final Map<Integer, float[]> descriptor;
         /**
          * Joint id -> model-independent source descriptor rows (frame-major, 9
          * floats: Bedrock rotation degrees, position pixels and scale). This is
@@ -142,13 +136,12 @@ public final class YsmExtraFrameWriter {
         public final JsonObject json;
 
         Clip(String animationName, int loop, float length, int frameCount,
-             Map<Integer, float[]> descriptor, Map<Integer, float[]> sourceDescriptor,
+             Map<Integer, float[]> sourceDescriptor,
              Map<Integer, OpenMatrix4f[]> localFrames, JsonObject json) {
             this.animationName = animationName;
             this.loop = loop;
             this.length = length;
             this.frameCount = frameCount;
-            this.descriptor = descriptor;
             this.sourceDescriptor = sourceDescriptor;
             this.localFrames = localFrames;
             this.json = json;
@@ -269,15 +262,13 @@ public final class YsmExtraFrameWriter {
             }
             if (!animated && joint != JOINT_ROOT) {
                 removeJoints.add(joint);
-                continue;
             }
-            descriptors.put(joint, descriptorOf(frames));
         }
         for (Integer joint : removeJoints) {
             localFrames.remove(joint);
         }
 
-        Clip clip = new Clip(animationName, anim.loop, length, frameCount, descriptors, sourceFrames, localFrames,
+        Clip clip = new Clip(animationName, anim.loop, length, frameCount, sourceFrames, localFrames,
                 toJson(anim.loop, length, localFrames));
         return clip;
     }
@@ -296,31 +287,6 @@ public final class YsmExtraFrameWriter {
             }
         }
         return true;
-    }
-
-    private static float[] descriptorOf(OpenMatrix4f[] frames) {
-        float[] out = new float[frames.length * 7];
-        for (int i = 0; i < frames.length; i++) {
-            OpenMatrix4f m = frames[i];
-            yesman.epicfight.api.utils.math.Vec3f t = m.toTranslationVector();
-            Quaternionf q = m.toQuaternion();
-            int base = i * 7;
-            out[base] = round3(q.x);
-            out[base + 1] = round3(q.y);
-            out[base + 2] = round3(q.z);
-            out[base + 3] = round3(q.w);
-            out[base + 4] = round3(t.x);
-            out[base + 5] = round3(t.y);
-            out[base + 6] = round3(t.z);
-        }
-        return out;
-    }
-
-    private static float round3(float value) {
-        if (!Float.isFinite(value)) {
-            return 0.0f;
-        }
-        return Math.round(value * 1000.0f) / 1000.0f;
     }
 
     private static float finite(float value) {
@@ -1049,15 +1015,6 @@ public final class YsmExtraFrameWriter {
         @Override
         public double callStringFunction(String name, String[] args) {
             return 0.0;
-        }
-    }
-
-    /** Atomic write helper shared with the mesh writer. */
-    static void writeAtomic(Path target, String json) {
-        try {
-            EFMeshJsonWriter.writeFileAtomic(target, json.getBytes(StandardCharsets.UTF_8));
-        } catch (java.io.IOException e) {
-            YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to write extra animation '{}'", target, e);
         }
     }
 }

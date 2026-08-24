@@ -178,8 +178,6 @@ public final class YsmWheelPlayback {
             tracked.accessor = accessor;
             tracked.activeTemplate = entry.templateId();
             tracked.retryPending = false;
-            YsmBindArmature.setWheelPoseJoints(player.getUUID(),
-                    YsmExtraAnimationLibrary.templateJointNames(entry.templateId()));
             YSMEpicFightCompat.LOGGER.info(
                     "YSM-EF Compat: [wheel] playing animation '{}' (template '{}', loop={}) for '{}' in battle mode",
                     tracked.activeWheelAnimation, entry.templateId(), entry.loop(), player.getGameProfile().getName());
@@ -199,9 +197,6 @@ public final class YsmWheelPlayback {
         tracked.retryPending = false;
         tracked.loggedNoEntry = false;
         tracked.loggedNoAccessor = false;
-        if (patch != null && patch.getOriginal() instanceof Player player) {
-            YsmBindArmature.clearWheelPoseJoints(player.getUUID());
-        }
         if (accessor != null) {
             try {
                 patch.getClientAnimator().stopPlaying(accessor);
@@ -214,7 +209,6 @@ public final class YsmWheelPlayback {
     public static void clear() {
         TRACKED.clear();
         YsmRoamingState.clear();
-        YsmBindArmature.clearWheelAnimationFlags();
         tickDiagLogged = false;
     }
 }

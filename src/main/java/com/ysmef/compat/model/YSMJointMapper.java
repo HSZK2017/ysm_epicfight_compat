@@ -19,26 +19,9 @@ public final class YSMJointMapper {
 
     private static Map<String, Integer> createJointIds() {
         Map<String, Integer> map = new HashMap<>();
-        map.put("Root", 0);
-        map.put("Thigh_R", 1);
-        map.put("Leg_R", 2);
-        map.put("Knee_R", 3);
-        map.put("Thigh_L", 4);
-        map.put("Leg_L", 5);
-        map.put("Knee_L", 6);
-        map.put("Torso", 7);
-        map.put("Chest", 8);
-        map.put("Head", 9);
-        map.put("Shoulder_R", 10);
-        map.put("Arm_R", 11);
-        map.put("Hand_R", 12);
-        map.put("Tool_R", 13);
-        map.put("Elbow_R", 14);
-        map.put("Shoulder_L", 15);
-        map.put("Arm_L", 16);
-        map.put("Hand_L", 17);
-        map.put("Tool_L", 18);
-        map.put("Elbow_L", 19);
+        for (int i = 0; i < JointTable.COUNT; i++) {
+            map.put(JointTable.NAMES[i], i);
+        }
         return map;
     }
 

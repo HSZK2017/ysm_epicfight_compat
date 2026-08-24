@@ -196,10 +196,7 @@ public final class YsmExtraAnimationLibrary {
     }
 
     private static String jointName(int joint) {
-        String[] names = {"Root", "Thigh_R", "Leg_R", "Knee_R", "Thigh_L", "Leg_L", "Knee_L",
-                "Torso", "Chest", "Head", "Shoulder_R", "Arm_R", "Hand_R", "Tool_R",
-                "Elbow_R", "Shoulder_L", "Arm_L", "Hand_L", "Tool_L", "Elbow_L"};
-        return joint >= 0 && joint < names.length ? names[joint] : "Joint" + joint;
+        return JointTable.nameOf(joint);
     }
 
     // ------------------------------------------------------------------
@@ -328,15 +325,7 @@ public final class YsmExtraAnimationLibrary {
     }
 
     private static int jointIdOf(String name) {
-        String[] names = {"Root", "Thigh_R", "Leg_R", "Knee_R", "Thigh_L", "Leg_L", "Knee_L",
-                "Torso", "Chest", "Head", "Shoulder_R", "Arm_R", "Hand_R", "Tool_R",
-                "Elbow_R", "Shoulder_L", "Arm_L", "Hand_L", "Tool_L", "Elbow_L"};
-        for (int i = 0; i < names.length; i++) {
-            if (names[i].equals(name)) {
-                return i;
-            }
-        }
-        return -1;
+        return JointTable.idOf(name);
     }
 
     // ------------------------------------------------------------------
@@ -535,33 +524,6 @@ public final class YsmExtraAnimationLibrary {
     /** The template JSON file of a template id. */
     public static Path templateFile(String templateId) {
         return PUBLIC_DIR.resolve(templateId + ".json");
-    }
-
-    private static final Map<String, Set<String>> TEMPLATE_JOINT_NAME_CACHE = new ConcurrentHashMap<>();
-
-    /** Joint names overridden by one public template (used for wheel-pose retarget correction). */
-    public static Set<String> templateJointNames(String templateId) {
-        Set<String> cached = TEMPLATE_JOINT_NAME_CACHE.get(templateId);
-        if (cached != null) {
-            return cached;
-        }
-        Set<String> names = new LinkedHashSet<>();
-        try {
-            Path file = templateFile(templateId);
-            if (Files.isRegularFile(file)) {
-                JsonObject json = JsonParser.parseString(Files.readString(file, StandardCharsets.UTF_8)).getAsJsonObject();
-                if (json.has("animation") && json.get("animation").isJsonArray()) {
-                    for (var element : json.getAsJsonArray("animation")) {
-                        if (element.isJsonObject() && element.getAsJsonObject().has("name")) {
-                            names.add(element.getAsJsonObject().get("name").getAsString());
-                        }
-                    }
-                }
-            }
-        } catch (Exception ignored) {
-        }
-        TEMPLATE_JOINT_NAME_CACHE.put(templateId, names);
-        return names;
     }
 
     /**
@@ -796,7 +758,6 @@ public final class YsmExtraAnimationLibrary {
         REGISTERING.clear();
         REGISTERED.clear();
         REGISTER_QUEUE.clear();
-        TEMPLATE_JOINT_NAME_CACHE.clear();
         REMAP_CHECKED_MODELS.clear();
         REMAP_PENDING_MODELS.clear();
         descriptorFileDirty = false;

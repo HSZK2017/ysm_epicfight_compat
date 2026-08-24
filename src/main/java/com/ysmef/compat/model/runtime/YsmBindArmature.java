@@ -84,164 +84,10 @@ public final class YsmBindArmature {
     /** entity armature instance -> the pose Epic Fight last applied to it. */
     private static final Map<Armature, Pose> POSES = new HashMap<>();
 
-    /** Players currently playing a converted YSM wheel animation on the composite layer. */
-    private static final Map<java.util.UUID, java.util.Set<String>> WHEEL_JOINTS = new ConcurrentHashMap<>();
-
     /** Stale-entry guard: armatures of unloaded entities accumulate otherwise. */
     private static final int POSE_MAP_CAP = 256;
 
     private YsmBindArmature() {}
-
-    // ------------------------------------------------------------------
-    // Wheel-animation pivot correction
-    // ------------------------------------------------------------------
-
-    /**
-     * Register which joints the currently playing converted wheel animation
-     * overrides. Converted wheel clips are authored against Epic Fight's
-     * reference biped armature; when the same pose is re-applied to the YSM-bind
-     * armature, those joints need T' = L_bind^-1 x L_ref x T, otherwise the
-     * pivot offset is applied twice and large models tear apart under violent
-     * motion. Joints not overridden by the wheel animation keep the combat pose
-     * unchanged (the bind armature's corrected pivots already handle those).
-     */
-    /** The converted wheel clips are now authored in the same scaled frame as
-     *  the bind armature, so no extra per-joint world snapping is needed. */
-    private static final Set<String> WHEEL_CORRECTION_JOINTS = Set.of();
-
-    public static void setWheelPoseJoints(java.util.UUID playerId, java.util.Set<String> jointNames) {
-        if (playerId == null) {
-            return;
-        }
-        WHEEL_POSE_DIAG.remove(playerId);
-        if (jointNames == null || jointNames.isEmpty()) {
-            WHEEL_JOINTS.remove(playerId);
-        } else {
-            Set<String> filtered = jointNames.stream()
-                    .filter(WHEEL_CORRECTION_JOINTS::contains)
-                    .collect(java.util.stream.Collectors.toSet());
-            if (filtered.isEmpty()) {
-                WHEEL_JOINTS.remove(playerId);
-            } else {
-                WHEEL_JOINTS.put(playerId, Set.copyOf(filtered));
-            }
-        }
-    }
-
-    public static void clearWheelPoseJoints(java.util.UUID playerId) {
-        if (playerId != null) {
-            WHEEL_JOINTS.remove(playerId);
-        }
-    }
-
-    /** Correct the captured pose for the currently active wheel-animation joints. */
-    public static yesman.epicfight.api.animation.Pose correctWheelPose(
-            java.util.UUID playerId, yesman.epicfight.api.animation.Pose captured,
-            Armature sourceArmature, Armature targetArmature) {
-        java.util.Set<String> wheelJoints = playerId == null ? null : WHEEL_JOINTS.get(playerId);
-        if (wheelJoints == null || wheelJoints.isEmpty() || captured == null
-                || sourceArmature == null || targetArmature == null
-                || sourceArmature.rootJoint == null || targetArmature.rootJoint == null) {
-            return captured;
-        }
-        yesman.epicfight.api.animation.Pose corrected =
-                new yesman.epicfight.api.animation.Pose(new HashMap<>(captured.getJointTransformData()));
-        Map<String, OpenMatrix4f> sourceWorlds = new HashMap<>();
-        collectSourceWorlds(sourceArmature.rootJoint, new OpenMatrix4f(), captured, sourceWorlds);
-        if (correctJointRecursive(targetArmature.rootJoint, new OpenMatrix4f(), captured, corrected,
-                sourceWorlds, wheelJoints)) {
-            if (WHEEL_POSE_DIAG.add(playerId)) {
-                logWheelPoseCorrection(playerId, targetArmature, sourceWorlds, corrected, wheelJoints);
-            }
-            return corrected;
-        }
-        return captured;
-    }
-
-    private static final java.util.Set<java.util.UUID> WHEEL_POSE_DIAG = ConcurrentHashMap.newKeySet();
-
-    private static void logWheelPoseCorrection(java.util.UUID playerId, Armature targetArmature,
-                                               Map<String, OpenMatrix4f> sourceWorlds,
-                                               Pose corrected, Set<String> wheelJoints) {
-        Map<String, OpenMatrix4f> targetWorlds = new HashMap<>();
-        collectPoseWorlds(targetArmature.rootJoint, new OpenMatrix4f(), corrected, targetWorlds);
-        StringBuilder sb = new StringBuilder();
-        sb.append("YSM-EF Compat: [wheelpose] player=").append(playerId)
-                .append(" armature=").append(targetArmature)
-                .append(" corrected=").append(wheelJoints);
-        for (String name : List.of("Root", "Torso", "Chest", "Head")) {
-            OpenMatrix4f source = sourceWorlds.get(name);
-            OpenMatrix4f target = targetWorlds.get(name);
-            yesman.epicfight.api.animation.JointTransform correctedTransform = corrected.getJointTransformData().get(name);
-            sb.append(' ').append(name).append(" src=").append(fmtMat(source)).append(" tgt=").append(fmtMat(target));
-            if (correctedTransform != null) {
-                sb.append(" corr=").append(fmtMat(correctedTransform.toMatrix()));
-            } else {
-                sb.append(" corr=none");
-            }
-        }
-        YSMEpicFightCompat.LOGGER.info(sb.toString());
-    }
-
-    private static String fmtMat(OpenMatrix4f m) {
-        if (m == null) {
-            return "null";
-        }
-        return String.format("(%.3f,%.3f,%.3f)", m.m30, m.m31, m.m32);
-    }
-
-    private static void collectSourceWorlds(Joint joint, OpenMatrix4f parentWorld,
-                                            Pose captured, Map<String, OpenMatrix4f> out) {
-        collectPoseWorlds(joint, parentWorld, captured, out);
-    }
-
-    private static void collectPoseWorlds(Joint joint, OpenMatrix4f parentWorld,
-                                          Pose pose, Map<String, OpenMatrix4f> out) {
-        OpenMatrix4f local = new OpenMatrix4f(joint.getLocalTransform());
-        OpenMatrix4f transform = transformOf(pose, joint.getName());
-        OpenMatrix4f parentLocal = OpenMatrix4f.mul(parentWorld, local, null);
-        OpenMatrix4f world = OpenMatrix4f.mul(parentLocal, transform, null);
-        out.put(joint.getName(), world);
-        for (Joint child : joint.getSubJoints()) {
-            collectPoseWorlds(child, world, pose, out);
-        }
-    }
-
-    private static boolean correctJointRecursive(Joint joint, OpenMatrix4f parentTargetWorld,
-                                                 Pose captured, Pose corrected,
-                                                 Map<String, OpenMatrix4f> sourceWorlds,
-                                                 Set<String> wheelJoints) {
-        boolean correctedAny = false;
-        String name = joint.getName();
-        OpenMatrix4f local = new OpenMatrix4f(joint.getLocalTransform());
-        OpenMatrix4f parentLocal = OpenMatrix4f.mul(parentTargetWorld, local, null);
-        OpenMatrix4f world;
-        if (wheelJoints.contains(name) && sourceWorlds.containsKey(name)) {
-            OpenMatrix4f sourceWorld = sourceWorlds.get(name);
-            OpenMatrix4f parentLocalInv = OpenMatrix4f.invert(parentLocal, null);
-            OpenMatrix4f correctedLocal = OpenMatrix4f.mul(parentLocalInv, sourceWorld, null);
-            corrected.putJointData(name,
-                    yesman.epicfight.api.animation.JointTransform.fromMatrix(new OpenMatrix4f(correctedLocal)));
-            world = sourceWorld;
-            correctedAny = true;
-        } else {
-            OpenMatrix4f transform = transformOf(captured, name);
-            world = OpenMatrix4f.mul(parentLocal, transform, null);
-        }
-        for (Joint child : joint.getSubJoints()) {
-            correctedAny |= correctJointRecursive(child, world, captured, corrected, sourceWorlds, wheelJoints);
-        }
-        return correctedAny;
-    }
-
-    private static OpenMatrix4f transformOf(Pose pose, String jointName) {
-        yesman.epicfight.api.animation.JointTransform transform = pose.getJointTransformData().get(jointName);
-        return transform == null ? new OpenMatrix4f() : new OpenMatrix4f(transform.toMatrix());
-    }
-
-    public static void clearWheelAnimationFlags() {
-        WHEEL_JOINTS.clear();
-    }
 
     // ------------------------------------------------------------------
     // Per-frame pose capture
@@ -315,7 +161,6 @@ public final class YsmBindArmature {
     public static void invalidateAll() {
         BY_MODEL.clear();
         FIST_BY_MODEL.clear();
-        WHEEL_JOINTS.clear();
         synchronized (POSES) {
             POSES.clear();
         }
