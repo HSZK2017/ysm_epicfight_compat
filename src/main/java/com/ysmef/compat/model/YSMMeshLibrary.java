@@ -191,6 +191,16 @@ public class YSMMeshLibrary {
             new java.util.concurrent.ConcurrentLinkedQueue<>();
 
     /**
+     * Models whose mesh JSON was just registered but not yet instantiated
+     * (accessor.get() = JSON parse + SkinnedMesh build + compute setup, the
+     * first-draw hitch). Drained by {@link #prewarmMeshes()} on the client
+     * tick with a small time budget per tick, so the first time the player
+     * actually SEES the model, its mesh already exists.
+     */
+    private static final Set<String> PENDING_PREWARM = ConcurrentHashMap.newKeySet();
+    private static final long PREWARM_BUDGET_NANOS = 8_000_000L;
+
+    /**
      * ModernYSM-style LRU usage tracking (access order): every successful mesh
      * lookup touches its model; when the loaded model count exceeds the config
      * cap, the least-recently-used models are evicted (GPU buffers + textures +
@@ -477,6 +487,10 @@ public class YSMMeshLibrary {
                 MESHES.put(registration.modelId(), accessor);
                 YSMRuntimeModel.invalidate(registration.modelId());
                 touch(registration.modelId());
+                // Schedule the mesh instantiation for a later client tick (see
+                // prewarmMeshes) so the first actual draw does not pay the
+                // JSON-parse + mesh-build cost on the render thread.
+                PENDING_PREWARM.add(registration.modelId());
             } catch (Throwable t) {
                 FAILED_MODELS.add(registration.modelId());
                 YSMEpicFightCompat.LOGGER.warn(
@@ -689,10 +703,33 @@ public class YSMMeshLibrary {
     }
 
     /**
+     * In-memory manifest mirror (modelId -> entry). Written by workers, read by
+     * ensureModel on the render thread - the old code re-read and re-parsed
+     * the whole manifest file on every lookup, and every conversion rewrote
+     * the whole file under the class lock (O(N^2) file I/O on the render
+     * thread's critical path). Persisted by batched background writes
+     * (scheduleManifestWrite), so the render thread never touches the file.
+     */
+    private static final Map<String, JsonObject> MANIFEST_MODELS = new ConcurrentHashMap<>();
+
+    /** Incremented on every entry change; the background writer re-runs while the version moved. */
+    private static final java.util.concurrent.atomic.AtomicInteger MANIFEST_VERSION = new java.util.concurrent.atomic.AtomicInteger();
+
+    private static final Object MANIFEST_WRITE_LOCK = new Object();
+    private static volatile boolean manifestWriteInFlight = false;
+
+    /**
      * The manifest entry of one model, or null when the manifest is missing,
      * predates the current generator version, or has no entry for the model.
+     * Served from the in-memory mirror (single disk read + parse on first
+     * access); callers get a copy, so a worker's sig-refresh mutation of its
+     * own entry can never race a render-thread read.
      */
     private static JsonObject manifestEntry(String modelId) {
+        JsonObject cached = MANIFEST_MODELS.get(modelId);
+        if (cached != null) {
+            return cached.deepCopy();
+        }
         try {
             if (!Files.isRegularFile(MANIFEST)) {
                 return null;
@@ -709,7 +746,8 @@ public class YSMMeshLibrary {
                     || !modelEntry.has("rhash") || !modelEntry.has("rsize")) {
                 return null;
             }
-            return modelEntry;
+            MANIFEST_MODELS.put(modelId, modelEntry);
+            return modelEntry.deepCopy();
         } catch (Exception e) {
             return null;
         }
@@ -881,27 +919,54 @@ public class YSMMeshLibrary {
     }
 
     /**
-     * Merge one model's manifest entry into the manifest on disk, preserving
-     * every other model's entry (the lazy path converts models independently).
-     * Synchronized: restore workers (fingerprintMatches sig refreshes) and
-     * conversion workers (registerModelResult) rewrite the whole manifest and
-     * must not interleave; the lock is reentrant for callers already holding
-     * the YSMMeshLibrary monitor.
+     * Merge one model's entry into the manifest mirror and schedule a batched
+     * background persist. Lock-free: the old implementation re-read and
+     * rewrote the WHOLE manifest file under the class lock for every model
+     * conversion (O(N^2) I/O that blocked the render thread's ensureModel).
      */
-    private static synchronized void updateManifestModel(String modelId, JsonObject modelEntry) {
-        try {
-            JsonObject manifestModels = new JsonObject();
-            if (Files.isRegularFile(MANIFEST)) {
-                JsonObject manifest = JsonParser.parseString(Files.readString(MANIFEST, StandardCharsets.UTF_8)).getAsJsonObject();
-                if (manifest.has("generator") && manifest.get("generator").getAsInt() == GENERATOR_VERSION
-                        && manifest.has("models") && manifest.get("models").isJsonObject()) {
-                    manifestModels = manifest.getAsJsonObject("models");
-                }
+    private static void updateManifestModel(String modelId, JsonObject modelEntry) {
+        MANIFEST_MODELS.put(modelId, modelEntry);
+        MANIFEST_VERSION.incrementAndGet();
+        scheduleManifestWrite();
+    }
+
+    /**
+     * Persist the manifest mirror in the background, coalescing concurrent
+     * updates: one writer serializes snapshots and re-runs while entries
+     * changed during its write (see MANIFEST_VERSION). Never runs on the
+     * render thread and never holds the class lock.
+     */
+    private static void scheduleManifestWrite() {
+        if (manifestWriteInFlight) {
+            return;
+        }
+        synchronized (MANIFEST_WRITE_LOCK) {
+            if (manifestWriteInFlight) {
+                return;
             }
-            manifestModels.add(modelId, modelEntry);
-            writeManifest(manifestModels);
-        } catch (Exception e) {
-            YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to update generation manifest for '{}'", modelId);
+            manifestWriteInFlight = true;
+            LAZY_POOL.execute(() -> {
+                try {
+                    while (true) {
+                        int version = MANIFEST_VERSION.get();
+                        JsonObject models = new JsonObject();
+                        for (Map.Entry<String, JsonObject> entry : MANIFEST_MODELS.entrySet()) {
+                            models.add(entry.getKey(), entry.getValue().deepCopy());
+                        }
+                        writeManifest(models);
+                        if (MANIFEST_VERSION.get() == version) {
+                            break;
+                        }
+                        // Entries changed while writing: persist again (coalesced).
+                    }
+                } catch (Throwable t) {
+                    YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to write generation manifest", t);
+                } finally {
+                    synchronized (MANIFEST_WRITE_LOCK) {
+                        manifestWriteInFlight = false;
+                    }
+                }
+            });
         }
     }
 
@@ -955,6 +1020,8 @@ public class YSMMeshLibrary {
         // Delayed-released meshes are covered by the disposeAll() calls below;
         // drop the queue so they are not destroyed a second time on a later tick.
         PENDING_MESH_RELEASES.clear();
+        // No registration survives the invalidation, so nothing left to prewarm.
+        PENDING_PREWARM.clear();
         synchronized (ACCESS_ORDER) {
             ACCESS_ORDER.clear();
         }
@@ -1072,6 +1139,15 @@ public class YSMMeshLibrary {
 
         cleanupStaleFiles(manifestModels);
         writeManifest(manifestModels);
+        // Keep the in-memory mirror consistent with the full rewrite so later
+        // lazy conversions merge into the right baseline.
+        MANIFEST_MODELS.clear();
+        for (Map.Entry<String, JsonElement> entry : manifestModels.entrySet()) {
+            if (entry.getValue().isJsonObject()) {
+                MANIFEST_MODELS.put(entry.getKey(), entry.getValue().getAsJsonObject());
+            }
+        }
+        MANIFEST_VERSION.incrementAndGet();
 
         YSMEpicFightCompat.LOGGER.info(
                 "YSM-EF Compat: generated {} base meshes from {} YSM model packages on {} threads in {} ms",
@@ -1565,6 +1641,37 @@ public class YSMMeshLibrary {
             com.ysmef.compat.gpu.YsmIrisComputePath.disposeMesh(mesh);
         } catch (Throwable t) {
             YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to release evicted mesh", t);
+        }
+    }
+
+    /**
+     * Instantiate recently registered meshes on the render thread with a small
+     * per-tick time budget (called from the client tick). accessor.get() does
+     * the JSON parse + SkinnedMesh construction + compute setup - spread over
+     * ticks after registration instead of paying it all on the first draw.
+     */
+    public static void prewarmMeshes() {
+        if (PENDING_PREWARM.isEmpty()) {
+            return;
+        }
+        long deadline = System.nanoTime() + PREWARM_BUDGET_NANOS;
+        while (!PENDING_PREWARM.isEmpty() && System.nanoTime() < deadline) {
+            String modelId = PENDING_PREWARM.iterator().next();
+            PENDING_PREWARM.remove(modelId);
+            Meshes.MeshAccessor<YSMMesh> accessor = MESHES.get(modelId);
+            if (accessor == null || LOADED_MODELS.contains(modelId)
+                    || PENDING_MODELS.contains(modelId) || FAILED_MODELS.contains(modelId)) {
+                continue;
+            }
+            try {
+                accessor.get();
+                LOADED_MODELS.add(modelId);
+                touch(modelId);
+            } catch (Throwable t) {
+                FAILED_MODELS.add(modelId);
+                YSMEpicFightCompat.LOGGER.warn(
+                        "YSM-EF Compat: failed to prewarm mesh for '{}'", modelId, t);
+            }
         }
     }
 

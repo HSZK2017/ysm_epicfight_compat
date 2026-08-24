@@ -79,9 +79,12 @@ public class YSMReloadTrigger {
         }
         // ModernYSM-style delayed releases: drop evicted textures and meshes
         // only after a few ticks so the current frame's draws never use freed
-        // resources mid-frame. Both must run on the render thread (this tick).
+        // resources mid-frame. All must run on the render thread (this tick).
         YSMMeshLibrary.processPendingTextureReleases();
         YSMMeshLibrary.processPendingMeshReleases();
+        // Instantiate freshly registered meshes with a small per-tick budget so
+        // the first draw of a model does not pay the mesh-build hitch.
+        YSMMeshLibrary.prewarmMeshes();
         int pending = pendingRegenerateTicks;
         if (pending < 0) {
             return;

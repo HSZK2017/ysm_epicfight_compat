@@ -28,24 +28,41 @@ public final class YsmRoamingState {
     private static final Map<UUID, Map<String, Float>> PLAYER_VARS = new ConcurrentHashMap<>();
     private static final java.util.Set<String> LOGGED = ConcurrentHashMap.newKeySet();
 
+    /**
+     * Roaming evaluations run on this single-threaded daemon pool: the wheel
+     * path used to load the whole model package (file read + decrypt + parse)
+     * synchronously on the client tick thread, hitching the tick. The
+     * evaluation result is applied on the main thread (see applyRoaming), so
+     * readers of PLAYER_VARS never race a clear+putAll.
+     */
+    private static final java.util.concurrent.ExecutorService ROAMING_POOL =
+            java.util.concurrent.Executors.newSingleThreadExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "ysm-ef-roaming");
+                thread.setDaemon(true);
+                return thread;
+            });
+
     private YsmRoamingState() {}
 
     /**
      * Apply one wheel animation's roaming-timeline code for the player. Called
      * on every wheel-animation start transition, including repeated clicks of
-     * the same animation (toggles flip again).
+     * the same animation (toggles flip again). The model package load and the
+     * molang evaluation run on the background pool; only the variable map
+     * update happens on the main thread.
      */
     public static void onWheelAnimationStarted(Player player, String modelId, String animationName) {
         if (player == null || modelId == null || animationName == null || animationName.isEmpty()) {
             return;
         }
-        try {
+        UUID uuid = player.getUUID();
+        String label = "wheel animation '" + animationName + "' of model '" + modelId + "'";
+        onRoamingExpressionAsync(uuid, label, current -> {
             YsmModelPackage pkg = YsmModelPackage.load(modelId);
             ScriptAnim anim = pkg == null ? null : pkg.wheelAnim(animationName);
             if (anim == null) {
-                return;
+                return null;
             }
-            Map<String, Float> current = PLAYER_VARS.computeIfAbsent(player.getUUID(), k -> new TreeMap<>());
             Map<Integer, Double> evaluatedVars = new TreeMap<>();
             Molang.Env env = newEnv(current, evaluatedVars);
             for (ScriptAnim.Timeline timeline : anim.timelines) {
@@ -59,37 +76,21 @@ public final class YsmRoamingState {
                     Molang.compile(code).eval(env);
                 }
             }
-
-            Map<String, Float> updated = collectRoaming(evaluatedVars);
-            synchronized (current) {
-                current.clear();
-                current.putAll(updated);
-            }
-            String logKey = player.getUUID() + ":" + updated;
-            if (LOGGED.add(logKey)) {
-                YSMEpicFightCompat.LOGGER.info(
-                        "YSM-EF Compat: [roaming] wheel animation '{}' of model '{}' updated roaming vars to {}",
-                        animationName, modelId, updated);
-            }
-        } catch (Throwable t) {
-            YSMEpicFightCompat.LOGGER.warn(
-                    "YSM-EF Compat: failed to track roaming variables for wheel animation '{}' of model '{}'",
-                    animationName, modelId, t);
-        }
+            return collectRoaming(evaluatedVars);
+        });
     }
 
     /**
      * Capture a config-driven expression executed by YSM's animation roulette
-     * (clothing/headwear/accessory switches). YSM's script processor may be idle
-     * while its renderer is replaced in Epic Fight battle mode, so replay the
-     * expression locally to keep the visibility mirror up to date.
+     * (clothing/headwear/accessory switches), evaluated off-thread.
      */
     public static void onConfigExpression(Player player, String expression) {
         if (player == null || expression == null || expression.isBlank()) {
             return;
         }
-        try {
-            Map<String, Float> current = PLAYER_VARS.computeIfAbsent(player.getUUID(), k -> new TreeMap<>());
+        UUID uuid = player.getUUID();
+        String label = "roulette config expression '" + expression + "'";
+        onRoamingExpressionAsync(uuid, label, current -> {
             Map<Integer, Double> evaluatedVars = new TreeMap<>();
             Molang.Env env = newEnv(current, evaluatedVars);
             String[] parts = expression.split(";");
@@ -99,20 +100,43 @@ public final class YsmRoamingState {
                 }
                 Molang.compile(part.trim()).eval(env);
             }
-            Map<String, Float> updated = collectRoaming(evaluatedVars);
-            synchronized (current) {
-                current.clear();
-                current.putAll(updated);
+            return collectRoaming(evaluatedVars);
+        });
+    }
+
+    /**
+     * Evaluate one roaming expression on the background pool and apply the
+     * result on the main thread. {@code compute} returns null to skip the
+     * update entirely (e.g. no such animation), or the new roaming map.
+     */
+    private static void onRoamingExpressionAsync(UUID uuid, String label,
+                                                 java.util.function.Function<Map<String, Float>, Map<String, Float>> compute) {
+        ROAMING_POOL.execute(() -> {
+            try {
+                Map<String, Float> current = PLAYER_VARS.get(uuid);
+                Map<String, Float> updated = compute.apply(current == null ? java.util.Collections.emptyMap() : current);
+                if (updated == null) {
+                    return;
+                }
+                net.minecraft.client.Minecraft.getInstance().execute(() -> applyRoaming(uuid, updated, label));
+            } catch (Throwable t) {
+                YSMEpicFightCompat.LOGGER.warn(
+                        "YSM-EF Compat: failed to track roaming variables for {}", label, t);
             }
-            String logKey = player.getUUID() + ":cfg:" + expression + "->" + updated;
-            if (LOGGED.add(logKey)) {
-                YSMEpicFightCompat.LOGGER.info(
-                        "YSM-EF Compat: [roaming] roulette config expression '{}' updated roaming vars to {}",
-                        expression, updated);
-            }
-        } catch (Throwable t) {
-            YSMEpicFightCompat.LOGGER.warn(
-                    "YSM-EF Compat: failed to track roulette config expression '{}'", expression, t);
+        });
+    }
+
+    /** Main thread: replace the player's roaming map and log the change once. */
+    private static void applyRoaming(UUID uuid, Map<String, Float> updated, String label) {
+        Map<String, Float> current = PLAYER_VARS.computeIfAbsent(uuid, k -> new TreeMap<>());
+        synchronized (current) {
+            current.clear();
+            current.putAll(updated);
+        }
+        String logKey = uuid + ":" + label + "->" + updated;
+        if (LOGGED.add(logKey)) {
+            YSMEpicFightCompat.LOGGER.info(
+                    "YSM-EF Compat: [roaming] {} updated roaming vars to {}", label, updated);
         }
     }
 
