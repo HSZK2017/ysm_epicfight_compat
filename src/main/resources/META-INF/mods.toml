@@ -1,9 +1,9 @@
-modLoader="javafml"
+﻿modLoader="javafml"
 loaderVersion="[47,)"
 license="MIT"
 [[mods]]
 modId="ysm_epicfight_compat"
-version="1.8.0"
+version="1.8.1"
 displayName="YSM Epic Fight Compat"
 description = '''
 Bridges Yes Steve Model custom player models into the Epic Fight combat animation system.

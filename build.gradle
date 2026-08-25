@@ -122,6 +122,10 @@ test {
 jar.finalizedBy('reobfJar')
 
 jarJar.enable()
+// The `build` aggregate task already pulls reobfJarJar in, but a bare
+// `gradlew jarJar` does not; without this the -all.jar keeps named mappings
+// and crashes on a dedicated server (NoSuchMethodError on srg-renamed methods).
+tasks.named('jarJar').configure { finalizedBy('reobfJarJar') }
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'

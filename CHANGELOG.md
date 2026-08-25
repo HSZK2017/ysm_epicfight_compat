@@ -1,5 +1,23 @@
 # 更新日志 / Changelog
 
+## v1.8.1 — 2026-08
+
+### 中文
+
+#### 修复
+
+- **多人服务器进服即被踢出**（Epic Fight 20.14.17 动画注册表一致性校验）：EF 服务器会把每个玩家客户端动画注册表与服务器注册表逐项比对，任何不一致直接 `disconnect`（`gui.epicfight.warn.animation_unsync`）。本模组的轮盘模板动画（`ysm_epicfight_compat:public/pub_*`）由各客户端按自身 YSM 模型数据在运行时生成，专用服务器上不可能存在、不同玩家的 id 也互不相同，因此**任何使用轮盘桥的玩家连入 EF 服务器都会被踢**。修复：服务器端 mixin（`AnimationManagerValidationMixin`，common 侧加载）重写 `validateClientAnimationRegistry`，双向豁免本模组生成的模板（服务器注册的与客户端注册的均不计入差异）；判定逻辑（`AnimationRegistryGuard`）按字母数字规范化匹配，同时覆盖历史版本产生的畸形注册名（缺失 `:` `/` 或 `_` 变空格）；初始化时额外调用 `AnimationManager.addNoWarningModId` 对齐官方豁免机制
+- **`-all.jar` 构建产物缺失 reobf**：`gradlew jarJar` 单独执行不会触发 `reobfJarJar`，产物保留 named 映射，在专用服务器上直接崩溃（`NoSuchMethodError: MinecraftServer.getPlayerList`）。已在 `build.gradle` 为 `jarJar` 补上 `finalizedBy('reobfJarJar')`
+- 测试：新增 `AnimationRegistryGuardTest`（规范名/畸形变体/无关命名空间/大小写）
+
+### English
+
+#### Fixes
+
+- **Kicked on join in multiplayer** (Epic Fight 20.14.17 animation registry consistency check): the server compares each player's client animation registry against the server's and disconnects on any mismatch (`gui.epicfight.warn.animation_unsync`). Wheel templates (`ysm_epicfight_compat:public/pub_*`) are generated per client from that client's own YSM model data, so they can never exist on a dedicated server and ids differ between machines - any player using the wheel bridge was kicked. Fix: server-side mixin (`AnimationManagerValidationMixin`, loaded on the common side) rewrites `validateClientAnimationRegistry` to exempt generated templates on both sides; the matcher (`AnimationRegistryGuard`) normalizes names to alphanumerics to also cover mangled legacy ids; `AnimationManager.addNoWarningModId` is called at init to align with the official exemption mechanism
+- **`-all.jar` artifacts missing reobf**: a bare `gradlew jarJar` does not trigger `reobfJarJar`, leaving named mappings in the artifact and crashing dedicated servers (`NoSuchMethodError: MinecraftServer.getPlayerList`). `jarJar.finalizedBy('reobfJarJar')` added in `build.gradle`
+- Tests: new `AnimationRegistryGuardTest` (canonical/mangled names, unrelated namespaces, case variants)
+
 ## v1.8.0 — 2026-08
 
 ### 中文
