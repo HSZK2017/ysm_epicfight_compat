@@ -24,6 +24,20 @@ public final class YsmFileCrypto {
     private static final long SEED_RES_VERIFICATION = 0xA62B1A2C43842BC3L;
     private static final long SEED_FILE_VERIFICATION = 0x9E5599DB80C67C29L;
 
+    /**
+     * Upper bound for the fully decompressed model payload. A valid package is a
+     * single avatar (geometry + textures + animations), so anything beyond this
+     * is either corrupt or a deliberate decompression bomb; cap it before
+     * ByteArrayOutputStream can exhaust the heap. Overridable with the
+     * ysm_ef_compat.max_decompressed_bytes system property for unusually large
+     * (but trusted) packages.
+     */
+    private static final long MAX_DECOMPRESSED_BYTES = Math.max(1L,
+            Long.getLong("ysm_ef_compat.max_decompressed_bytes", 512L * 1024L * 1024L).longValue());
+    /** Mirrors YsmModelPackage's source-file cap for direct decrypt callers. */
+    private static final long MAX_ENCRYPTED_PACKAGE_BYTES = Math.max(1L,
+            Long.getLong("ysm_ef_compat.max_package_bytes", 512L * 1024L * 1024L).longValue());
+
     private YsmFileCrypto() {}
 
     /**
@@ -34,13 +48,24 @@ public final class YsmFileCrypto {
         if (fileData == null || fileData.length < 8 + 24 + 32 + 8) {
             throw new IllegalArgumentException("Invalid YSM file: too short");
         }
+        if (fileData.length > MAX_ENCRYPTED_PACKAGE_BYTES) {
+            throw new IllegalArgumentException(
+                    "Invalid YSM file: package exceeds the " + MAX_ENCRYPTED_PACKAGE_BYTES + " byte safety limit");
+        }
 
         int headerLength = 0;
         while (headerLength < fileData.length && fileData[headerLength] != 0x00) {
             headerLength++;
         }
+        if (headerLength >= fileData.length) {
+            throw new IllegalArgumentException("Invalid YSM file: missing header terminator");
+        }
 
         int tailOffset = fileData.length - 64;
+        int ptrBinaryData = headerLength + 1;
+        if (tailOffset < ptrBinaryData + 4) {
+            throw new IllegalArgumentException("Invalid YSM file: encrypted payload too short");
+        }
         byte[] key = Arrays.copyOfRange(fileData, tailOffset, tailOffset + 32);
         byte[] iv = Arrays.copyOfRange(fileData, tailOffset + 32, tailOffset + 56);
 
@@ -55,7 +80,6 @@ public final class YsmFileCrypto {
             throw new IllegalArgumentException("Invalid YSM file: file hash mismatch (corrupted or truncated file?)");
         }
 
-        int ptrBinaryData = headerLength + 1;
         int crypto = ByteBuffer.wrap(fileData, ptrBinaryData, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
         if (crypto != 3) {
             throw new IllegalArgumentException("Invalid YSM file: crypto version is not 3");
@@ -72,6 +96,9 @@ public final class YsmFileCrypto {
 
         int n = ((xorredData[0] & 0xFF) | ((xorredData[1] & 0xFF) << 8)) & 0x3FF;
         int zstdOffset = 2 + n;
+        if (zstdOffset > xorredData.length) {
+            throw new IllegalArgumentException("Invalid YSM file: zstd payload offset out of range");
+        }
         byte[] zstdData = Arrays.copyOfRange(xorredData, zstdOffset, xorredData.length);
 
         byte[] washed = washZstd(zstdData);
@@ -81,14 +108,22 @@ public final class YsmFileCrypto {
     /**
      * Decompress a standard zstd frame. YSM's frames do not carry a content-size
      * field, so a streaming decompressor is used instead of size-based allocation.
+     * The total output is capped to {@link #MAX_DECOMPRESSED_BYTES} so a malicious
+     * or corrupt frame cannot balloon the heap.
      */
     private static byte[] zstdDecompress(byte[] data) {
         try (com.github.luben.zstd.ZstdInputStream stream =
                      new com.github.luben.zstd.ZstdInputStream(new java.io.ByteArrayInputStream(data));
              java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
             byte[] buf = new byte[65536];
+            long total = 0L;
             int read;
             while ((read = stream.read(buf)) != -1) {
+                total += read;
+                if (total > MAX_DECOMPRESSED_BYTES) {
+                    throw new java.io.IOException(
+                            "zstd output exceeds the " + MAX_DECOMPRESSED_BYTES + " byte safety limit");
+                }
                 out.write(buf, 0, read);
             }
             return out.toByteArray();

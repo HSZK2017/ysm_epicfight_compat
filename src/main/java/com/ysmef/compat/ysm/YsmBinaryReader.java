@@ -20,8 +20,8 @@ import java.util.Map;
  * - the texture table (name -> PNG data)
  * - model properties (width/height scale, default texture name)
  *
- * All multi-byte numbers are big-endian (Netty ByteBuf convention); varints are
- * standard LEB128.
+ * All multi-byte numbers are little-endian (matching the C++ YSM writer and
+ * OpenYSM's YSMByteBuf); varints are standard LEB128.
  */
 public class YsmBinaryReader {
 
@@ -263,6 +263,9 @@ public class YsmBinaryReader {
         }
 
         int animationCount = r.readVarInt();
+        if (animationCount < 0 || animationCount > 1_000_000) {
+            throw new IllegalStateException("unreasonable animation count: " + animationCount);
+        }
         for (int i = 0; i < animationCount; ++i) {
             r.readVarInt();
             r.readString();
@@ -272,6 +275,9 @@ public class YsmBinaryReader {
         skipAnimationControllers(r, format, true);
 
         int textureCount = r.readVarInt();
+        if (textureCount < 0 || textureCount > 1_000_000) {
+            throw new IllegalStateException("unreasonable texture count: " + textureCount);
+        }
         for (int i = 0; i < textureCount; i++) {
             String name = r.readString();
             r.readString();
@@ -295,6 +301,9 @@ public class YsmBinaryReader {
         }
 
         int modelTotalCount = r.readVarInt();
+        if (modelTotalCount < 0 || modelTotalCount > 1_000_000) {
+            throw new IllegalStateException("unreasonable model count: " + modelTotalCount);
+        }
         for (int i = 0; i < modelTotalCount; ++i) {
             int modelType = r.readVarInt();
             r.readString();
@@ -311,13 +320,26 @@ public class YsmBinaryReader {
 
     private static List<BinaryBone> readGeometry(Reader r) {
         int boneCount = r.readVarInt();
-        List<BinaryBone> bones = new ArrayList<>(boneCount);
+        // The count is read from untrusted package data: reject absurd values and
+        // never preallocate from it directly (a corrupt huge count would allocate
+        // a massive backing array). The loop below still terminates as soon as the
+        // reader runs out of bytes.
+        if (boneCount < 0 || boneCount > 1_000_000) {
+            throw new IllegalStateException("unreasonable bone count: " + boneCount);
+        }
+        List<BinaryBone> bones = new ArrayList<>(boneCount > 0 ? Math.min(boneCount, 256) : 16);
         for (int i = 0; i < boneCount; i++) {
             BinaryBone bone = new BinaryBone();
             bone.parentName = r.readString();
             int cubeCount = r.readVarInt();
+            if (cubeCount < 0 || cubeCount > 1_000_000) {
+                throw new IllegalStateException("unreasonable cube count: " + cubeCount);
+            }
             for (int j = 0; j < cubeCount; j++) {
                 int faceCount = r.readVarInt();
+                if (faceCount < 0 || faceCount > 1_000_000) {
+                    throw new IllegalStateException("unreasonable face count: " + faceCount);
+                }
                 for (int k = 0; k < faceCount; k++) {
                     BinaryFace face = new BinaryFace();
                     face.nx = r.readFloat();
@@ -649,6 +671,9 @@ public class YsmBinaryReader {
      */
     private static void readAnimations(Reader r, int format, Map<String, com.ysmef.compat.ysm.script.ScriptAnim> out) {
         int animationCount = r.readVarInt();
+        if (animationCount < 0 || animationCount > 1_000_000) {
+            throw new IllegalStateException("unreasonable animation count: " + animationCount);
+        }
         for (int animIndex = 0; animIndex < animationCount; ++animIndex) {
             com.ysmef.compat.ysm.script.ScriptAnim anim = new com.ysmef.compat.ysm.script.ScriptAnim();
             anim.name = r.readString();
@@ -906,6 +931,9 @@ public class YsmBinaryReader {
         }
 
         void skipBytes(int n) {
+            if (n < 0 || n > buf.remaining()) {
+                throw new IllegalStateException("Invalid skip length " + n + ", remaining " + buf.remaining());
+            }
             buf.position(buf.position() + n);
         }
 
@@ -913,11 +941,14 @@ public class YsmBinaryReader {
             int value = 0;
             int position = 0;
             while (true) {
+                if (!buf.hasRemaining()) {
+                    throw new IllegalStateException("VarInt exceeds remaining data");
+                }
                 byte currentByte = buf.get();
                 value |= (currentByte & 0x7F) << position;
                 if ((currentByte & 0x80) == 0) break;
                 position += 7;
-                if (position >= 64) throw new IllegalStateException("VarInt too big");
+                if (position >= 35) throw new IllegalStateException("VarInt too big");
             }
             return value;
         }
@@ -925,6 +956,9 @@ public class YsmBinaryReader {
         String readString() {
             int len = readVarInt();
             if (len == 0) return "";
+            if (len < 0 || len > buf.remaining()) {
+                throw new IllegalStateException("Invalid string length " + len + ", remaining " + buf.remaining());
+            }
             byte[] bytes = new byte[len];
             buf.get(bytes);
             return new String(bytes, StandardCharsets.UTF_8);
@@ -933,6 +967,9 @@ public class YsmBinaryReader {
         byte[] readByteArray() {
             int len = readVarInt();
             if (len == 0) return new byte[0];
+            if (len < 0 || len > buf.remaining()) {
+                throw new IllegalStateException("Invalid byte array length " + len + ", remaining " + buf.remaining());
+            }
             byte[] bytes = new byte[len];
             buf.get(bytes);
             return bytes;

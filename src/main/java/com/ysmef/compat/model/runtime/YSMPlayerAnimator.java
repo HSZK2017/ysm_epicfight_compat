@@ -939,59 +939,62 @@ public final class YSMPlayerAnimator implements Molang.Env {
     }
 
     @Override
-    public double callFunction(String name, double[] args) {
+    public double callFunction(String name, double[] args, int argCount) {
         switch (name) {
             case "math.sin":
-                return Math.sin(Math.toRadians(args[0]));
+                return argCount < 1 ? 0.0 : Math.sin(Math.toRadians(args[0]));
             case "math.cos":
-                return Math.cos(Math.toRadians(args[0]));
+                return argCount < 1 ? 0.0 : Math.cos(Math.toRadians(args[0]));
             case "math.tan":
-                return Math.tan(Math.toRadians(args[0]));
+                return argCount < 1 ? 0.0 : Math.tan(Math.toRadians(args[0]));
             case "math.asin":
-                return Math.toDegrees(Math.asin(args[0]));
+                return argCount < 1 ? 0.0 : Math.toDegrees(Math.asin(args[0]));
             case "math.acos":
-                return Math.toDegrees(Math.acos(args[0]));
+                return argCount < 1 ? 0.0 : Math.toDegrees(Math.acos(args[0]));
             case "math.atan":
-                return Math.toDegrees(Math.atan(args[0]));
+                return argCount < 1 ? 0.0 : Math.toDegrees(Math.atan(args[0]));
             case "math.atan2":
-                return Math.toDegrees(Math.atan2(args[0], args[1]));
+                return argCount < 2 ? 0.0 : Math.toDegrees(Math.atan2(args[0], args[1]));
             case "math.abs":
-                return Math.abs(args[0]);
+                return argCount < 1 ? 0.0 : Math.abs(args[0]);
             case "math.floor":
-                return Math.floor(args[0]);
+                return argCount < 1 ? 0.0 : Math.floor(args[0]);
             case "math.ceil":
-                return Math.ceil(args[0]);
+                return argCount < 1 ? 0.0 : Math.ceil(args[0]);
             case "math.round":
-                return Math.round(args[0]);
+                return argCount < 1 ? 0.0 : Math.round(args[0]);
             case "math.trunc":
-                return (long) (args[0] >= 0 ? Math.floor(args[0]) : Math.ceil(args[0]));
+                return argCount < 1 ? 0.0 : (long) (args[0] >= 0 ? Math.floor(args[0]) : Math.ceil(args[0]));
             case "math.sqrt":
-                return args[0] < 0 ? 0 : Math.sqrt(args[0]);
+                return argCount < 1 ? 0.0 : args[0] < 0 ? 0 : Math.sqrt(args[0]);
             case "math.pow":
-                return Math.pow(args[0], args[1]);
+                return argCount < 2 ? 0.0 : Math.pow(args[0], args[1]);
             case "math.exp":
-                return Math.exp(args[0]);
+                return argCount < 1 ? 0.0 : Math.exp(args[0]);
             case "math.ln":
-                return args[0] <= 0 ? 0 : Math.log(args[0]);
+                return argCount < 1 ? 0.0 : args[0] <= 0 ? 0 : Math.log(args[0]);
             case "math.log":
-                return args[0] <= 0 ? 0 : Math.log(args[0]);
+                return argCount < 1 ? 0.0 : args[0] <= 0 ? 0 : Math.log(args[0]);
             case "math.lerp":
-                return args[0] + (args[1] - args[0]) * args[2];
+                return argCount < 3 ? 0.0 : args[0] + (args[1] - args[0]) * args[2];
             case "math.min":
-                return Math.min(args[0], args[1]);
+                return argCount < 1 ? 0.0 : argCount < 2 ? args[0] : Math.min(args[0], args[1]);
             case "math.max":
-                return Math.max(args[0], args[1]);
+                return argCount < 1 ? 0.0 : argCount < 2 ? args[0] : Math.max(args[0], args[1]);
             case "math.clamp":
-                return Math.max(args[1], Math.min(args[2], args[0]));
+                return argCount < 3 ? 0.0 : Math.max(args[1], Math.min(args[2], args[0]));
             case "math.mod":
-                return args[1] == 0 ? 0 : args[0] % args[1];
+                return argCount < 2 ? 0.0 : args[1] == 0 ? 0 : args[0] % args[1];
             case "math.random":
-                return args[0] + Math.random() * (args[1] - args[0]);
+                return argCount < 2 ? 0.0 : args[0] + Math.random() * (args[1] - args[0]);
             case "math.pi":
                 return Math.PI;
             case "math.sign":
-                return Math.signum(args[0]);
+                return argCount < 1 ? 0.0 : Math.signum(args[0]);
             case "query.position_delta":
+                if (argCount < 1) {
+                    return 0.0;
+                }
                 int axis = (int) args[0];
                 return axis >= 0 && axis < 3 ? posDelta[axis] : 0;
             default:

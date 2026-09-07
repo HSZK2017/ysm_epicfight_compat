@@ -135,8 +135,19 @@ public final class YSMMeshSelector {
         if (modelId.equals(prev)) {
             return;
         }
+        // Do NOT enumerate all locally available models here: this runs on the
+        // render thread and the old availableModelIds() call walked every YSM
+        // model folder recursively, hitching the frame on the first missing
+        // model of each player.
         YSMEpicFightCompat.LOGGER.warn(
-                "YSM-EF Compat: no converted base mesh for model '{}' (entity '{}', texture '{}'). Falling back to Epic Fight default mesh. Available: {}",
-                modelId, displayName, textureName, YSMMeshLibrary.availableModelIds());
+                "YSM-EF Compat: no converted base mesh for model '{}' (entity '{}', texture '{}'). Falling back to Epic Fight default mesh.",
+                modelId, displayName, textureName);
+    }
+
+    /** Forget per-player diagnostic state (world leave). */
+    public static void clear() {
+        LOGGED_MESH_USE.clear();
+        LOGGED_MESH_MISSING.clear();
+        DIAG_NO_MODEL.clear();
     }
 }

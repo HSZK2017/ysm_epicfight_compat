@@ -25,15 +25,25 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class YsmRoamingState {
 
+    /**
+     * Immutable snapshots only: every published value is an unmodifiable map, so
+     * the render thread can iterate it while the pool publishes a replacement.
+     */
     private static final Map<UUID, Map<String, Float>> PLAYER_VARS = new ConcurrentHashMap<>();
     private static final java.util.Set<String> LOGGED = ConcurrentHashMap.newKeySet();
+    /** Bumped on world leave; in-flight tasks of the old world discard their results. */
+    private static final java.util.concurrent.atomic.AtomicLong GENERATION =
+            new java.util.concurrent.atomic.AtomicLong();
 
     /**
      * Roaming evaluations run on this single-threaded daemon pool: the wheel
      * path used to load the whole model package (file read + decrypt + parse)
      * synchronously on the client tick thread, hitching the tick. The
-     * evaluation result is applied on the main thread (see applyRoaming), so
-     * readers of PLAYER_VARS never race a clear+putAll.
+     * single-threaded executor also serializes all per-player updates in
+     * submission order, so rapid wheel clicks can no longer compute two
+     * updates from the same stale base state (each task reads the snapshot
+     * published by the previous task). Results are published as immutable
+     * snapshots directly from the pool; readers never race a clear+putAll.
      */
     private static final java.util.concurrent.ExecutorService ROAMING_POOL =
             java.util.concurrent.Executors.newSingleThreadExecutor(runnable -> {
@@ -48,8 +58,8 @@ public final class YsmRoamingState {
      * Apply one wheel animation's roaming-timeline code for the player. Called
      * on every wheel-animation start transition, including repeated clicks of
      * the same animation (toggles flip again). The model package load and the
-     * molang evaluation run on the background pool; only the variable map
-     * update happens on the main thread.
+     * molang evaluation run on the background pool; results are published as
+     * immutable snapshots, serialized in submission order.
      */
     public static void onWheelAnimationStarted(Player player, String modelId, String animationName) {
         if (player == null || modelId == null || animationName == null || animationName.isEmpty()) {
@@ -105,20 +115,28 @@ public final class YsmRoamingState {
     }
 
     /**
-     * Evaluate one roaming expression on the background pool and apply the
-     * result on the main thread. {@code compute} returns null to skip the
-     * update entirely (e.g. no such animation), or the new roaming map.
+     * Evaluate one roaming expression on the single-threaded background pool and
+     * publish the result as an immutable snapshot. {@code compute} returns null
+     * to skip the update entirely (e.g. no such animation), or the new roaming
+     * map. Because the pool is single-threaded, the next task always reads the
+     * snapshot published by the previous task - no lost toggles on rapid clicks.
      */
     private static void onRoamingExpressionAsync(UUID uuid, String label,
                                                  java.util.function.Function<Map<String, Float>, Map<String, Float>> compute) {
+        long generation = GENERATION.get();
         ROAMING_POOL.execute(() -> {
             try {
                 Map<String, Float> current = PLAYER_VARS.get(uuid);
-                Map<String, Float> updated = compute.apply(current == null ? java.util.Collections.emptyMap() : current);
+                Map<String, Float> updated = compute.apply(current == null
+                        ? java.util.Collections.emptyMap() : current);
                 if (updated == null) {
                     return;
                 }
-                net.minecraft.client.Minecraft.getInstance().execute(() -> applyRoaming(uuid, updated, label));
+                if (generation != GENERATION.get()) {
+                    // world was left while the expression evaluated; drop the stale state
+                    return;
+                }
+                publishRoaming(uuid, updated, label, generation);
             } catch (Throwable t) {
                 YSMEpicFightCompat.LOGGER.warn(
                         "YSM-EF Compat: failed to track roaming variables for {}", label, t);
@@ -126,12 +144,18 @@ public final class YsmRoamingState {
         });
     }
 
-    /** Main thread: replace the player's roaming map and log the change once. */
-    private static void applyRoaming(UUID uuid, Map<String, Float> updated, String label) {
-        Map<String, Float> current = PLAYER_VARS.computeIfAbsent(uuid, k -> new TreeMap<>());
-        synchronized (current) {
-            current.clear();
-            current.putAll(updated);
+    /** Publish an immutable snapshot and log the change once (pool thread). */
+    private static void publishRoaming(UUID uuid, Map<String, Float> updated, String label, long generation) {
+        if (generation != GENERATION.get()) {
+            return;
+        }
+        Map<String, Float> snapshot = java.util.Collections.unmodifiableMap(new TreeMap<>(updated));
+        PLAYER_VARS.put(uuid, snapshot);
+        // Close the clear() race: if the world was left between the pre-check and
+        // the put, remove the just-published stale snapshot.
+        if (generation != GENERATION.get()) {
+            PLAYER_VARS.remove(uuid, snapshot);
+            return;
         }
         String logKey = uuid + ":" + label + "->" + updated;
         if (LOGGED.add(logKey)) {
@@ -149,8 +173,9 @@ public final class YsmRoamingState {
         return vars == null ? Collections.emptyMap() : vars;
     }
 
-    /** Forget all tracked roaming state (world leave). */
+    /** Forget all tracked roaming state (world leave); stale in-flight tasks discard themselves. */
     public static void clear() {
+        GENERATION.incrementAndGet();
         PLAYER_VARS.clear();
         LOGGED.clear();
     }
@@ -211,34 +236,34 @@ public final class YsmRoamingState {
             }
 
             @Override
-            public double callFunction(String name, double[] args) {
+            public double callFunction(String name, double[] args, int argCount) {
                 switch (name) {
                     case "math.sin":
-                        return Math.sin(Math.toRadians(args[0]));
+                        return argCount < 1 ? 0.0 : Math.sin(Math.toRadians(args[0]));
                     case "math.cos":
-                        return Math.cos(Math.toRadians(args[0]));
+                        return argCount < 1 ? 0.0 : Math.cos(Math.toRadians(args[0]));
                     case "math.tan":
-                        return Math.tan(Math.toRadians(args[0]));
+                        return argCount < 1 ? 0.0 : Math.tan(Math.toRadians(args[0]));
                     case "math.asin":
-                        return Math.toDegrees(Math.asin(args[0]));
+                        return argCount < 1 ? 0.0 : Math.toDegrees(Math.asin(args[0]));
                     case "math.acos":
-                        return Math.toDegrees(Math.acos(args[0]));
+                        return argCount < 1 ? 0.0 : Math.toDegrees(Math.acos(args[0]));
                     case "math.atan":
-                        return Math.toDegrees(Math.atan(args[0]));
+                        return argCount < 1 ? 0.0 : Math.toDegrees(Math.atan(args[0]));
                     case "math.abs":
-                        return Math.abs(args[0]);
+                        return argCount < 1 ? 0.0 : Math.abs(args[0]);
                     case "math.floor":
-                        return Math.floor(args[0]);
+                        return argCount < 1 ? 0.0 : Math.floor(args[0]);
                     case "math.ceil":
-                        return Math.ceil(args[0]);
+                        return argCount < 1 ? 0.0 : Math.ceil(args[0]);
                     case "math.round":
-                        return Math.round(args[0]);
+                        return argCount < 1 ? 0.0 : Math.round(args[0]);
                     case "math.clamp":
-                        return Math.max(args[1], Math.min(args[2], args[0]));
+                        return argCount < 3 ? 0.0 : Math.max(args[1], Math.min(args[2], args[0]));
                     case "math.max":
-                        return Math.max(args[0], args.length > 1 ? args[1] : args[0]);
+                        return argCount < 1 ? 0.0 : argCount < 2 ? args[0] : Math.max(args[0], args[1]);
                     case "math.min":
-                        return Math.min(args[0], args.length > 1 ? args[1] : args[0]);
+                        return argCount < 1 ? 0.0 : argCount < 2 ? args[0] : Math.min(args[0], args[1]);
                     default:
                         return 0.0;
                 }

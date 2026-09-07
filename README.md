@@ -17,6 +17,7 @@
 | **GPU 开关联动** | ModernYSM 加载时链接其 `UseGpuRenderer`/`UseCompatibilityRenderer` 同步开关；OpenYSM/LegacyYSM 使用本模组配置，并可在 YSM 模型选择界面勾选 |
 | **Molang 运行时** | 每玩家脚本求值：平行（变体可见性）、状态（idle/walk/...）、条件（hold/use/vehicle）动画，LOD 距离降频，异步求值 |
 | **懒加载与 LRU** | 模型按需转换、验证缓存恢复、LRU 淘汰（GPU 缓冲/纹理/脚本整体释放）、世代废弃任务 |
+| **输入安全** | 模型 ID/包内路径穿越与符号链接逃逸防护；`.ysm` 源包与解压载荷大小上限；解析计数/递归深度防御，损坏模型安全降级 |
 | **多人联机同步** | 独立通道同步玩家模型选择（专用服务器安装本模组） |
 | **TLM 女仆兼容** | 女仆 YSM 模型渲染挂钩（EpicFight_TouhouLittleMaid 可选）。TLM 自带 GEO 模型包由 EFTLM 模组自行处理 |
 
@@ -64,7 +65,7 @@
 
 | 类 | 职责 |
 |---|---|
-| `YsmModelPackage` | 统一入口——按 modelId 加载目录包或二进制包，返回几何 + 贴图 + 属性 + 脚本动画 (`ScriptAnim`) |
+| `YsmModelPackage` | 统一入口——按 modelId 加载目录包或二进制包，返回几何 + 贴图 + 属性 + 脚本动画 (`ScriptAnim`)；modelId 与包内路径均有穿越/符号链接防护，源文件大小受上限保护 |
 | `YsmBinaryReader` | 二进制格式反序列化：`format` 版本链 (legacy V1/V15、modern 16+)，几何段、贴图表、动画；字节序 LE，VarInt LEB128 |
 | `YsmFileCrypto` | `.ysm` 解密管线：XChaCha20 解密 → MT19937 白化 → 魔改 zstd 块头洗牌 → 标准 zstd 解压 |
 | `ScriptJson` / `ScriptAnim` / `Molang` | 脚本动画解析与编译；Molang 求值器（查询/变量整数 ID 内联、零分配函数调用、常量折叠，见性能节） |
@@ -159,7 +160,9 @@
 | **逐实体动画器清扫** | 每 15s 清除 60s 未使用的逐玩家动画器（大模型每个 ~300-400KB），玩家离开后不再残留 |
 | **运行时模型后台预编译** | 网格转换/缓存恢复后立即在后台编译 Molang 脚本（大模型 ~100ms 不再卡首帧）；渲染线程遇在途预编译先回退显示 |
 | **异步脚本求值** | 非本地玩家的 Molang 求值在后台单线程池（双缓冲发布），渲染线程只做网格推送；LOD 距离降频（40/64 格 → 30/10Hz） |
-| **Molang 求值优化** | 查询/变量路径编译期内联为整数 ID（`double[]` 槽位替代 HashMap）；函数调用参数零分配（ThreadLocal 复用）；变量引用编译期预分类；纯数字表达式常量折叠 |
+| **Molang 求值优化** | 查询/变量路径编译期内联为整数 ID（`double[]` 槽位替代 HashMap）；函数调用参数零分配（ThreadLocal 复用）；变量引用编译期预分类；纯数字表达式常量折叠；函数调用携带精确 `argCount`，不复用陈旧参数槽 |
+| **热路径探测缓存** | YSM 预览模式 250ms TTL；EF compute setup 按网格实例缓存；CPU GL 能力只探测一次；shader-pack 检测全项目单一实现 |
+| **轮盘映射 sidecar** | 每模型一个小 JSON 原子写（旧聚合文件兼容读取），转换期间负缓存避免每 tick 读盘；`exactHash` 复用单个 ByteBuffer，无逐 float 堆分配 |
 | **GPU 路径** | 静态几何一次上传 + 每帧仅关节矩阵（战斗模式 ~3KB 而非 ~114KB）+ 单次 draw call；与 EF 计算路径数值等价（模拟验证） |
 | **CPU 蒙皮路径** | 无计算着色器/SSBO 设备的兜底渲染：逐顶点 CPU 蒙皮（大模型 ~1.2 万顶点/帧）写入复用缓冲，每帧零分配；每网格仅 24B/顶点动态 VBO（内存占用远低于计算/GPU 管线，适配 <2G 内存工况）；单次 draw call |
 | **纹理管线** | 图片解码移入后台池；GL 上传按每帧 10ms 预算分时排空（大纹理不再卡首绘）；淘汰纹理延迟释放防止闪烁 |
@@ -187,6 +190,8 @@
 | `-Dysm_ef_compat.disable_gpu=true` | 禁用 GPU 蒙皮路径（回退到 EF 计算着色器 / 本模组 CPU 蒙皮） |
 | `-Dysm_ef_compat.disable_iris_compute_path=true` | 禁用优化 Iris 计算路径（A/B 验证用，回退 EF 自带 Iris 路径） |
 | `-Dysm_ef_compat.diag=true` | 开启诊断日志（渲染路径跳过原因、逐帧计时） |
+| `-Dysm_ef_compat.max_package_bytes=...` | `.ysm` 包/模型源文件大小上限（默认 512 MiB，防御畸形大文件） |
+| `-Dysm_ef_compat.max_decompressed_bytes=...` | `.ysm` 解压后二进制载荷大小上限（默认 512 MiB，防御解压炸弹） |
 
 ---
 
@@ -196,9 +201,9 @@
 ./gradlew build
 ```
 
-- 产物：`build/libs/YSM_EpicFight_Compat-1.20.1-1.8.0-all.jar`（内嵌 `zstd-jni 1.5.6-3`，jar-in-jar）
+- 产物：`build/libs/YSM_EpicFight_Compat-1.20.1-1.9.0-all.jar`（内嵌 `zstd-jni 1.5.6-3`，jar-in-jar）
 - 本机网络证书校验失败时可加 `-Dnet.minecraftforge.gradle.check.certs=false`
-- 依赖：Forge 1.20.1-47.4.16+、Epic Fight 20.14.17+（Modrinth）、YSM 2.6+（`libs/ysm-2.6.5.jar` 本地 flatDir）、zstd-jni（jarJar）；可选 TLM 1.5+ / ef_tlm 1.1+
+- 依赖：Forge 1.20.1-47.4.16+、Epic Fight 20.14.x（20.14.17 为基准，`[20.14.17,20.15)`，Modrinth）、YSM 2.6.x（`libs/ysm-2.6.5.jar` 本地 flatDir，`[2.6,2.7)`）、zstd-jni（jarJar）；可选 TLM 1.5+ / ef_tlm 1.1+
 - 参考源码： `OpenYSM`（格式/网络协议）、`ModernYSM`（GPU 渲染/懒加载/内存优化）、`LgeacyYSM`（GeckoBuilder 约定）、`YSMParser`（C++ 加密交叉验证）、`EpicFight_TouhouLittleMaid`（补丁渲染器范例）
 
 ---
@@ -213,11 +218,12 @@
 ./gradlew test "-Dysmef.golden.ysm=C:\path\to\model.ysm"
 ```
 
-- **Molang 求值器**（11）：算术/变量/三元/比较/`??`/函数/语句序列/除零 sanitize/错误回退/常量折叠
+- **Molang 求值器**（12）：算术/变量/三元/比较/`??`/函数/语句序列/除零 sanitize/错误回退/常量折叠/函数参数计数
 - **CityHash 固定向量**（3）：自举向量 + 范围变体一致性（正确性由真实 .ysm 文件尾哈希端到端钉死）
 - **winefox 明文黄金用例**（4）：195 骨骼几何、49 动画、pre/post 关键帧真值（`src/test/resources/golden/winefox/`）
 - **二进制关键帧 pre/post**（3）：按序列化器磁盘布局编码，锁定 pre/post 语义修复
 - **`sanitize` 路径穿越**（5）+ **关节表**（3）
+- **`YsmModelPackageTraversalTest`**（4）：读路径模型 ID 的穿越/绝对路径/盘符/NUL 拒绝与合法相对 ID 接受
 - **真实 .ysm 解密链**（3，需 `-Dysmef.golden.ysm`）：CityHash 尾哈希校验、XChaCha20+MT19937+zstd、二进制解析
 
 ---
@@ -229,7 +235,9 @@
 3. **懒转换首用延迟**：模型首次渲染若缓存未命中，后台转换期间短暂回退 EF biped（几帧）；异步纹理上传同理（纹理出现前 1-2 帧为缺失纹理）
 4. **多人联机同步要求专用服务器安装本模组**（服务端仅做 NBT 读取与广播）；未安装时回退 EF biped
 5. **远程玩家模型需本地可用**：模型包必须在 `config/yes_steve_model/{builtin,custom,auth}`；会话中途新下载的模型需 F3+T 或 `/ysm model reload` 触发重新生成
-6. **混淆目标依赖版本**：混淆构建变体的 mixin 目标为 YSM 2.6.5 特定名（官方/OpenYSM/ModernYSM 由未混淆/新签名 mixin 覆盖，无需维护）；升级 YSM 需按描述符重新定位
+6. **混淆目标依赖版本**：混淆构建变体的 mixin 目标为 YSM 2.6.5 特定名（官方/OpenYSM/ModernYSM 由未混淆/新签名 mixin 覆盖，无需维护）；`mods.toml` 已把 Epic Fight 限制在 `[20.14.17,20.15)`、YSM 限制在 `[2.6,2.7)`，升级依赖需按描述符重新定位并更新契约
 7. **贴图格式**：PNG/JPEG 直读；WebP/AVIF 经 YSM ImageStream 反射解码（OpenYSM/ModernYSM 内置，官方 2.6.5 缺失时跳过并告警）；BMP 不支持
 8. **战斗模式默认可见性**：以冻结默认环境静态求值 parallel scale 通道决定变体可见性，个别条件化变体可能首帧可见后被运行时覆盖
 9. **缓存健壮性**：manifest 记录输出哈希，缓存恢复前逐文件校验；损坏只重转该模型；所有输出原子写
+10. **安全上限**：`.ysm` 源文件与解压后载荷默认各限 512 MiB（`-Dysm_ef_compat.max_package_bytes` / `-Dysm_ef_compat.max_decompressed_bytes` 可覆盖），超大但受信任的模型需显式调高；二进制解析对 bone/cube/face 等段落计数同样设上限
+11. **轮盘映射迁移**：v1.9.0 起新增每模型映射 sidecar（`config/ysm_epicfight_compat/extra_animation_mappings/`），旧聚合文件 `extra_animation_mappings.json` 仍会被兼容读取，但不再写入

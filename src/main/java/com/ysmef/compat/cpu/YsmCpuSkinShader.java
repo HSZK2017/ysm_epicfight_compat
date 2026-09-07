@@ -10,9 +10,12 @@ import org.lwjgl.opengl.GLCapabilities;
 
 /**
  * The GLSL program of the CPU skinning render path. The vertex shader takes
- * CPU-skinned model-space positions/normals as plain attributes (no SSBO, no
- * compute shader) and applies the same u_proj = proj x mv x poseStack matrix
- * reconstruction the GPU path uses, so the two paths are pixel-identical.
+ * CPU-skinned, poseStack-transformed CAMERA-SPACE positions/normals as plain
+ * attributes (no SSBO, no compute shader) and applies only the plain
+ * RenderSystem proj / model-view / inverse-view-rotation uniforms, exactly like
+ * Minecraft's entity shader. The poseStack multiplication is already baked into
+ * the vertices by {@code YsmCpuRenderPath}, unlike the GPU path which applies
+ * the entity transform in its vertex shader.
  *
  * The desktop shader is "#version 330 core" (minimum desktop OpenGL 3.3) and
  * the Android variant is "#version 300 es" (minimum OpenGL ES 3.0) - both far
@@ -43,6 +46,8 @@ public final class YsmCpuSkinShader {
     private static boolean failed = false;
 
     private static volatile String capabilityReason = "not checked";
+    private static volatile boolean capabilityChecked = false;
+    private static volatile boolean capabilityAvailable = false;
 
     private YsmCpuSkinShader() {}
 
@@ -51,8 +56,26 @@ public final class YsmCpuSkinShader {
      * 3.3+ (or newer) or OpenGL ES 3.0+. This is deliberately independent of
      * the GPU path's OpenGL 4.3 / ES 3.1 gate - the CPU path exists precisely
      * for contexts below that.
+     *
+     * The probe is cached: this method runs for every CPU-path candidate draw,
+     * and glGetString(GL_VERSION) per entity per frame is pure render-thread
+     * waste. The client GL context version does not change during a session.
      */
     public static boolean isCapabilityAvailable() {
+        if (capabilityChecked) {
+            return capabilityAvailable;
+        }
+        synchronized (YsmCpuSkinShader.class) {
+            if (capabilityChecked) {
+                return capabilityAvailable;
+            }
+            capabilityAvailable = probeCapability();
+            capabilityChecked = true;
+            return capabilityAvailable;
+        }
+    }
+
+    private static boolean probeCapability() {
         try {
             RenderSystem.assertOnRenderThreadOrInit();
             GLCapabilities caps = GL.getCapabilities();

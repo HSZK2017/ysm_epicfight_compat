@@ -1,5 +1,75 @@
 # 更新日志 / Changelog
 
+## v1.9.0 — 2026-08
+
+### 中文
+
+#### 安全与正确性（P0）
+
+- **Molang 函数参数计数**：`Molang.Env.callFunction` 增加 `argCount`，所有 Env 实现按实际参数个数读取复用槽位，消除“少参调用读到上一次调用的陈旧参数”导致的非确定性脚本求值
+- **roaming 变量竞态**：`YsmRoamingState` 改为单线程池顺序计算 + 不可变快照发布，并增加世界代际，修复后台遍历与主线程 `clear+putAll` 竞争以及快速点击轮盘时的丢更新
+- **模型包读路径防穿越**：`modelId` 及 manifest 内 model/animation/texture 路径全部经过相对路径校验、`resolveInside` 词法围栏和 `toRealPath` 符号链接围栏；拒绝绝对路径、盘符/UNC、`..` 段
+- **解析资源上限**：`.ysm` 源包和解压后载荷默认各限 512 MiB（`-Dysm_ef_compat.max_package_bytes` / `-Dysm_ef_compat.max_decompressed_bytes` 可覆盖）；二进制解析对 bone/cube/face/animation/texture/model 计数设上限并移除恶意计数预分配
+- **递归深度防御**：几何 JSON/二进制、EFMesh 写出、运行时骨骼表、Camera solver、轮盘采样和 Molang 解析器均加入深度/环防护；深嵌套 JSON 有 `StackOverflowError` 最后防线
+- **渲染线程不再全盘扫描**：`existsLocally` 只 stat 四个可能路径；`ensureModel` 和缓存回退改用该检查，删除缺失模型日志中的全模型目录枚举
+
+#### 性能与稳定性（P1）
+
+- **GL 状态恢复 `finally` 化**：GPU/CPU 直连路径绘制期间的任何异常都会在 `finally` 中恢复 cull/blend/depthTest/depthMask、program、VAO、SSBO 和 light layer，不再污染后续渲染
+- **`generateAll` 线程与内存约束**：强制渲染线程调用（EF `Meshes.ACCESSORS` 非线程安全），并复用 `CONVERSION_SLOTS` 限制全量重建的并发峰值
+- **Iris VAO 切换**：顶点格式变化时先禁用旧属性，避免残留属性指针采样错误缓冲
+- **热路径探测缓存**：YSM 预览模式 250ms TTL、EF compute setup 按网格实例缓存一次、CPU 能力探测只执行一次 `glGetString`；shader-pack 检测合并为 GPU 路径的单一实现
+- **轮盘映射持久化重构**：新增每模型 sidecar `config/ysm_epicfight_compat/extra_animation_mappings/<id>.json`，原子写；旧聚合 `extra_animation_mappings.json` 仍兼容读取。新增负缓存避免转换期间每 tick 读盘；`exactHash` 复用单个 ByteBuffer，移除每 float 一次的堆分配
+
+#### 清理（P2）
+
+- `YSMRuntimeBridge` 当前实体 `ThreadLocal` 在 `YSMMesh.draw` 的 `finally` 中清理
+- 删除死代码：`YSMJointMapper.jointNameOf` 注释块、`YsmExtraFrameWriter.indexOf`、`YSMMeshLibrary.isGenerated/meshCount/availableModelIds`
+- 统一重复实现：骨名 `normalize`、`packNormal`、shader-pack 检测均收敛到单一实现
+- 修正 `YsmCpuSkinShader` 过时注释，明确 CPU 路径顶点已为相机空间
+- 收紧 `mods.toml` 依赖契约：Epic Fight `[20.14.17,20.15)`、YSM `[2.6,2.7)`
+- 离开世界时清理网格选择/模型读取等按玩家累积的诊断集合
+
+#### 测试
+
+- Molang 新增“函数调用收到精确参数个数”回归测试
+- 新增 `YsmModelPackageTraversalTest`：锁定读路径穿越/绝对路径/盘符/NUL 拒绝与合法相对 ID 接受
+
+### English
+
+#### Security & correctness (P0)
+
+- Molang function calls now carry an `argCount`; every `Env` implementation reads only that many slots, eliminating stale values from the reused argument buffer
+- `YsmRoamingState` now evaluates on its single-threaded pool in submission order and publishes immutable snapshots with a world generation guard - fixes the clear+putAll race and lost rapid-click toggles
+- Read-side path traversal defense for model ids and manifest-declared child paths: relative-path validation, lexical `resolveInside`, and `toRealPath` symlink containment
+- Resource limits: 512 MiB defaults for `.ysm` source files and decompressed payloads (JVM-property overridable); parser section-count caps; no hostile-count preallocation
+- Recursion depth/cycle guards across geometry parsing, mesh writing, runtime bone tables, camera solving, wheel sampling and the Molang parser, with a `StackOverflowError` last resort for deeply nested JSON
+- Render-thread directory scans removed: `existsLocally` stats only the four candidate paths
+
+#### Performance & stability (P1)
+
+- GPU/CPU direct draws restore cull/blend/depth/depthMask, program, VAO, SSBO and light layer in `finally` even when a draw throws
+- `generateAll` now asserts the render thread and caps concurrent conversions through `CONVERSION_SLOTS`
+- Iris VAO disables stale attributes when the vertex format changes
+- Hot-path probes cached: YSM preview mode (250 ms TTL), per-mesh EF compute setup, one-time CPU GL capability probe; shader-pack detection now has a single shared implementation
+- Wheel mappings persist as per-model atomic sidecars (legacy aggregate still readable), with a negative cache against per-tick disk reads and a reused ByteBuffer in `exactHash`
+
+#### Cleanup (P2)
+
+- Current-entity `ThreadLocal` cleared in `YSMMesh.draw`'s `finally`
+- Removed dead code (`YSMJointMapper.jointNameOf`, `YsmExtraFrameWriter.indexOf`, `YSMMeshLibrary.isGenerated/meshCount/availableModelIds`)
+- Merged duplicate `normalize` / `packNormal` / shader-pack detection
+- Fixed the stale `YsmCpuSkinShader` class comment
+- Tightened `mods.toml` contracts: Epic Fight `[20.14.17,20.15)`, YSM `[2.6,2.7)`
+- Per-player diagnostic sets are cleared on disconnect
+
+#### Tests
+
+- New Molang regression test for exact function argument counts
+- New `YsmModelPackageTraversalTest` locking the read-path traversal defense
+
+---
+
 ## v1.8.1 — 2026-08
 
 ### 中文

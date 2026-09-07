@@ -39,16 +39,16 @@ public class MolangTest {
         }
 
         @Override
-        public double callFunction(String name, double[] args) {
+        public double callFunction(String name, double[] args, int argCount) {
             switch (name) {
                 case "math.sin":
-                    return Math.sin(Math.toRadians(args[0]));
+                    return argCount < 1 ? 0.0 : Math.sin(Math.toRadians(args[0]));
                 case "math.abs":
-                    return Math.abs(args[0]);
+                    return argCount < 1 ? 0.0 : Math.abs(args[0]);
                 case "math.floor":
-                    return Math.floor(args[0]);
+                    return argCount < 1 ? 0.0 : Math.floor(args[0]);
                 case "math.clamp":
-                    return Math.max(args[1], Math.min(args[2], args[0]));
+                    return argCount < 3 ? 0.0 : Math.max(args[1], Math.min(args[2], args[0]));
                 default:
                     return 0.0;
             }
@@ -143,5 +143,45 @@ public class MolangTest {
         Molang.Expr folded = Molang.compile("2 + 2");
         assertEquals(4.0, folded.eval(env), 1e-9);
         assertEquals(4.0, folded.eval(new MapEnv()), 1e-9);
+    }
+
+    @Test
+    void functionCallsReceiveExactArgumentCount() {
+        java.util.concurrent.atomic.AtomicInteger seenArgCount = new java.util.concurrent.atomic.AtomicInteger(-1);
+        Molang.Env env = new Molang.Env() {
+            @Override
+            public double getVarById(int id) {
+                return 0.0;
+            }
+
+            @Override
+            public boolean hasVarById(int id) {
+                return false;
+            }
+
+            @Override
+            public void setVarById(int id, double value) {
+            }
+
+            @Override
+            public double getQueryById(int id) {
+                return 0.0;
+            }
+
+            @Override
+            public double callFunction(String name, double[] args, int argCount) {
+                seenArgCount.set(argCount);
+                return 0.0;
+            }
+
+            @Override
+            public double callStringFunction(String name, String[] args) {
+                return 0.0;
+            }
+        };
+        Molang.compile("math.sin(1)").eval(env);
+        assertEquals(1, seenArgCount.get(), "reused argument slots must not widen the call");
+        Molang.compile("math.clamp(1, 2, 3)").eval(env);
+        assertEquals(3, seenArgCount.get(), "each call must receive its own argument count");
     }
 }

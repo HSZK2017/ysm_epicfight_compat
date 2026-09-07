@@ -165,7 +165,7 @@ public final class YsmExtraFrameWriter {
             return null;
         }
         for (int i = 0; i < bones.length; i++) {
-            bindWorldOf(bones, i);
+            bindWorldOf(bones, i, 0);
         }
         ArmatureTables tables = buildArmatureTables(pkg, bones);
         if (FRAME_PIVOT_LOG.add(pkg.modelId)) {
@@ -409,13 +409,17 @@ public final class YsmExtraFrameWriter {
         List<SampleBone> bones = new ArrayList<>();
         Map<String, Integer> byName = new HashMap<>();
         for (YSMGeoModel.Bone root : geoModel.topLevelBones) {
-            collectBone(root, -1, bones, byName);
+            collectBone(root, -1, bones, byName, 0);
         }
         return bones.toArray(new SampleBone[0]);
     }
 
     private static void collectBone(YSMGeoModel.Bone bone, int parent,
-                                    List<SampleBone> out, Map<String, Integer> byName) {
+                                    List<SampleBone> out, Map<String, Integer> byName, int depth) {
+        if (depth > YSMGeoModel.MAX_BONE_DEPTH) {
+            throw new IllegalStateException(
+                    "bone hierarchy deeper than " + YSMGeoModel.MAX_BONE_DEPTH + " while sampling wheel animation");
+        }
         SampleBone sample = new SampleBone();
         sample.bone = bone;
         sample.parent = parent;
@@ -425,15 +429,19 @@ public final class YsmExtraFrameWriter {
         out.add(sample);
         byName.put(bone.name, index);
         for (YSMGeoModel.Bone child : bone.children) {
-            collectBone(child, index, out, byName);
+            collectBone(child, index, out, byName, depth + 1);
         }
     }
 
-    private static Matrix4f bindWorldOf(SampleBone[] bones, int index) {
+    private static Matrix4f bindWorldOf(SampleBone[] bones, int index, int depth) {
+        if (depth > YSMGeoModel.MAX_BONE_DEPTH) {
+            throw new IllegalStateException(
+                    "bone hierarchy deeper than " + YSMGeoModel.MAX_BONE_DEPTH + " while computing bind worlds");
+        }
         SampleBone bone = bones[index];
         Matrix4f bind = bone.bind;
         if (bone.parent >= 0) {
-            bindWorldOf(bones, bone.parent);
+            bindWorldOf(bones, bone.parent, depth + 1);
             bind.set(bones[bone.parent].bind);
         } else {
             bind.identity();
@@ -717,15 +725,6 @@ public final class YsmExtraFrameWriter {
         return byJoint;
     }
 
-    private static int indexOf(SampleBone[] bones, SampleBone sample) {
-        for (int i = 0; i < bones.length; i++) {
-            if (bones[i] == sample) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
     private static Vector3f handPivot(List<Vector3f> vertices, SampleBone[] bones, float scaleW, float scaleH) {
         if (vertices == null || vertices.isEmpty()) {
             return null;
@@ -795,19 +794,9 @@ public final class YsmExtraFrameWriter {
         pivots.put(joint, matrix);
     }
 
+    /** Single source of truth: YSMJointMapper's name normalization (see there). */
     private static String normalize(String boneName) {
-        String normalized = boneName.toLowerCase().replace("_", "").replace(" ", "");
-        int end = normalized.length();
-        while (end > 0 && Character.isDigit(normalized.charAt(end - 1))) {
-            end--;
-        }
-        normalized = normalized.substring(0, end);
-        // YSM's default-form bones may carry a "_Default" form suffix; strip it
-        // (mirrors YSMJointMapper, e.g. the momo wine fox's "RightHand_Default").
-        if (normalized.endsWith("default")) {
-            normalized = normalized.substring(0, normalized.length() - "default".length());
-        }
-        return normalized;
+        return YSMJointMapper.normalize(boneName);
     }
 
     // ------------------------------------------------------------------
@@ -981,33 +970,33 @@ public final class YsmExtraFrameWriter {
         }
 
         @Override
-        public double callFunction(String name, double[] args) {
+        public double callFunction(String name, double[] args, int argCount) {
             switch (name) {
-                case "math.sin": return finite(Math.sin(Math.toRadians(args[0])));
-                case "math.cos": return finite(Math.cos(Math.toRadians(args[0])));
-                case "math.tan": return finite(Math.tan(Math.toRadians(args[0])));
-                case "math.asin": return finite(Math.toDegrees(Math.asin(args[0])));
-                case "math.acos": return finite(Math.toDegrees(Math.acos(args[0])));
-                case "math.atan": return finite(Math.toDegrees(Math.atan(args[0])));
-                case "math.atan2": return finite(Math.toDegrees(Math.atan2(args[0], args[1])));
-                case "math.abs": return finite(Math.abs(args[0]));
-                case "math.floor": return finite(Math.floor(args[0]));
-                case "math.ceil": return finite(Math.ceil(args[0]));
-                case "math.round": return finite(Math.round(args[0]));
-                case "math.trunc": return finite((long) (args[0] >= 0 ? Math.floor(args[0]) : Math.ceil(args[0])));
-                case "math.sqrt": return finite(args[0] < 0 ? 0 : Math.sqrt(args[0]));
-                case "math.pow": return finite(Math.pow(args[0], args[1]));
-                case "math.exp": return finite(Math.exp(args[0]));
-                case "math.ln": return finite(args[0] <= 0 ? 0 : Math.log(args[0]));
-                case "math.log": return finite(args[0] <= 0 ? 0 : Math.log(args[0]));
-                case "math.lerp": return finite(args[0] + (args[1] - args[0]) * args[2]);
-                case "math.min": return finite(Math.min(args[0], args[1]));
-                case "math.max": return finite(Math.max(args[0], args[1]));
-                case "math.clamp": return finite(Math.max(args[1], Math.min(args[2], args[0])));
-                case "math.mod": return finite(args[1] == 0 ? 0 : args[0] % args[1]);
-                case "math.random": return finite((args[0] + args[1]) * 0.5);
+                case "math.sin": return argCount < 1 ? 0.0 : finite(Math.sin(Math.toRadians(args[0])));
+                case "math.cos": return argCount < 1 ? 0.0 : finite(Math.cos(Math.toRadians(args[0])));
+                case "math.tan": return argCount < 1 ? 0.0 : finite(Math.tan(Math.toRadians(args[0])));
+                case "math.asin": return argCount < 1 ? 0.0 : finite(Math.toDegrees(Math.asin(args[0])));
+                case "math.acos": return argCount < 1 ? 0.0 : finite(Math.toDegrees(Math.acos(args[0])));
+                case "math.atan": return argCount < 1 ? 0.0 : finite(Math.toDegrees(Math.atan(args[0])));
+                case "math.atan2": return argCount < 2 ? 0.0 : finite(Math.toDegrees(Math.atan2(args[0], args[1])));
+                case "math.abs": return argCount < 1 ? 0.0 : finite(Math.abs(args[0]));
+                case "math.floor": return argCount < 1 ? 0.0 : finite(Math.floor(args[0]));
+                case "math.ceil": return argCount < 1 ? 0.0 : finite(Math.ceil(args[0]));
+                case "math.round": return argCount < 1 ? 0.0 : finite(Math.round(args[0]));
+                case "math.trunc": return argCount < 1 ? 0.0 : finite((long) (args[0] >= 0 ? Math.floor(args[0]) : Math.ceil(args[0])));
+                case "math.sqrt": return argCount < 1 ? 0.0 : finite(args[0] < 0 ? 0 : Math.sqrt(args[0]));
+                case "math.pow": return argCount < 2 ? 0.0 : finite(Math.pow(args[0], args[1]));
+                case "math.exp": return argCount < 1 ? 0.0 : finite(Math.exp(args[0]));
+                case "math.ln": return argCount < 1 ? 0.0 : finite(args[0] <= 0 ? 0 : Math.log(args[0]));
+                case "math.log": return argCount < 1 ? 0.0 : finite(args[0] <= 0 ? 0 : Math.log(args[0]));
+                case "math.lerp": return argCount < 3 ? 0.0 : finite(args[0] + (args[1] - args[0]) * args[2]);
+                case "math.min": return argCount < 1 ? 0.0 : finite(argCount < 2 ? args[0] : Math.min(args[0], args[1]));
+                case "math.max": return argCount < 1 ? 0.0 : finite(argCount < 2 ? args[0] : Math.max(args[0], args[1]));
+                case "math.clamp": return argCount < 3 ? 0.0 : finite(Math.max(args[1], Math.min(args[2], args[0])));
+                case "math.mod": return argCount < 2 ? 0.0 : finite(args[1] == 0 ? 0 : args[0] % args[1]);
+                case "math.random": return argCount < 2 ? 0.0 : finite((args[0] + args[1]) * 0.5);
                 case "math.pi": return Math.PI;
-                case "math.sign": return finite(Math.signum(args[0]));
+                case "math.sign": return argCount < 1 ? 0.0 : finite(Math.signum(args[0]));
                 default: return 0.0;
             }
         }

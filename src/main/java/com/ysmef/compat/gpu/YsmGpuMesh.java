@@ -220,18 +220,9 @@ public final class YsmGpuMesh {
         }
     }
 
-    /** Pack a normal into the GL_INT_2_10_10_10_REV layout (same unpack as bone_skin.vsh). */
+    /** Pack a normal into the GL_INT_2_10_10_10_REV layout (single shared implementation). */
     static int packNormal(float x, float y, float z) {
-        float len = (float) Math.sqrt(x * x + y * y + z * z);
-        if (len > 1e-6f) {
-            x /= len;
-            y /= len;
-            z /= len;
-        }
-        int xi = Math.max(-511, Math.min(511, Math.round(x * 511)));
-        int yi = Math.max(-511, Math.min(511, Math.round(y * 511)));
-        int zi = Math.max(-511, Math.min(511, Math.round(z * 511)));
-        return (xi & 0x3FF) | ((yi & 0x3FF) << 10) | ((zi & 0x3FF) << 20);
+        return com.ysmef.compat.renderer.GlRenderState.packNormal(x, y, z);
     }
 
     public void dispose() {

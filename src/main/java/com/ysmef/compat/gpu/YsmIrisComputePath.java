@@ -256,6 +256,7 @@ public final class YsmIrisComputePath {
             gpu.dispose();
         }
         UNSUPPORTED.remove(mesh);
+        ACTIVE_LOGGED.remove(mesh);
     }
 
     /** Free every mesh resource (resource reload). Must run on the render thread. */
@@ -270,6 +271,7 @@ public final class YsmIrisComputePath {
             IRIS_MESHES.clear();
         }
         UNSUPPORTED.clear();
+        ACTIVE_LOGGED.clear();
     }
 
     // ------------------------------------------------------------------

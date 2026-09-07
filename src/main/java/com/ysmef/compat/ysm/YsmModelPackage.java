@@ -33,6 +33,137 @@ public final class YsmModelPackage {
     private static final Path YSM_CONFIG = Paths.get("config", "yes_steve_model");
     private static final String[] ROOTS = {"builtin", "built", "custom", "auth"};
 
+    /**
+     * Upper bound for a single source file (encrypted package, JSON or texture).
+     * Model ids arrive from server sync / player NBT and must be treated as
+     * untrusted; this also stops one absurdly large file from exhausting the heap.
+     * Overridable with the ysm_ef_compat.max_package_bytes system property for
+     * unusually large (but trusted) packages.
+     */
+    private static final long MAX_PACKAGE_FILE_BYTES = Math.max(1L,
+            Long.getLong("ysm_ef_compat.max_package_bytes", 512L * 1024L * 1024L).longValue());
+
+    /**
+     * Convert an untrusted YSM model id into a safe, strictly relative path under
+     * the YSM config roots, or null when it is not a usable relative path.
+     * Rejects absolute paths, drive/UNC forms, ':' (Windows drive-relative
+     * oddities), '..' segments and any path that normalizes above the root.
+     */
+    static Path relativeModelPath(String modelId) {
+        if (modelId == null || modelId.isEmpty()) {
+            return null;
+        }
+        if (modelId.indexOf('\0') >= 0 || modelId.indexOf(':') >= 0) {
+            return null;
+        }
+        String forward = modelId.replace('\\', '/');
+        if (forward.startsWith("/")) {
+            return null;
+        }
+        for (String segment : forward.split("/")) {
+            if (segment.equals("..")) {
+                return null;
+            }
+        }
+        Path path = Paths.get(forward);
+        if (path.isAbsolute()) {
+            return null;
+        }
+        Path normalized = path.normalize();
+        if (normalized.isAbsolute()) {
+            return null;
+        }
+        String text = normalized.toString().replace('\\', '/');
+        if (text.equals(".") || text.equals("..") || text.startsWith("../")) {
+            return null;
+        }
+        return normalized;
+    }
+
+    /**
+     * Resolve a manifest-declared child path strictly inside {@code root}; null
+     * when the child is absolute, escapes via '..', or is otherwise unusable.
+     */
+    private static Path resolveInside(Path root, String child) {
+        if (child == null || child.isEmpty()) {
+            return null;
+        }
+        Path rootNorm = root.toAbsolutePath().normalize();
+        Path resolved = root.resolve(child.replace('\\', '/')).normalize().toAbsolutePath();
+        return resolved.startsWith(rootNorm) ? resolved : null;
+    }
+
+    /**
+     * Whether {@code path} really resides under {@code root} after resolving
+     * symlinks. The lexical checks above are not enough: a symlink planted in a
+     * model package can point outside the package directory.
+     */
+    private static boolean isInsideReal(Path path, Path root) {
+        try {
+            return path.toRealPath().startsWith(root.toRealPath());
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    private static boolean isRegularFileInside(Path file, Path root) {
+        return Files.isRegularFile(file) && isInsideReal(file, root);
+    }
+
+    private static boolean isDirectoryInside(Path directory, Path root) {
+        return Files.isDirectory(directory) && isInsideReal(directory, root);
+    }
+
+    /**
+     * Whether the model id currently exists locally. Unlike
+     * {@link #scanAvailableModels()} this only stats the four possible package
+     * paths, so it is safe to call from the render thread for a single model.
+     */
+    public static boolean existsLocally(String modelId) {
+        Path relative = relativeModelPath(modelId);
+        if (relative == null) {
+            return false;
+        }
+        for (String root : ROOTS) {
+            Path rootPath = YSM_CONFIG.resolve(root).normalize();
+            Path candidate = rootPath.resolve(relative).normalize();
+            boolean exists = modelId.endsWith(".ysm")
+                    ? isRegularFileInside(candidate, rootPath)
+                    : isDirectoryInside(candidate, rootPath);
+            if (exists) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static byte[] readAllBytesBounded(Path file) throws IOException {
+        long size = Files.size(file);
+        if (size > MAX_PACKAGE_FILE_BYTES) {
+            throw new IOException("package file too large: " + size + " bytes (max " + MAX_PACKAGE_FILE_BYTES + ")");
+        }
+        try (java.io.InputStream in = Files.newInputStream(file)) {
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(
+                    (int) Math.min(size, 1L << 20));
+            byte[] buffer = new byte[65536];
+            long total = 0L;
+            int read;
+            while ((read = in.read(buffer)) != -1) {
+                total += read;
+                if (total > MAX_PACKAGE_FILE_BYTES) {
+                    throw new IOException(
+                            "package file grew beyond the " + MAX_PACKAGE_FILE_BYTES + " byte safety limit while reading");
+                }
+                out.write(buffer, 0, read);
+            }
+            return out.toByteArray();
+        }
+    }
+
+    private static String readStringBounded(Path file) throws IOException {
+        return new String(readAllBytesBounded(file), StandardCharsets.UTF_8);
+    }
+
     public final String modelId;
     public final YSMGeoModel geometry;
     public final Map<String, byte[]> textures;
@@ -104,6 +235,12 @@ public final class YsmModelPackage {
                 return loadBinary(modelId);
             }
             return loadFolder(modelId);
+        } catch (StackOverflowError e) {
+            // Last-resort guard for a maliciously deep JSON structure that slips
+            // through the parser's own depth limits (Gson itself recurses).
+            com.ysmef.compat.YSMEpicFightCompat.LOGGER.warn(
+                    "YSM-EF Compat: YSM model package '{}' is nested too deeply and was rejected", modelId);
+            return null;
         } catch (Exception e) {
             // Previously silent: every failure (corrupted file hash, truncated
             // package, buffer underflow in the parser, ...) surfaced only as
@@ -115,13 +252,23 @@ public final class YsmModelPackage {
     }
 
     private static YsmModelPackage loadFolder(String modelId) throws IOException {
+        Path safeModel = relativeModelPath(modelId);
+        if (safeModel == null) {
+            com.ysmef.compat.YSMEpicFightCompat.LOGGER.warn(
+                    "YSM-EF Compat: refusing to load YSM model package with unsafe id '{}'", modelId);
+            return null;
+        }
         for (String root : ROOTS) {
-            Path modelDir = YSM_CONFIG.resolve(root).resolve(modelId);
-            Path manifest = modelDir.resolve("ysm.json");
-            if (!Files.isRegularFile(manifest)) {
+            Path rootPath = YSM_CONFIG.resolve(root).normalize();
+            Path modelDir = rootPath.resolve(safeModel).normalize();
+            if (!isDirectoryInside(modelDir, rootPath)) {
                 continue;
             }
-            JsonObject json = JsonParser.parseString(Files.readString(manifest, StandardCharsets.UTF_8)).getAsJsonObject();
+            Path manifest = modelDir.resolve("ysm.json");
+            if (!isRegularFileInside(manifest, modelDir)) {
+                continue;
+            }
+            JsonObject json = JsonParser.parseString(readStringBounded(manifest)).getAsJsonObject();
 
             float widthScale = 0.7f;
             float heightScale = 0.7f;
@@ -160,17 +307,17 @@ public final class YsmModelPackage {
                     if (player.has("model")) {
                         JsonObject modelObj = player.getAsJsonObject("model");
                         if (modelObj.has("main")) {
-                            Path geoPath = modelDir.resolve(modelObj.get("main").getAsString());
-                            if (Files.isRegularFile(geoPath)) {
-                                geometry = YSMGeoModel.parse(Files.readString(geoPath, StandardCharsets.UTF_8));
+                            Path geoPath = resolveInside(modelDir, modelObj.get("main").getAsString());
+                            if (geoPath != null && isRegularFileInside(geoPath, modelDir)) {
+                                geometry = YSMGeoModel.parse(readStringBounded(geoPath));
                             }
                         }
                     }
                     if (player.has("animation")) {
                         JsonObject animObj = player.getAsJsonObject("animation");
                         for (Map.Entry<String, JsonElement> entry : animObj.entrySet()) {
-                            Path animPath = modelDir.resolve(entry.getValue().getAsString());
-                            if (Files.isRegularFile(animPath)) {
+                            Path animPath = resolveInside(modelDir, entry.getValue().getAsString());
+                            if (animPath != null && isRegularFileInside(animPath, modelDir)) {
                                 // The "extra" animation file carries the wheel-selectable
                                 // animations; it wins on name collisions.
                                 loadScriptAnims(animPath, allScriptAnims, "extra".equals(entry.getKey()));
@@ -192,9 +339,9 @@ public final class YsmModelPackage {
                             if (texPath == null) {
                                 continue;
                             }
-                            Path texFile = modelDir.resolve(texPath);
-                            if (Files.isRegularFile(texFile)) {
-                                textures.put(extractFileName(texPath), Files.readAllBytes(texFile));
+                            Path texFile = resolveInside(modelDir, texPath);
+                            if (texFile != null && isRegularFileInside(texFile, modelDir)) {
+                                textures.put(extractFileName(texPath), readAllBytesBounded(texFile));
                             }
                         }
                     }
@@ -224,7 +371,7 @@ public final class YsmModelPackage {
     private static void loadScriptAnims(Path animPath, Map<String, com.ysmef.compat.ysm.script.ScriptAnim> out,
                                         boolean overwrite) {
         try {
-            JsonObject root = JsonParser.parseString(Files.readString(animPath, StandardCharsets.UTF_8)).getAsJsonObject();
+            JsonObject root = JsonParser.parseString(readStringBounded(animPath)).getAsJsonObject();
             JsonObject anims = root.has("animations") ? root.getAsJsonObject("animations") : null;
             if (anims == null) {
                 return;
@@ -245,12 +392,19 @@ public final class YsmModelPackage {
     }
 
     private static YsmModelPackage loadBinary(String modelId) throws IOException {
+        Path safeModel = relativeModelPath(modelId);
+        if (safeModel == null) {
+            com.ysmef.compat.YSMEpicFightCompat.LOGGER.warn(
+                    "YSM-EF Compat: refusing to load YSM model package with unsafe id '{}'", modelId);
+            return null;
+        }
         for (String root : ROOTS) {
-            Path ysmFile = YSM_CONFIG.resolve(root).resolve(modelId);
-            if (!Files.isRegularFile(ysmFile)) {
+            Path ysmRoot = YSM_CONFIG.resolve(root).normalize();
+            Path ysmFile = ysmRoot.resolve(safeModel).normalize();
+            if (!isRegularFileInside(ysmFile, ysmRoot)) {
                 continue;
             }
-            byte[] decrypted = YsmFileCrypto.decryptYsmFile(Files.readAllBytes(ysmFile));
+            byte[] decrypted = YsmFileCrypto.decryptYsmFile(readAllBytesBounded(ysmFile));
             YsmBinaryReader.BinaryModel binary = YsmBinaryReader.read(decrypted);
             YSMGeoModel geometry = YSMGeoModel.fromBinary(binary);
             // Compute the content fingerprint here while the decrypted payload
@@ -318,12 +472,17 @@ public final class YsmModelPackage {
      */
     public static long fingerprint(String modelId) {
         try {
+            Path relative = relativeModelPath(modelId);
+            if (relative == null) {
+                return -1L;
+            }
             long hash = 0xcbf29ce484222325L;
             boolean found = false;
             for (String root : ROOTS) {
-                Path base = YSM_CONFIG.resolve(root).resolve(modelId);
+                Path rootPath = YSM_CONFIG.resolve(root).normalize();
+                Path base = rootPath.resolve(relative).normalize();
                 if (modelId.endsWith(".ysm")) {
-                    if (Files.isRegularFile(base)) {
+                    if (isRegularFileInside(base, rootPath)) {
                         hash = fnv1a(hash, root + '/' + modelId);
                         hash = fnv1a(hash, Long.toString(Files.size(base)));
                         hash = fnv1a(hash, Files.getLastModifiedTime(base).toString());
@@ -332,16 +491,18 @@ public final class YsmModelPackage {
                     }
                     continue;
                 }
-                if (Files.isDirectory(base)) {
+                if (isDirectoryInside(base, rootPath)) {
                     List<String> entries = new ArrayList<>();
                     try (Stream<Path> stream = Files.walk(base)) {
-                        stream.filter(Files::isRegularFile).forEach(path -> {
-                            String rel = base.relativize(path).toString().replace('\\', '/');
-                            try {
-                                entries.add(rel + ':' + Files.size(path) + ':' + Files.getLastModifiedTime(path).toMillis());
-                            } catch (IOException ignored) {
-                            }
-                        });
+                        stream.filter(Files::isRegularFile)
+                                .filter(path -> isInsideReal(path, base))
+                                .forEach(path -> {
+                                    String rel = base.relativize(path).toString().replace('\\', '/');
+                                    try {
+                                        entries.add(rel + ':' + Files.size(path) + ':' + Files.getLastModifiedTime(path).toMillis());
+                                    } catch (IOException ignored) {
+                                    }
+                                });
                     }
                     Collections.sort(entries);
                     for (String entry : entries) {
@@ -380,26 +541,33 @@ public final class YsmModelPackage {
      */
     public static long contentFingerprint(String modelId) {
         try {
+            Path relative = relativeModelPath(modelId);
+            if (relative == null) {
+                return -1L;
+            }
             for (String root : ROOTS) {
-                Path base = YSM_CONFIG.resolve(root).resolve(modelId);
+                Path rootPath = YSM_CONFIG.resolve(root).normalize();
+                Path base = rootPath.resolve(relative).normalize();
                 if (modelId.endsWith(".ysm")) {
-                    if (Files.isRegularFile(base)) {
+                    if (isRegularFileInside(base, rootPath)) {
                         return contentFingerprintOfBinary(root, modelId,
-                                YsmFileCrypto.decryptYsmFile(Files.readAllBytes(base)));
+                                YsmFileCrypto.decryptYsmFile(readAllBytesBounded(base)));
                     }
                     continue;
                 }
-                if (Files.isDirectory(base)) {
+                if (isDirectoryInside(base, rootPath)) {
                     List<Path> files = new ArrayList<>();
                     try (Stream<Path> stream = Files.walk(base)) {
-                        stream.filter(Files::isRegularFile).forEach(files::add);
+                        stream.filter(Files::isRegularFile)
+                                .filter(path -> isInsideReal(path, base))
+                                .forEach(files::add);
                     }
                     files.sort(java.util.Comparator.comparing(
                             path -> base.relativize(path).toString().replace('\\', '/')));
                     long hash = 0xcbf29ce484222325L;
                     for (Path file : files) {
                         String rel = base.relativize(file).toString().replace('\\', '/');
-                        byte[] data = Files.readAllBytes(file);
+                        byte[] data = readAllBytesBounded(file);
                         hash = fnv1a(hash, rel);
                         hash = fnv1a(hash, Long.toString(data.length));
                         hash = fnv1aBytes(hash, data);

@@ -338,7 +338,7 @@ public class YSMMeshLibrary {
             return false;
         }
 
-        if (!YsmModelPackage.scanAvailableModels().containsKey(modelId)) {
+        if (!YsmModelPackage.existsLocally(modelId)) {
             FAILED_MODELS.add(modelId);
             return false;
         }
@@ -406,7 +406,7 @@ public class YSMMeshLibrary {
             PENDING_MODELS.remove(modelId);
         }
         // Cache unusable: re-convert (queued like the lazy path).
-        if (YsmModelPackage.scanAvailableModels().containsKey(modelId)) {
+        if (YsmModelPackage.existsLocally(modelId)) {
             PENDING_MODELS.add(modelId);
             LAZY_POOL.submit(() -> convertModelAsync(modelId));
         } else {
@@ -832,6 +832,7 @@ public class YSMMeshLibrary {
             ACCESS_ORDER.clear();
         }
         LOADED_MODELS.clear();
+        YSMMesh.clearDiagnostics();
         disposeAllPaths();
         YSMRuntimeModel.invalidateAll();
         com.ysmef.compat.model.runtime.YsmBindArmature.invalidateAll();
@@ -842,11 +843,16 @@ public class YSMMeshLibrary {
      * Scan all locally available YSM models, convert them to Epic Fight mesh
      * JSONs on disk, and register them in Epic Fight's mesh registry.
      *
-     * Conversion runs on a worker pool sized to the available CPU cores
-     * (package decryption + mesh writing are pure CPU work); the calling thread
-     * blocks until every model has been processed and the manifest is written.
+     * The calling thread blocks until every model has been processed and the
+     * manifest is written. Must be called on the render thread: Epic Fight's
+     * {@code Meshes.ACCESSORS} is a plain HashMap and {@code MeshAccessor.create}
+     * writes it; running this off the render thread can corrupt that table.
+     * Conversion concurrency is capped by {@link #CONVERSION_SLOTS} exactly like
+     * the lazy path, so a full rebuild never converts an unbounded number of
+     * large models at once.
      */
     public static synchronized void generateAll() {
+        RenderSystem.assertOnRenderThread();
         preparePackFolder();
         long start = System.nanoTime();
 
@@ -868,7 +874,19 @@ public class YSMMeshLibrary {
         try {
             List<Future<ModelResult>> futures = new ArrayList<>();
             for (String modelId : models.keySet()) {
-                futures.add(pool.submit(() -> convertModel(modelId)));
+                futures.add(pool.submit(() -> {
+                    try {
+                        CONVERSION_SLOTS.acquire();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return null;
+                    }
+                    try {
+                        return convertModel(modelId);
+                    } finally {
+                        CONVERSION_SLOTS.release();
+                    }
+                }));
             }
 
             for (Future<ModelResult> future : futures) {
@@ -1186,20 +1204,5 @@ public class YSMMeshLibrary {
      */
     public static boolean isTranslucentTexture(ResourceLocation rl) {
         return TextureStore.isTranslucentTexture(rl);
-    }
-
-    public static boolean isGenerated() {
-        return !MESHES.isEmpty();
-    }
-
-    public static int meshCount() {
-        return MESHES.size();
-    }
-
-    /**
-     * The model ids that have a generated base mesh (for diagnostics).
-     */
-    public static java.util.Set<String> availableModelIds() {
-        return YsmModelPackage.scanAvailableModels().keySet();
     }
 }

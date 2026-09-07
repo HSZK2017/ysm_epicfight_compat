@@ -282,7 +282,7 @@ public final class YsmCpuRenderPath {
         }
         boolean guiPreview = com.ysmef.compat.gpu.YsmGpuRenderPath.isGuiEntityProjection()
                 || com.ysmef.compat.gpu.YsmGpuRenderPath.isYsmPreviewMode();
-        if (shaderPackInUse() && !lastResort && !guiPreview) {
+        if (com.ysmef.compat.gpu.YsmGpuRenderPath.shaderPackInUse() && !lastResort && !guiPreview) {
             // under a shader pack the custom program would bypass the pack's shaders.
             // GUI previews are the exception: they are not drawn by the pack's
             // entity shader at all, so this plain vertex-pipeline draw is the
@@ -637,18 +637,9 @@ public final class YsmCpuRenderPath {
         buf.putInt(packNormal(NRM3.x * inv, NRM3.y * inv, NRM3.z * inv));
     }
 
-    /** Pack a normal into the GL_INT_2_10_10_10_REV layout (same unpack as cpu_skin.vsh). */
+    /** Pack a normal into the GL_INT_2_10_10_10_REV layout (single shared implementation). */
     static int packNormal(float x, float y, float z) {
-        float len = (float) Math.sqrt(x * x + y * y + z * z);
-        if (len > 1e-6f) {
-            x /= len;
-            y /= len;
-            z /= len;
-        }
-        int xi = Math.max(-511, Math.min(511, Math.round(x * 511)));
-        int yi = Math.max(-511, Math.min(511, Math.round(y * 511)));
-        int zi = Math.max(-511, Math.min(511, Math.round(z * 511)));
-        return (xi & 0x3FF) | ((yi & 0x3FF) << 10) | ((zi & 0x3FF) << 20);
+        return com.ysmef.compat.renderer.GlRenderState.packNormal(x, y, z);
     }
 
     /**
@@ -673,147 +664,135 @@ public final class YsmCpuRenderPath {
         RenderSystem.disableBlend();
 
         Minecraft mc = Minecraft.getInstance();
-        AbstractTexture modelTex = mc.getTextureManager().getTexture(texture);
-        int modelTexId = modelTex.getId();
+        boolean lightLayerOn = false;
+        try {
+            AbstractTexture modelTex = mc.getTextureManager().getTexture(texture);
+            if (modelTex == null) {
+                throw new IllegalStateException("texture not registered: " + texture);
+            }
+            int modelTexId = modelTex.getId();
 
-        GlStateManager._activeTexture(GL13.GL_TEXTURE0 + 2);
-        mc.gameRenderer.lightTexture().turnOnLightLayer();
+            GlStateManager._activeTexture(GL13.GL_TEXTURE0 + 2);
+            mc.gameRenderer.lightTexture().turnOnLightLayer();
+            lightLayerOn = true;
 
-        GlStateManager._activeTexture(GL13.GL_TEXTURE0 + 1);
-        mc.gameRenderer.overlayTexture().setupOverlayColor();
-        // the overlay texture has no getter; it is what setupOverlayColor bound to unit 1
-        GlStateManager._bindTexture(RenderSystem.getShaderTexture(1));
+            GlStateManager._activeTexture(GL13.GL_TEXTURE0 + 1);
+            mc.gameRenderer.overlayTexture().setupOverlayColor();
+            // the overlay texture has no getter; it is what setupOverlayColor bound to unit 1
+            GlStateManager._bindTexture(RenderSystem.getShaderTexture(1));
 
-        GlStateManager._activeTexture(GL13.GL_TEXTURE0);
-        GlStateManager._bindTexture(modelTexId);
+            GlStateManager._activeTexture(GL13.GL_TEXTURE0);
+            GlStateManager._bindTexture(modelTexId);
 
-        GlStateManager._glBindBuffer(GL15.GL_ARRAY_BUFFER, cpu.vbo);
-        // Orphaning: re-allocate the storage with no data pointer before the
-        // subdata. The GL server keeps the previous storage alive for draws
-        // still in flight (an earlier player's draw of this shared VBO), while
-        // this player's vertices go into fresh storage - otherwise the
-        // glBufferSubData could race the asynchronous draw on weak drivers.
-        GL15.glBufferData(GL15.GL_ARRAY_BUFFER, (long) cpu.capacity * YsmCpuMesh.VERTEX_STRIDE,
-                GL15.GL_STREAM_DRAW);
-        GL15.glBufferSubData(GL15.GL_ARRAY_BUFFER, 0L, cpu.cpuBuffer);
-        GlStateManager._glBindBuffer(GL15.GL_ARRAY_BUFFER, 0);
+            GlStateManager._glBindBuffer(GL15.GL_ARRAY_BUFFER, cpu.vbo);
+            // Orphaning: re-allocate the storage with no data pointer before the
+            // subdata. The GL server keeps the previous storage alive for draws
+            // still in flight (an earlier player's draw of this shared VBO), while
+            // this player's vertices go into fresh storage - otherwise the
+            // glBufferSubData could race the asynchronous draw on weak drivers.
+            GL15.glBufferData(GL15.GL_ARRAY_BUFFER, (long) cpu.capacity * YsmCpuMesh.VERTEX_STRIDE,
+                    GL15.GL_STREAM_DRAW);
+            GL15.glBufferSubData(GL15.GL_ARRAY_BUFFER, 0L, cpu.cpuBuffer);
+            GlStateManager._glBindBuffer(GL15.GL_ARRAY_BUFFER, 0);
 
-        float fogStart = RenderSystem.getShaderFogStart();
-        float fogEnd = RenderSystem.getShaderFogEnd();
-        float[] fogColor = RenderSystem.getShaderFogColor();
-        int fogShape = RenderSystem.getShaderFogShape().getIndex();
+            float fogStart = RenderSystem.getShaderFogStart();
+            float fogEnd = RenderSystem.getShaderFogEnd();
+            float[] fogColor = RenderSystem.getShaderFogColor();
+            int fogShape = RenderSystem.getShaderFogShape().getIndex();
 
-        GlStateManager._glUseProgram(YsmCpuSkinShader.program());
-        if (YsmCpuSkinShader.locProj() >= 0) {
-            GL20.glUniformMatrix4fv(YsmCpuSkinShader.locProj(), false, projScratch);
-        }
-        if (YsmCpuSkinShader.locMv() >= 0) {
-            GL20.glUniformMatrix4fv(YsmCpuSkinShader.locMv(), false, mvScratch);
-        }
-        if (YsmCpuSkinShader.locIvr() >= 0) {
-            GL20.glUniformMatrix3fv(YsmCpuSkinShader.locIvr(), false, ivrScratch);
-        }
-        if (YsmCpuSkinShader.locColor() >= 0) {
-            GL20.glUniform4f(YsmCpuSkinShader.locColor(), r, g, b, a);
-        }
-        if (YsmCpuSkinShader.locOverlay() >= 0) {
-            GL20.glUniform1i(YsmCpuSkinShader.locOverlay(), overlay);
-        }
-        if (YsmCpuSkinShader.locFogStart() >= 0) {
-            GL20.glUniform1f(YsmCpuSkinShader.locFogStart(), fogStart);
-        }
-        if (YsmCpuSkinShader.locFogEnd() >= 0) {
-            GL20.glUniform1f(YsmCpuSkinShader.locFogEnd(), fogEnd);
-        }
-        if (YsmCpuSkinShader.locFogColor() >= 0) {
-            GL20.glUniform4f(YsmCpuSkinShader.locFogColor(), fogColor[0], fogColor[1], fogColor[2], fogColor[3]);
-        }
-        if (YsmCpuSkinShader.locFogShape() >= 0) {
-            GL20.glUniform1i(YsmCpuSkinShader.locFogShape(), fogShape);
-        }
-        refreshLights();
-        if (YsmCpuSkinShader.locLight0() >= 0) {
-            GL20.glUniform3f(YsmCpuSkinShader.locLight0(), currentLights[0].x, currentLights[0].y, currentLights[0].z);
-        }
-        if (YsmCpuSkinShader.locLight1() >= 0) {
-            GL20.glUniform3f(YsmCpuSkinShader.locLight1(), currentLights[1].x, currentLights[1].y, currentLights[1].z);
-        }
-        if (YsmCpuSkinShader.locPackedLight() >= 0) {
-            GL20.glUniform1i(YsmCpuSkinShader.locPackedLight(), packedLight);
-        }
+            GlStateManager._glUseProgram(YsmCpuSkinShader.program());
+            if (YsmCpuSkinShader.locProj() >= 0) {
+                GL20.glUniformMatrix4fv(YsmCpuSkinShader.locProj(), false, projScratch);
+            }
+            if (YsmCpuSkinShader.locMv() >= 0) {
+                GL20.glUniformMatrix4fv(YsmCpuSkinShader.locMv(), false, mvScratch);
+            }
+            if (YsmCpuSkinShader.locIvr() >= 0) {
+                GL20.glUniformMatrix3fv(YsmCpuSkinShader.locIvr(), false, ivrScratch);
+            }
+            if (YsmCpuSkinShader.locColor() >= 0) {
+                GL20.glUniform4f(YsmCpuSkinShader.locColor(), r, g, b, a);
+            }
+            if (YsmCpuSkinShader.locOverlay() >= 0) {
+                GL20.glUniform1i(YsmCpuSkinShader.locOverlay(), overlay);
+            }
+            if (YsmCpuSkinShader.locFogStart() >= 0) {
+                GL20.glUniform1f(YsmCpuSkinShader.locFogStart(), fogStart);
+            }
+            if (YsmCpuSkinShader.locFogEnd() >= 0) {
+                GL20.glUniform1f(YsmCpuSkinShader.locFogEnd(), fogEnd);
+            }
+            if (YsmCpuSkinShader.locFogColor() >= 0) {
+                GL20.glUniform4f(YsmCpuSkinShader.locFogColor(), fogColor[0], fogColor[1], fogColor[2], fogColor[3]);
+            }
+            if (YsmCpuSkinShader.locFogShape() >= 0) {
+                GL20.glUniform1i(YsmCpuSkinShader.locFogShape(), fogShape);
+            }
+            refreshLights();
+            if (YsmCpuSkinShader.locLight0() >= 0) {
+                GL20.glUniform3f(YsmCpuSkinShader.locLight0(), currentLights[0].x, currentLights[0].y, currentLights[0].z);
+            }
+            if (YsmCpuSkinShader.locLight1() >= 0) {
+                GL20.glUniform3f(YsmCpuSkinShader.locLight1(), currentLights[1].x, currentLights[1].y, currentLights[1].z);
+            }
+            if (YsmCpuSkinShader.locPackedLight() >= 0) {
+                GL20.glUniform1i(YsmCpuSkinShader.locPackedLight(), packedLight);
+            }
 
-        GlStateManager._glBindVertexArray(cpu.vao);
-        boolean translucent = YSMMeshLibrary.isTranslucentTexture(texture);
-        if (YsmCpuSkinShader.locAlphaMode() >= 0) {
-            GL20.glUniform1i(YsmCpuSkinShader.locAlphaMode(), 1);
-        }
-        GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, writtenCount);
-
-        if (translucent) {
-            RenderSystem.enableBlend();
-            RenderSystem.defaultBlendFunc();
-            // vanilla translucent semantics: the blended pass must not write
-            // depth (otherwise it occludes entities behind it); restored after
-            RenderSystem.depthMask(false);
+            GlStateManager._glBindVertexArray(cpu.vao);
+            boolean translucent = YSMMeshLibrary.isTranslucentTexture(texture);
             if (YsmCpuSkinShader.locAlphaMode() >= 0) {
-                GL20.glUniform1i(YsmCpuSkinShader.locAlphaMode(), 2);
+                GL20.glUniform1i(YsmCpuSkinShader.locAlphaMode(), 1);
             }
             GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, writtenCount);
-            RenderSystem.depthMask(true);
-            RenderSystem.disableBlend();
-        }
 
-        GlStateManager._glUseProgram(0);
-        BufferUploader.invalidate();
-        GlStateManager._glBindVertexArray(0);
-
-        // restore the GL state this path changed (cull/blend/depth-test/depth-mask)
-        com.ysmef.compat.renderer.GlRenderState.restore(glState);
-
-        mc.gameRenderer.lightTexture().turnOffLightLayer();
-    }
-
-    // ------------------------------------------------------------------
-    // Gates mirrored from YsmGpuRenderPath (identical logic, see there)
-    // ------------------------------------------------------------------
-
-    /** Oculus/Iris API (reflective: the compat mod has no hard dependency on Oculus). */
-    private static final Class<?> IRIS_API_CLASS = findIrisApiClass();
-    private static long shaderPackCheckedAtNanos = 0;
-    private static boolean shaderPackInUseCache = false;
-
-    private static Class<?> findIrisApiClass() {
-        try {
-            return Class.forName("net.irisshaders.iris.api.v0.IrisApi");
-        } catch (Throwable t) {
-            return null;
-        }
-    }
-
-    /**
-     * Whether a shader pack is active (Oculus/Iris). Under a shader pack the
-     * custom GLSL program would bypass the pack's shaders, so the draw falls
-     * back to Epic Fight's own CPU path. Reflective + TTL-cached.
-     */
-    private static boolean shaderPackInUse() {
-        long now = System.nanoTime();
-        if (now - shaderPackCheckedAtNanos < 250_000_000L) {
-            return shaderPackInUseCache;
-        }
-        shaderPackCheckedAtNanos = now;
-        boolean inUse = false;
-        if (IRIS_API_CLASS != null) {
-            try {
-                Object instance = IRIS_API_CLASS.getMethod("getInstance").invoke(null);
-                if (instance != null) {
-                    inUse = Boolean.TRUE.equals(IRIS_API_CLASS.getMethod("isShaderPackInUse").invoke(instance));
+            if (translucent) {
+                RenderSystem.enableBlend();
+                RenderSystem.defaultBlendFunc();
+                // vanilla translucent semantics: the blended pass must not write
+                // depth (otherwise it occludes entities behind it); restored after
+                RenderSystem.depthMask(false);
+                if (YsmCpuSkinShader.locAlphaMode() >= 0) {
+                    GL20.glUniform1i(YsmCpuSkinShader.locAlphaMode(), 2);
                 }
+                GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, writtenCount);
+                RenderSystem.depthMask(true);
+                RenderSystem.disableBlend();
+            }
+        } finally {
+            try {
+                GlStateManager._glUseProgram(0);
             } catch (Throwable ignored) {
             }
+            try {
+                BufferUploader.invalidate();
+            } catch (Throwable ignored) {
+            }
+            try {
+                GlStateManager._glBindVertexArray(0);
+            } catch (Throwable ignored) {
+            }
+            try {
+                GlStateManager._glBindBuffer(GL15.GL_ARRAY_BUFFER, 0);
+            } catch (Throwable ignored) {
+            }
+            try {
+                // restore the GL state this path changed (cull/blend/depth-test/depth-mask)
+                com.ysmef.compat.renderer.GlRenderState.restore(glState);
+            } catch (Throwable ignored) {
+            }
+            if (lightLayerOn) {
+                try {
+                    mc.gameRenderer.lightTexture().turnOffLightLayer();
+                } catch (Throwable ignored) {
+                }
+            }
         }
-        shaderPackInUseCache = inUse;
-        return inUse;
     }
+
+    // ------------------------------------------------------------------
+    // Gates shared with YsmGpuRenderPath (shader-pack detection lives there)
+    // ------------------------------------------------------------------
 
     private static void refreshLights() {
         Vector3f[] arr = RenderSystemAccessorMixin.ysmef$getShaderLightDirections();
@@ -938,6 +917,8 @@ public final class YsmCpuRenderPath {
             cpu.dispose();
         }
         UNSUPPORTED.remove(mesh);
+        CPU_SKIP_DIAG.remove(mesh);
+        CPU_ACTIVE_LOGGED.remove(mesh);
     }
 
     /** Free every CPU-path mesh and per-armature cache (resource reload). Must run on the render thread. */
@@ -952,6 +933,8 @@ public final class YsmCpuRenderPath {
             CPU_MESHES.clear();
         }
         UNSUPPORTED.clear();
+        CPU_SKIP_DIAG.clear();
+        CPU_ACTIVE_LOGGED.clear();
         synchronized (TO_ORIGIN_CACHE) {
             TO_ORIGIN_CACHE.clear();
             POSE_LENGTH_CACHE.clear();

@@ -3,7 +3,7 @@ loaderVersion="[47,)"
 license="MIT"
 [[mods]]
 modId="ysm_epicfight_compat"
-version="1.8.1"
+version="1.9.0"
 displayName="YSM Epic Fight Compat"
 description = '''
 Bridges Yes Steve Model custom player models into the Epic Fight combat animation system.
@@ -28,15 +28,17 @@ versionRange="[1.20.1,1.21)"
 ordering="NONE"
 side="BOTH"
 [[dependencies.ysm_epicfight_compat]]
+# Reflection/mixin targets are validated against 20.14.17; allow 20.14.x patches only.
 modId="epicfight"
 mandatory=true
-versionRange="[20.14,)"
+versionRange="[20.14.17,20.15)"
 ordering="AFTER"
 side="BOTH"
 [[dependencies.ysm_epicfight_compat]]
+# Obfuscated YSM mixin targets are derived from the 2.6.5 jar; keep the 2.6 line.
 modId="yes_steve_model"
 mandatory=true
-versionRange="[2.6,)"
+versionRange="[2.6,2.7)"
 ordering="AFTER"
 side="BOTH"
 [[dependencies.ysm_epicfight_compat]]

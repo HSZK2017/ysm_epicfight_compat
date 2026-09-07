@@ -119,20 +119,6 @@ public final class YSMJointMapper {
         return STANDARD_MAPPING.containsKey(normalize(bone.name));
     }
 
-    // [decommissioned] dead method: never referenced anywhere in the codebase.
-    //
-    // /**
-    //  * The EF joint id -> EF joint name, for sanity checks.
-    //  */
-    // public static String jointNameOf(int jointId) {
-    //     for (Map.Entry<String, Integer> entry : JOINT_IDS.entrySet()) {
-    //         if (entry.getValue() == jointId) {
-    //             return entry.getKey();
-    //         }
-    //     }
-    //     return "Root";
-    // }
-
     /**
      * Normalizes a bone name for mapping lookup: lower case, underscores/spaces
      * removed, and trailing digits stripped so alternate-form subtrees of a model
@@ -146,7 +132,7 @@ public final class YSMJointMapper {
      * computation (YsmBindArmature) and the arm joints lost their real segment
      * geometry. Strip the form suffix so the default form maps to its joint.
      */
-    private static String normalize(String boneName) {
+    public static String normalize(String boneName) {
         String normalized = boneName.toLowerCase().replace("_", "").replace(" ", "");
         int end = normalized.length();
         while (end > 0 && Character.isDigit(normalized.charAt(end - 1))) {

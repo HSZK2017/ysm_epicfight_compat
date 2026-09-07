@@ -182,5 +182,6 @@ public final class YSMModelAccess {
      */
     public static void clearCache() {
         CACHE.clear();
+        LOGGED_MODEL_READS.clear();
     }
 }

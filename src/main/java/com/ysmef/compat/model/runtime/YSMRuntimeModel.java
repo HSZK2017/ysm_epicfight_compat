@@ -218,6 +218,8 @@ public final class YSMRuntimeModel {
     // ------------------------------------------------------------------
 
     private static final double HIDE_SCALE_EPSILON = 0.01;
+    /** Runtime bone hierarchies beyond this depth are treated as corrupt (cycle defense). */
+    private static final int MAX_BONE_DEPTH = 512;
 
     /**
      * Per-bone visibility of the model's default form, computed once from the
@@ -453,12 +455,15 @@ public final class YSMRuntimeModel {
         boolean[] done = new boolean[n];
         float[] eff = new float[n];
         for (int i = 0; i < n; i++) {
-            hidden[i] = effectiveScale(i, scales, done, eff) < HIDE_SCALE_EPSILON;
+            hidden[i] = effectiveScale(i, scales, done, eff, 0) < HIDE_SCALE_EPSILON;
         }
         return hidden;
     }
 
-    private float effectiveScale(int boneIdx, float[][] scales, boolean[] done, float[] eff) {
+    private float effectiveScale(int boneIdx, float[][] scales, boolean[] done, float[] eff, int depth) {
+        if (depth > MAX_BONE_DEPTH) {
+            throw new IllegalStateException("cyclic or too-deep bone hierarchy in runtime model");
+        }
         if (done[boneIdx]) {
             return eff[boneIdx];
         }
@@ -467,7 +472,7 @@ public final class YSMRuntimeModel {
             own = Math.min(scales[boneIdx][0], Math.min(scales[boneIdx][1], scales[boneIdx][2]));
         }
         float parent = bones[boneIdx].parent >= 0
-                ? effectiveScale(bones[boneIdx].parent, scales, done, eff)
+                ? effectiveScale(bones[boneIdx].parent, scales, done, eff, depth + 1)
                 : 1.0f;
         eff[boneIdx] = parent * own;
         done[boneIdx] = true;
@@ -527,12 +532,12 @@ public final class YSMRuntimeModel {
             }
 
             @Override
-            public double callFunction(String name, double[] args) {
+            public double callFunction(String name, double[] args, int argCount) {
                 // The default-form visibility evaluation must honor math.* calls
                 // in scale channels (e.g. math.clamp driving an eye plate's
                 // blink scale); returning 0 for every call collapsed those bones
                 // and hid the geometry (the sta model's "missing eyes").
-                return evalMathFunction(name, args);
+                return evalMathFunction(name, args, argCount);
             }
 
             @Override
@@ -547,55 +552,55 @@ public final class YSMRuntimeModel {
      * evaluation (mirrors the per-frame animator env in YSMPlayerAnimator).
      * Unknown functions evaluate to 0.
      */
-    private static double evalMathFunction(String name, double[] args) {
+    private static double evalMathFunction(String name, double[] args, int argCount) {
         switch (name) {
             case "math.sin":
-                return Math.sin(Math.toRadians(args[0]));
+                return argCount < 1 ? 0.0 : Math.sin(Math.toRadians(args[0]));
             case "math.cos":
-                return Math.cos(Math.toRadians(args[0]));
+                return argCount < 1 ? 0.0 : Math.cos(Math.toRadians(args[0]));
             case "math.tan":
-                return Math.tan(Math.toRadians(args[0]));
+                return argCount < 1 ? 0.0 : Math.tan(Math.toRadians(args[0]));
             case "math.asin":
-                return Math.toDegrees(Math.asin(args[0]));
+                return argCount < 1 ? 0.0 : Math.toDegrees(Math.asin(args[0]));
             case "math.acos":
-                return Math.toDegrees(Math.acos(args[0]));
+                return argCount < 1 ? 0.0 : Math.toDegrees(Math.acos(args[0]));
             case "math.atan":
-                return Math.toDegrees(Math.atan(args[0]));
+                return argCount < 1 ? 0.0 : Math.toDegrees(Math.atan(args[0]));
             case "math.atan2":
-                return Math.toDegrees(Math.atan2(args[0], args[1]));
+                return argCount < 2 ? 0.0 : Math.toDegrees(Math.atan2(args[0], args[1]));
             case "math.abs":
-                return Math.abs(args[0]);
+                return argCount < 1 ? 0.0 : Math.abs(args[0]);
             case "math.floor":
-                return Math.floor(args[0]);
+                return argCount < 1 ? 0.0 : Math.floor(args[0]);
             case "math.ceil":
-                return Math.ceil(args[0]);
+                return argCount < 1 ? 0.0 : Math.ceil(args[0]);
             case "math.round":
-                return Math.round(args[0]);
+                return argCount < 1 ? 0.0 : Math.round(args[0]);
             case "math.trunc":
-                return (long) (args[0] >= 0 ? Math.floor(args[0]) : Math.ceil(args[0]));
+                return argCount < 1 ? 0.0 : (long) (args[0] >= 0 ? Math.floor(args[0]) : Math.ceil(args[0]));
             case "math.sqrt":
-                return args[0] < 0 ? 0 : Math.sqrt(args[0]);
+                return argCount < 1 ? 0.0 : args[0] < 0 ? 0 : Math.sqrt(args[0]);
             case "math.pow":
-                return Math.pow(args[0], args[1]);
+                return argCount < 2 ? 0.0 : Math.pow(args[0], args[1]);
             case "math.exp":
-                return Math.exp(args[0]);
+                return argCount < 1 ? 0.0 : Math.exp(args[0]);
             case "math.ln":
             case "math.log":
-                return args[0] <= 0 ? 0 : Math.log(args[0]);
+                return argCount < 1 ? 0.0 : args[0] <= 0 ? 0 : Math.log(args[0]);
             case "math.lerp":
-                return args[0] + (args[1] - args[0]) * args[2];
+                return argCount < 3 ? 0.0 : args[0] + (args[1] - args[0]) * args[2];
             case "math.min":
-                return Math.min(args[0], args[1]);
+                return argCount < 1 ? 0.0 : argCount < 2 ? args[0] : Math.min(args[0], args[1]);
             case "math.max":
-                return Math.max(args[0], args[1]);
+                return argCount < 1 ? 0.0 : argCount < 2 ? args[0] : Math.max(args[0], args[1]);
             case "math.clamp":
-                return Math.max(args[1], Math.min(args[2], args[0]));
+                return argCount < 3 ? 0.0 : Math.max(args[1], Math.min(args[2], args[0]));
             case "math.mod":
-                return args[1] == 0 ? 0 : args[0] % args[1];
+                return argCount < 2 ? 0.0 : args[1] == 0 ? 0 : args[0] % args[1];
             case "math.pi":
                 return Math.PI;
             case "math.sign":
-                return Math.signum(args[0]);
+                return argCount < 1 ? 0.0 : Math.signum(args[0]);
             default:
                 return 0.0;
         }
@@ -615,6 +620,15 @@ public final class YSMRuntimeModel {
 
     /** Models whose runtime JSON is being compiled on a background thread. */
     private static final java.util.Set<String> PRELOADING = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * Models whose runtime JSON compilation failed. Failed compiles are not cached as
+     * null, but retrying every frame would cause repeated disk reads and log spam on
+     * the render thread; this map stores the next nanoTime at which a retry is allowed.
+     */
+    private static final Map<String, Long> FAILED_UNTIL = new ConcurrentHashMap<>();
+
+    private static final long RETRY_DELAY_NANOS = 10L * 1_000_000_000L;
 
     /** Incremented on invalidateAll: stale background compiles drop their results. */
     private static final java.util.concurrent.atomic.AtomicInteger RELOAD_GENERATION = new java.util.concurrent.atomic.AtomicInteger();
@@ -642,6 +656,10 @@ public final class YSMRuntimeModel {
         if (PRELOADING.contains(modelId)) {
             return null;
         }
+        Long retryAt = FAILED_UNTIL.get(modelId);
+        if (retryAt != null && System.nanoTime() < retryAt) {
+            return null;
+        }
         return loadAndCache(modelId);
     }
 
@@ -667,13 +685,27 @@ public final class YSMRuntimeModel {
         int generation = RELOAD_GENERATION.get();
         try {
             YSMRuntimeModel model = loadAndCompile(modelId);
-            if (PRELOADING.remove(modelId) && generation == RELOAD_GENERATION.get()) {
-                synchronized (CACHE) {
-                    CACHE.put(modelId, model);
+            if (model != null) {
+                FAILED_UNTIL.remove(modelId);
+                if (PRELOADING.remove(modelId) && generation == RELOAD_GENERATION.get()) {
+                    synchronized (CACHE) {
+                        CACHE.put(modelId, model);
+                    }
+                }
+            } else {
+                // Do not cache a failed compile as null: mark it for delayed retry so a
+                // later lookup (after the file becomes available) can try again. A stale
+                // failure from a previous reload generation must not suppress a fresh retry.
+                PRELOADING.remove(modelId);
+                if (generation == RELOAD_GENERATION.get()) {
+                    FAILED_UNTIL.put(modelId, System.nanoTime() + RETRY_DELAY_NANOS);
                 }
             }
         } catch (Throwable t) {
             PRELOADING.remove(modelId);
+            if (generation == RELOAD_GENERATION.get()) {
+                FAILED_UNTIL.put(modelId, System.nanoTime() + RETRY_DELAY_NANOS);
+            }
         }
     }
 
@@ -683,7 +715,12 @@ public final class YSMRuntimeModel {
                 return CACHE.get(modelId);
             }
             YSMRuntimeModel model = loadAndCompile(modelId);
-            CACHE.put(modelId, model);
+            if (model != null) {
+                CACHE.put(modelId, model);
+                FAILED_UNTIL.remove(modelId);
+            } else {
+                FAILED_UNTIL.put(modelId, System.nanoTime() + RETRY_DELAY_NANOS);
+            }
             return model;
         }
     }
@@ -705,6 +742,7 @@ public final class YSMRuntimeModel {
             CACHE.remove(modelId);
         }
         PRELOADING.remove(modelId);
+        FAILED_UNTIL.remove(modelId);
     }
 
     /** Forget all cached runtime models (called when meshes are regenerated). */
@@ -713,6 +751,7 @@ public final class YSMRuntimeModel {
             CACHE.clear();
         }
         PRELOADING.clear();
+        FAILED_UNTIL.clear();
         RELOAD_GENERATION.incrementAndGet();
     }
 
@@ -757,7 +796,7 @@ public final class YSMRuntimeModel {
         }
         BoneRt[] bones = boneList.toArray(new BoneRt[0]);
         for (int i = 0; i < bones.length; i++) {
-            computeBindWorld(bones, i);
+            computeBindWorld(bones, i, 0);
             bones[i].bindWorldInv.set(bones[i].bindWorld).invert();
         }
 
@@ -888,10 +927,13 @@ public final class YSMRuntimeModel {
         bone.bindLocalInv.set(bone.bindLocal).invert();
     }
 
-    private static void computeBindWorld(BoneRt[] bones, int i) {
+    private static void computeBindWorld(BoneRt[] bones, int i, int depth) {
+        if (depth > MAX_BONE_DEPTH) {
+            throw new IllegalStateException("cyclic or too-deep bone hierarchy in runtime model");
+        }
         BoneRt bone = bones[i];
         if (bone.parent >= 0) {
-            computeBindWorld(bones, bone.parent);
+            computeBindWorld(bones, bone.parent, depth + 1);
             bone.bindWorld.set(bones[bone.parent].bindWorld).mul(bone.bindLocal);
         } else {
             bone.bindWorld.set(bone.bindLocal);

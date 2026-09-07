@@ -116,7 +116,7 @@ public final class YsmCameraTargetSolver {
         // detached faces.
         List<WorldQuad> eyeQuads = new ArrayList<>();
         java.util.Set<YSMGeoModel.Bone> eyeSubtree = new java.util.HashSet<>();
-        collectQuads(eyes, eyeQuads, eyeSubtree, hiddenBones);
+        collectQuads(eyes, eyeQuads, eyeSubtree, hiddenBones, 0);
         float[] headBox = headBox(geoModel, head);
         WorldQuad front = pickFrontQuad(eyeQuads, headBox, true);
         if (front == null) {
@@ -404,17 +404,21 @@ public final class YsmCameraTargetSolver {
         YSMGeoModel.Bone best = null;
         for (YSMGeoModel.Bone bone : geoModel.bonesByName.values()) {
             if (normalize(bone.name).startsWith("eyes")
-                    && (best == null || subtreeSize(bone) > subtreeSize(best))) {
+                    && (best == null || subtreeSize(bone, 0) > subtreeSize(best, 0))) {
                 best = bone;
             }
         }
         return best;
     }
 
-    private static int subtreeSize(YSMGeoModel.Bone bone) {
+    private static int subtreeSize(YSMGeoModel.Bone bone, int depth) {
+        if (depth > YSMGeoModel.MAX_BONE_DEPTH) {
+            throw new IllegalStateException(
+                    "bone hierarchy deeper than " + YSMGeoModel.MAX_BONE_DEPTH + " while solving camera target");
+        }
         int size = bone.quads.size();
         for (YSMGeoModel.Bone child : bone.children) {
-            size += subtreeSize(child);
+            size += subtreeSize(child, depth + 1);
         }
         return size;
     }
@@ -434,7 +438,11 @@ public final class YsmCameraTargetSolver {
 
     /** Collect the quads of a bone and its whole descendant subtree (each with its own world transform). */
     private static void collectQuads(YSMGeoModel.Bone bone, List<WorldQuad> out, java.util.Set<YSMGeoModel.Bone> subtree,
-                                     java.util.Set<String> hiddenBones) {
+                                     java.util.Set<String> hiddenBones, int depth) {
+        if (depth > YSMGeoModel.MAX_BONE_DEPTH) {
+            throw new IllegalStateException(
+                    "bone hierarchy deeper than " + YSMGeoModel.MAX_BONE_DEPTH + " while collecting camera quads");
+        }
         subtree.add(bone);
         Matrix4f world = boneWorld(bone);
         // Bones hidden in the default (battle) form are never captured by the
@@ -452,7 +460,7 @@ public final class YsmCameraTargetSolver {
             }
         }
         for (YSMGeoModel.Bone child : bone.children) {
-            collectQuads(child, out, subtree, hiddenBones);
+            collectQuads(child, out, subtree, hiddenBones, depth + 1);
         }
     }
 
@@ -646,9 +654,17 @@ public final class YsmCameraTargetSolver {
 
     /** Bone-chain bind transform, identical to EFMeshJsonWriter.walkBone's. */
     private static Matrix4f boneWorld(YSMGeoModel.Bone bone) {
+        return boneWorld(bone, 0);
+    }
+
+    private static Matrix4f boneWorld(YSMGeoModel.Bone bone, int depth) {
+        if (depth > YSMGeoModel.MAX_BONE_DEPTH) {
+            throw new IllegalStateException(
+                    "bone hierarchy deeper than " + YSMGeoModel.MAX_BONE_DEPTH + " while computing camera bind worlds");
+        }
         Matrix4f world = new Matrix4f();
         if (bone.parent != null) {
-            world.set(boneWorld(bone.parent));
+            world.set(boneWorld(bone.parent, depth + 1));
         }
         world.translate(bone.pivotX, bone.pivotY, bone.pivotZ);
         world.rotateZ(bone.rotZ);
@@ -683,13 +699,8 @@ public final class YsmCameraTargetSolver {
         return new float[]{u * 0.25f, v * 0.25f};
     }
 
+    /** Single source of truth: YSMJointMapper's name normalization (see there). */
     private static String normalize(String boneName) {
-        String normalized = boneName.toLowerCase().replace("_", "").replace(" ", "");
-        // YSM's default-form bones may carry a "_Default" form suffix (e.g.
-        // "Head_Default"); strip it so the head/eyes lookup still matches.
-        if (normalized.endsWith("default")) {
-            normalized = normalized.substring(0, normalized.length() - "default".length());
-        }
-        return normalized;
+        return YSMJointMapper.normalize(boneName);
     }
 }

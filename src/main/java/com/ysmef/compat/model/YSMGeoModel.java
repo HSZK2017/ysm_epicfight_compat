@@ -28,6 +28,13 @@ import java.util.Map;
  */
 public class YSMGeoModel {
 
+    /**
+     * Maximum bone hierarchy depth accepted while parsing a model. Malformed or
+     * cyclic parent links therefore fail with a normal exception instead of
+     * overflowing the stack inside the recursive geometry walkers.
+     */
+    public static final int MAX_BONE_DEPTH = 512;
+
     public final List<Bone> topLevelBones = new ArrayList<>();
     public final Map<String, Bone> bonesByName = new HashMap<>();
     public int textureWidth = 64;
@@ -62,6 +69,9 @@ public class YSMGeoModel {
                 }
                 bone.quads.add(new Quad(positions, uvs, new Vector3f(binaryFace.nx, binaryFace.ny, binaryFace.nz)));
             }
+            if (byName.containsKey(bone.name)) {
+                throw new IllegalStateException("duplicate bone name in binary geometry: " + bone.name);
+            }
             byName.put(bone.name, bone);
             model.bonesByName.put(bone.name, bone);
         }
@@ -74,6 +84,21 @@ public class YSMGeoModel {
                 parent.children.add(bone);
             } else {
                 model.topLevelBones.add(bone);
+            }
+        }
+
+        // Reject cyclic/deep parent chains before the recursive geometry walkers run.
+        for (Bone bone : model.bonesByName.values()) {
+            int depth = 0;
+            java.util.Set<Bone> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+            for (Bone current = bone; current != null; current = current.parent) {
+                if (!seen.add(current)) {
+                    throw new IllegalStateException("cyclic bone hierarchy in binary geometry at '" + current.name + "'");
+                }
+                if (++depth > MAX_BONE_DEPTH) {
+                    throw new IllegalStateException(
+                            "bone hierarchy deeper than " + MAX_BONE_DEPTH + " in binary geometry");
+                }
             }
         }
         return model;
@@ -114,7 +139,7 @@ public class YSMGeoModel {
             if (boneJson.has("parent")) {
                 continue;
             }
-            Bone bone = buildBone(model, boneJson, null, boneJsonByName);
+            Bone bone = buildBone(model, boneJson, null, boneJsonByName, 0);
             if (bone != null) {
                 model.topLevelBones.add(bone);
             }
@@ -123,8 +148,15 @@ public class YSMGeoModel {
     }
 
     private static Bone buildBone(YSMGeoModel model, JsonObject boneJson, Bone parent,
-                                  Map<String, JsonObject> boneJsonByName) {
+                                  Map<String, JsonObject> boneJsonByName, int depth) {
+        if (depth > MAX_BONE_DEPTH) {
+            throw new IllegalStateException(
+                    "bone hierarchy deeper than " + MAX_BONE_DEPTH + " (cyclic or malformed parent links)");
+        }
         String name = boneJson.get("name").getAsString();
+        if (model.bonesByName.containsKey(name)) {
+            throw new IllegalStateException("duplicate bone name in geometry: " + name);
+        }
         Bone bone = new Bone();
         bone.name = name;
         bone.parent = parent;
@@ -153,7 +185,7 @@ public class YSMGeoModel {
         for (Map.Entry<String, JsonObject> entry : boneJsonByName.entrySet()) {
             JsonObject childJson = entry.getValue();
             if (childJson.has("parent") && childJson.get("parent").getAsString().equals(name)) {
-                Bone child = buildBone(model, childJson, bone, boneJsonByName);
+                Bone child = buildBone(model, childJson, bone, boneJsonByName, depth + 1);
                 bone.children.add(child);
             }
         }

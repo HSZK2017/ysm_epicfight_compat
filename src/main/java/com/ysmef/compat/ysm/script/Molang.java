@@ -35,7 +35,15 @@ public final class Molang {
 
         double getQueryById(int id);
 
-        double callFunction(String name, double[] args);
+        /**
+         * Evaluate a numeric function call.
+         *
+         * @param args     reusable argument slot buffer; only the first {@code argCount}
+         *                 entries are valid for this call. The buffer may contain stale
+         *                 values beyond {@code argCount} because the evaluator reuses it,
+         *                 so implementations must never read past {@code argCount}.
+         */
+        double callFunction(String name, double[] args, int argCount);
 
         /** ctrl.hold('mainhand', ':sword') style calls with string arguments. */
         double callStringFunction(String name, String[] args);
@@ -182,7 +190,7 @@ public final class Molang {
         }
 
         @Override
-        public double callFunction(String name, double[] args) {
+        public double callFunction(String name, double[] args, int argCount) {
             throw new IllegalStateException("constant folding touched a function call");
         }
 
@@ -284,8 +292,12 @@ public final class Molang {
     // ------------------------------------------------------------------
 
     private static final class Parser {
+        /** Maximum recursive-descent nesting for ternary/unary/parenthesized sub-expressions. */
+        private static final int MAX_PARSE_DEPTH = 256;
+
         private final Lexer lexer;
         private Token current;
+        private int depth;
 
         Parser(String src) {
             this.lexer = new Lexer(src);
@@ -376,34 +388,52 @@ public final class Molang {
         }
 
         private Expr parseTernary() {
-            Expr cond = parseCoalesce();
-            if (isOp("?")) {
-                advance();
-                Expr then = parseTernary();
-                Expr otherwise;
-                if (isOp(":")) {
-                    advance();
-                    otherwise = parseTernary();
-                } else {
-                    // Bedrock shorthand: `a ? b` without a `:` evaluates to b
-                    // when a != 0 and to 0 otherwise. Used pervasively by YSM
-                    // models (e.g. 'q.ground_speed<=2?4'); requiring the colon
-                    // made every such expression silently evaluate to 0.
-                    otherwise = env -> 0.0;
-                }
-                return env -> cond.eval(env) != 0.0 ? then.eval(env) : otherwise.eval(env);
+            depth++;
+            if (depth > MAX_PARSE_DEPTH) {
+                depth--;
+                throw new IllegalStateException("molang expression nesting too deep");
             }
-            return cond;
+            try {
+                Expr cond = parseCoalesce();
+                if (isOp("?")) {
+                    advance();
+                    Expr then = parseTernary();
+                    Expr otherwise;
+                    if (isOp(":")) {
+                        advance();
+                        otherwise = parseTernary();
+                    } else {
+                        // Bedrock shorthand: `a ? b` without a `:` evaluates to b
+                        // when a != 0 and to 0 otherwise. Used pervasively by YSM
+                        // models (e.g. 'q.ground_speed<=2?4'); requiring the colon
+                        // made every such expression silently evaluate to 0.
+                        otherwise = env -> 0.0;
+                    }
+                    return env -> cond.eval(env) != 0.0 ? then.eval(env) : otherwise.eval(env);
+                }
+                return cond;
+            } finally {
+                depth--;
+            }
         }
 
         private Expr parseCoalesce() {
-            Expr left = parseOr();
-            if (isOp("??")) {
-                advance();
-                Expr right = parseCoalesce();
-                return new CoalesceExpr(left, right);
+            depth++;
+            if (depth > MAX_PARSE_DEPTH) {
+                depth--;
+                throw new IllegalStateException("molang expression nesting too deep");
             }
-            return left;
+            try {
+                Expr left = parseOr();
+                if (isOp("??")) {
+                    advance();
+                    Expr right = parseCoalesce();
+                    return new CoalesceExpr(left, right);
+                }
+                return left;
+            } finally {
+                depth--;
+            }
         }
 
         private Expr parseOr() {
@@ -500,21 +530,30 @@ public final class Molang {
         }
 
         private Expr parseUnary() {
-            if (isOp("-")) {
-                advance();
-                Expr e = parseUnary();
-                return env -> -e.eval(env);
+            depth++;
+            if (depth > MAX_PARSE_DEPTH) {
+                depth--;
+                throw new IllegalStateException("molang expression nesting too deep");
             }
-            if (isOp("!")) {
-                advance();
-                Expr e = parseUnary();
-                return env -> e.eval(env) == 0.0 ? 1.0 : 0.0;
+            try {
+                if (isOp("-")) {
+                    advance();
+                    Expr e = parseUnary();
+                    return env -> -e.eval(env);
+                }
+                if (isOp("!")) {
+                    advance();
+                    Expr e = parseUnary();
+                    return env -> e.eval(env) == 0.0 ? 1.0 : 0.0;
+                }
+                if (isOp("+")) {
+                    advance();
+                    return parseUnary();
+                }
+                return parsePrimary();
+            } finally {
+                depth--;
             }
-            if (isOp("+")) {
-                advance();
-                return parseUnary();
-            }
-            return parsePrimary();
         }
 
         private Expr parsePrimary() {
@@ -576,7 +615,7 @@ public final class Molang {
                         for (int i = 0; i < exprArgs.length; i++) {
                             values[i] = exprArgs[i].eval(env);
                         }
-                        return env.callFunction(path, values);
+                        return env.callFunction(path, values, exprArgs.length);
                     };
                 }
                 return new VarExpr(path);

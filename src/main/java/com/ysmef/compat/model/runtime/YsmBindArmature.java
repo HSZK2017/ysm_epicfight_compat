@@ -2,6 +2,7 @@ package com.ysmef.compat.model.runtime;
 
 import com.ysmef.compat.YSMEpicFightCompat;
 import com.ysmef.compat.model.EFMeshJsonWriter;
+import com.ysmef.compat.model.YSMJointMapper;
 import com.ysmef.compat.model.YSMMesh;
 import org.joml.Vector3f;
 import yesman.epicfight.api.animation.Joint;
@@ -643,21 +644,9 @@ public final class YsmBindArmature {
         return acc.div(vertices.size());
     }
 
-    /** Mirrors YSMJointMapper's name normalization (lower case, no spaces/underscores, no trailing digits, no "_Default" form suffix). */
+    /** Single source of truth: YSMJointMapper's name normalization (see there). */
     private static String normalize(String boneName) {
-        String normalized = boneName.toLowerCase().replace("_", "").replace(" ", "");
-        int end = normalized.length();
-        while (end > 0 && Character.isDigit(normalized.charAt(end - 1))) {
-            end--;
-        }
-        normalized = normalized.substring(0, end);
-        // YSM's default-form bones may carry a "_Default" form suffix (the momo
-        // wine fox's "RightArm_Default"); strip it so the default form's geometry
-        // counts for the joint's pivot computation (matches YSMJointMapper).
-        if (normalized.endsWith("default")) {
-            normalized = normalized.substring(0, normalized.length() - "default".length());
-        }
-        return normalized;
+        return YSMJointMapper.normalize(boneName);
     }
 
     private static Vector3f midpoint(Vector3f a, Vector3f b) {

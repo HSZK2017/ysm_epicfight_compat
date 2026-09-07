@@ -103,7 +103,7 @@ public class EFMeshJsonWriter {
         int[] quadCount = {0};
         for (YSMGeoModel.Bone rootBone : geoModel.topLevelBones) {
             walkBone(rootBone, new Matrix4f(), scaleW, scaleH, dedup,
-                    positions, normals, uvs, vcounts, vindices, partIndices, quadCount);
+                    positions, normals, uvs, vcounts, vindices, partIndices, quadCount, 0);
         }
 
         if (positions.isEmpty()) {
@@ -241,7 +241,11 @@ public class EFMeshJsonWriter {
                                  Map<VertexKey, Integer> dedup,
                                  List<Float> positions, List<Float> normals, List<Float> uvs,
                                  List<Integer> vcounts, List<Integer> vindices,
-                                 Map<String, List<Integer>> partIndices, int[] quadCount) {
+                                 Map<String, List<Integer>> partIndices, int[] quadCount, int depth) {
+        if (depth > YSMGeoModel.MAX_BONE_DEPTH) {
+            throw new IllegalStateException(
+                    "bone hierarchy deeper than " + YSMGeoModel.MAX_BONE_DEPTH + " while writing the mesh");
+        }
         Matrix4f boneTransform = new Matrix4f(parentTransform);
         boneTransform.translate(bone.pivotX, bone.pivotY, bone.pivotZ);
         boneTransform.rotateZ(bone.rotZ);
@@ -314,7 +318,7 @@ public class EFMeshJsonWriter {
 
         for (YSMGeoModel.Bone child : bone.children) {
             walkBone(child, boneTransform, scaleW, scaleH, dedup,
-                    positions, normals, uvs, vcounts, vindices, partIndices, quadCount);
+                    positions, normals, uvs, vcounts, vindices, partIndices, quadCount, depth + 1);
         }
     }
 

@@ -254,12 +254,24 @@ public class YSMMesh extends HumanoidMesh {
             if (maidEntity) {
                 poseStack.popPose();
             }
+            // The current-entity ThreadLocal is set by YSMMeshSelector before this
+            // draw and must not keep a stale entity (or player/maid) referenced
+            // after the draw returns - including the early camera/GPU returns.
+            YSMRuntimeBridge.clearCurrentEntity();
         }
         com.ysmef.compat.YsmDiag.onMeshDrawEnd();
     }
 
     /** Once per model: which render path draws it and with which armature/pose data. */
     private static final Set<String> DIAG_MESH_DRAW = ConcurrentHashMap.newKeySet();
+
+    /** Drop per-mesh/per-model diagnostic once-sets on resource reload. */
+    static void clearDiagnostics() {
+        DIAG_MESH_DRAW.clear();
+        COMPUTE_PREFERRED_LOGGED.clear();
+        DIAG_CPU_FALLBACK_LOGGED.clear();
+        OVER_CAPACITY_LOGGED.clear();
+    }
 
     private static void logDrawDiagOnce(String modelId, Armature armature, OpenMatrix4f[] poses,
                                         boolean rebindApplied, boolean maidEntity, String path, PoseStack poseStack) {
@@ -534,6 +546,16 @@ public class YSMMesh extends HumanoidMesh {
 
     private static final java.lang.reflect.Field COMPUTE_SETUP_FIELD = findComputeSetupField();
 
+    /**
+     * Per-instance cache of the reflected EF compute setup. SkinnedMesh assigns
+     * the field during construction and YSMMesh instances are rebuilt after every
+     * resource reload / eviction, so caching by instance avoids a reflective
+     * Field.get on every mesh draw while still never pinning a stale setup
+     * across reloads.
+     */
+    private volatile yesman.epicfight.client.renderer.shader.compute.ComputeShaderSetup cachedComputeSetup;
+    private volatile boolean computeSetupResolved;
+
     private static java.lang.reflect.Field findComputeSetupField() {
         try {
             java.lang.reflect.Field field = SkinnedMesh.class.getDeclaredField("computerShaderSetup");
@@ -548,13 +570,19 @@ public class YSMMesh extends HumanoidMesh {
 
     @Nullable
     private yesman.epicfight.client.renderer.shader.compute.ComputeShaderSetup computeShaderSetup() {
+        if (computeSetupResolved) {
+            return cachedComputeSetup;
+        }
         if (COMPUTE_SETUP_FIELD == null) {
+            computeSetupResolved = true;
             return null;
         }
         try {
-            return (yesman.epicfight.client.renderer.shader.compute.ComputeShaderSetup) COMPUTE_SETUP_FIELD.get(this);
+            cachedComputeSetup = (yesman.epicfight.client.renderer.shader.compute.ComputeShaderSetup) COMPUTE_SETUP_FIELD.get(this);
         } catch (Throwable t) {
-            return null;
+            cachedComputeSetup = null;
         }
+        computeSetupResolved = true;
+        return cachedComputeSetup;
     }
 }

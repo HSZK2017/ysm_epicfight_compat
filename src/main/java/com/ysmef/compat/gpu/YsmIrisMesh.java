@@ -319,6 +319,14 @@ public final class YsmIrisMesh {
             return;
         }
         this.lastFormat = format;
+        // The format changed: first disable every attribute the previous format
+        // may have enabled in this VAO. Without this a shader with fewer
+        // attributes keeps the old, stale pointers enabled and samples the wrong
+        // buffers. Attribute indices stay below MAX_VERTEX_ATTRIBS by spec.
+        int maxAttribs = GL11.glGetInteger(GL20.GL_MAX_VERTEX_ATTRIBS);
+        for (int i = 0; i < maxAttribs; i++) {
+            GL20.glDisableVertexAttribArray(i);
+        }
         GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, this.outBO.glSSBO);
 
         int midUvPos = -1;

@@ -53,6 +53,7 @@ public class YSMReloadTrigger {
         YSMModelAccess.clearCache();
         ModelSyncClient.clear();
         YsmWheelPlayback.clear();
+        com.ysmef.compat.renderer.YSMMeshSelector.clear();
         com.ysmef.compat.renderer.YsmWheelAnimationState.invalidate();
     }
 

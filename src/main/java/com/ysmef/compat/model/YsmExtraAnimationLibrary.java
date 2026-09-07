@@ -54,6 +54,14 @@ public final class YsmExtraAnimationLibrary {
     private static final Path PUBLIC_DIR = PACK_ROOT.resolve("assets").resolve(YSMEpicFightCompat.MODID)
             .resolve("animmodels").resolve("animations").resolve(PUBLIC_DIRECTORY);
     private static final Path MAPPING_FILE = CONFIG_ROOT.resolve("extra_animation_mappings.json");
+    /**
+     * New per-model mapping sidecars. The legacy aggregate
+     * {@link #MAPPING_FILE} is still READ for caches written by older builds,
+     * but new mappings are written one small file per model: rewriting the whole
+     * aggregate for every converted model was O(N^2) disk I/O across a session.
+     */
+    private static final Path MAPPING_DIR = CONFIG_ROOT.resolve("extra_animation_mappings");
+    private static final Object MAPPING_WRITE_LOCK = new Object();
     private static final Path DESCRIPTOR_FILE = CONFIG_ROOT.resolve("extra_animation_templates.json");
     private static final String CONSTRUCTOR_PLACEHOLDER = "ysm_epicfight_compat:public/PLACEHOLDER";
 
@@ -68,6 +76,8 @@ public final class YsmExtraAnimationLibrary {
 
     private static final Set<String> PENDING_MODELS = ConcurrentHashMap.newKeySet();
     private static final Map<String, ModelMapping> MAPPING_CACHE = new ConcurrentHashMap<>();
+    /** Models whose mapping was looked up and found nowhere: skip repeated render-tick disk reads. */
+    private static final Set<String> MAPPING_MISS = ConcurrentHashMap.newKeySet();
     private static final Map<String, TemplateDescriptor> TEMPLATES = new ConcurrentHashMap<>();
     private static final Set<String> TEMPLATES_LOADED = ConcurrentHashMap.newKeySet();
     private static final Set<String> REGISTERED = ConcurrentHashMap.newKeySet();
@@ -234,19 +244,26 @@ public final class YsmExtraAnimationLibrary {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             digest.update((byte) clip.loop);
+            // One reused scratch buffer: the old code allocated a ByteBuffer per
+            // float, i.e. millions of small heap objects for a long clip.
             java.nio.ByteBuffer buffer = java.nio.ByteBuffer.allocate(8);
             buffer.putInt(Float.floatToIntBits(clip.length));
             buffer.putInt(clip.frameCount);
-            digest.update(buffer.array());
+            buffer.flip();
+            digest.update(buffer);
             for (Map.Entry<Integer, float[]> entry : clip.sourceDescriptor.entrySet()) {
                 digest.update((byte) entry.getKey().intValue());
                 for (float value : entry.getValue()) {
-                    digest.update(java.nio.ByteBuffer.allocate(4).putInt(Float.floatToIntBits(finite(value))).array());
+                    buffer.clear();
+                    buffer.putInt(Float.floatToIntBits(finite(value)));
+                    buffer.flip();
+                    digest.update(buffer);
                 }
             }
             StringBuilder sb = new StringBuilder();
             for (byte b : digest.digest()) {
-                sb.append(String.format("%02x", b & 0xFF));
+                sb.append(Character.forDigit((b >> 4) & 0xF, 16));
+                sb.append(Character.forDigit(b & 0xF, 16));
             }
             return sb.toString();
         } catch (Exception e) {
@@ -448,26 +465,29 @@ public final class YsmExtraAnimationLibrary {
         }
     }
 
-    private static synchronized void updateMapping(String modelId, List<WheelEntry> entries) {
+    private static void updateMapping(String modelId, List<WheelEntry> entries) {
         ModelMapping mapping = new ModelMapping(modelId, entries);
         MAPPING_CACHE.put(modelId, mapping);
+        MAPPING_MISS.remove(modelId);
+
+        // Per-model sidecar: one small atomic write instead of parsing and
+        // rewriting the whole session aggregate for every converted model.
         JsonObject root = new JsonObject();
-        try {
-            if (Files.isRegularFile(MAPPING_FILE)) {
-                root = JsonParser.parseString(Files.readString(MAPPING_FILE, StandardCharsets.UTF_8)).getAsJsonObject();
-            }
-        } catch (Exception ignored) {
-            root = new JsonObject();
-        }
-        JsonObject models = root.has("models") ? root.getAsJsonObject("models") : new JsonObject();
+        JsonObject models = new JsonObject();
         models.add(modelId, GSON.toJsonTree(mapping));
         root.add("models", models);
-        try {
-            Files.createDirectories(MAPPING_FILE.getParent());
-            EFMeshJsonWriter.writeFileAtomic(MAPPING_FILE, GSON.toJson(root).getBytes(StandardCharsets.UTF_8));
-        } catch (Exception e) {
-            YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to write extra animation mapping", e);
+        Path sidecar = mappingSidecar(modelId);
+        synchronized (MAPPING_WRITE_LOCK) {
+            try {
+                EFMeshJsonWriter.writeFileAtomic(sidecar, GSON.toJson(root).getBytes(StandardCharsets.UTF_8));
+            } catch (Exception e) {
+                YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to write extra animation mapping for '{}'", modelId, e);
+            }
         }
+    }
+
+    private static Path mappingSidecar(String modelId) {
+        return MAPPING_DIR.resolve(TextureStore.sanitize(modelId) + ".json");
     }
 
     private static ModelMapping loadMapping(String modelId) {
@@ -475,16 +495,36 @@ public final class YsmExtraAnimationLibrary {
         if (cached != null) {
             return cached;
         }
+        // Negative cache: findEntry() retries every tick while a wheel animation
+        // waits for conversion; without this each tick re-read the mapping files
+        // from disk on the render thread.
+        if (MAPPING_MISS.contains(modelId)) {
+            return null;
+        }
+        ModelMapping mapping = readMappingFile(mappingSidecar(modelId), modelId);
+        if (mapping == null) {
+            // Backward compatibility with caches written by older builds.
+            mapping = readMappingFile(MAPPING_FILE, modelId);
+        }
+        if (mapping != null) {
+            MAPPING_CACHE.put(modelId, mapping);
+            MAPPING_MISS.remove(modelId);
+            return mapping;
+        }
+        MAPPING_MISS.add(modelId);
+        return null;
+    }
+
+    private static ModelMapping readMappingFile(Path file, String modelId) {
+        if (!Files.isRegularFile(file)) {
+            return null;
+        }
         try {
-            if (!Files.isRegularFile(MAPPING_FILE)) {
-                return null;
-            }
-            JsonObject root = JsonParser.parseString(Files.readString(MAPPING_FILE, StandardCharsets.UTF_8)).getAsJsonObject();
+            JsonObject root = JsonParser.parseString(Files.readString(file, StandardCharsets.UTF_8)).getAsJsonObject();
             JsonObject models = root.has("models") ? root.getAsJsonObject("models") : null;
             if (models != null && models.has(modelId)) {
                 ModelMapping mapping = GSON.fromJson(models.get(modelId), ModelMapping.class);
                 if (mapping != null) {
-                    MAPPING_CACHE.put(modelId, mapping);
                     return mapping;
                 }
             }
@@ -753,6 +793,7 @@ public final class YsmExtraAnimationLibrary {
     /** Forget cached mappings/descriptors after model reloads. */
     public static void invalidateAll() {
         MAPPING_CACHE.clear();
+        MAPPING_MISS.clear();
         TEMPLATES.clear();
         TEMPLATES_LOADED.clear();
         REGISTERING.clear();
