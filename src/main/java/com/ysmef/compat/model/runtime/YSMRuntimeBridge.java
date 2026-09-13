@@ -87,6 +87,18 @@ public final class YSMRuntimeBridge {
     }
 
     /**
+     * The entity whose mesh is being drawn right now, or null outside a draw.
+     *
+     * <p>Exposed for the cloth, which has to express the skeleton's joints in the same frame
+     * as the mesh's own vertices: {@code poses} carries where the joints are in the world,
+     * and the vertices are in the model's bind space, so the entity's position is the
+     * translation between them.
+     */
+    public static LivingEntity currentEntity() {
+        return CURRENT_ENTITY.get();
+    }
+
+    /**
      * Restore full visibility of every per-bone part, undoing any hidden flags
      * the script evaluator set in previous frames.
      */

@@ -36,7 +36,18 @@ class YsmClothSolverTest {
         }
 
         void step(YsmClothSolver.Cloth cloth) {
-            YsmClothSolver.INSTANCE.step(cloth, pose, origin, 1, FRAME, 0.5F, YsmClothTuning.DEFAULTS);
+            YsmClothSolver.INSTANCE.step(cloth, origin, pose, 1, FRAME, 0.5F, YsmClothTuning.DEFAULTS);
+        }
+
+        /**
+         * Bring the rig to rest at its current position.
+         *
+         * <p>A piece is carried by how far its bone moves, so the first step at a position
+         * only records it; motion shows from the next step on.
+         */
+        void settle(YsmClothSolver.Cloth cloth) {
+            step(cloth);
+            step(cloth);
         }
     }
 
@@ -45,22 +56,24 @@ class YsmClothSolverTest {
      * whether the solve holds together.
      */
     private static YsmClothSolver.Cloth strand() {
-        YsmClothSolver.Cloth cloth = YsmClothSolver.allocate(2, 1);
+        YsmClothSolver.Cloth cloth = YsmClothSolver.allocate(2, 1, 1);
         YsmClothSolver.initParticle(cloth, 0, 0.0F, 0.0F, 0.0F);
         YsmClothSolver.initParticle(cloth, 1, 0.0F, -0.5F, 0.0F);
-        YsmClothSolver.pin(cloth, 0, 0, 0.0F, 0.0F, 0.0F);
+        YsmClothSolver.pin(cloth, 0, 0);
+        YsmClothSolver.anchorPins(cloth, 0, 0.0F, 0.0F, 0.0F, new Quaternionf());
         YsmClothSolver.addLink(cloth, 0, 0, 1, YsmClothSolver.structuralStiffness());
         return cloth;
     }
 
     /**
-     * The property the whole method rests on: the pinned end follows the skeleton exactly,
+     * The property the whole method rests on: the pinned end follows the bone it hangs from,
      * because that is the only thing carrying the body's motion into the cloth.
      */
     @Test
     void aPinnedParticleFollowsTheBoneItHangsFrom() {
         Rig rig = new Rig();
         YsmClothSolver.Cloth cloth = strand();
+        rig.settle(cloth);
 
         rig.moveTo(3.0F, 1.0F, -2.0F);
         rig.step(cloth);
@@ -183,10 +196,10 @@ class YsmClothSolverTest {
     @Test
     void aParticleInsideACollisionSphereIsPushedOut() {
         Rig rig = new Rig();
-        YsmClothSolver.Cloth cloth = YsmClothSolver.allocate(2, 1);
+        YsmClothSolver.Cloth cloth = YsmClothSolver.allocate(2, 1, 1);
         YsmClothSolver.initParticle(cloth, 0, 0.0F, 2.0F, 0.0F);
         YsmClothSolver.initParticle(cloth, 1, 0.02F, 0.01F, 0.0F);
-        YsmClothSolver.pin(cloth, 0, 0, 0.0F, 2.0F, 0.0F);
+        YsmClothSolver.pin(cloth, 0, 0);
         YsmClothSolver.addLink(cloth, 0, 0, 1, YsmClothSolver.structuralStiffness());
         // The free particle is assigned to the same bone, with a sphere around the origin.
         cloth.avoidBone[1] = 0;
@@ -205,15 +218,15 @@ class YsmClothSolverTest {
     /** Building a cloth must not leave stale bookkeeping behind. */
     @Test
     void pinningIsCountedAndReported() {
-        YsmClothSolver.Cloth cloth = YsmClothSolver.allocate(3, 2);
+        YsmClothSolver.Cloth cloth = YsmClothSolver.allocate(3, 2, 1);
         YsmClothSolver.initParticle(cloth, 0, 0, 0, 0);
         YsmClothSolver.initParticle(cloth, 1, 0, -1, 0);
         YsmClothSolver.initParticle(cloth, 2, 0, -2, 0);
         YsmClothSolver.addLink(cloth, 0, 0, 1, YsmClothSolver.structuralStiffness());
         YsmClothSolver.addLink(cloth, 1, 1, 2, YsmClothSolver.structuralStiffness());
 
-        YsmClothSolver.pin(cloth, 0, 0, 0, 0, 0);
-        YsmClothSolver.pin(cloth, 0, 0, 0, 0, 0);
+        YsmClothSolver.pin(cloth, 0, 0);
+        YsmClothSolver.pin(cloth, 0, 0);
 
         assertTrue(cloth.isPinned(0), "the top of the piece hangs from the body");
         assertFalse(cloth.isPinned(1), "and the rest of it is simulated");
@@ -228,9 +241,9 @@ class YsmClothSolverTest {
         Vector3f before = new Vector3f();
         cloth.position(1, before);
 
-        YsmClothSolver.INSTANCE.step(cloth, rig.pose, rig.origin, 1, 0.0F, 0.5F, YsmClothTuning.DEFAULTS);
-        YsmClothSolver.INSTANCE.step(cloth, rig.pose, rig.origin, 1, -1.0F, 0.5F, YsmClothTuning.DEFAULTS);
-        YsmClothSolver.INSTANCE.step(cloth, rig.pose, rig.origin, 1, Float.NaN, 0.5F, YsmClothTuning.DEFAULTS);
+        YsmClothSolver.INSTANCE.step(cloth, rig.origin, rig.pose, 1, 0.0F, 0.5F, YsmClothTuning.DEFAULTS);
+        YsmClothSolver.INSTANCE.step(cloth, rig.origin, rig.pose, 1, -1.0F, 0.5F, YsmClothTuning.DEFAULTS);
+        YsmClothSolver.INSTANCE.step(cloth, rig.origin, rig.pose, 1, Float.NaN, 0.5F, YsmClothTuning.DEFAULTS);
 
         Vector3f after = new Vector3f();
         cloth.position(1, after);

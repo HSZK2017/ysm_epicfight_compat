@@ -52,6 +52,15 @@ public final class YsmMeshCloth {
     /** A piece with fewer particles than this is not worth a solve. */
     private static final int MIN_PARTICLES = 6;
 
+    /**
+     * How much of a piece's height is pinned to the skeleton.
+     *
+     * <p>A fraction rather than a distance, because a bobble and a floor-length braid have to
+     * pin a comparable share of themselves. Too small and the top row tears away from the
+     * body; too large and most of the piece is rigid and nothing swings.
+     */
+    private static final float PIN_FRACTION = 0.15F;
+
     /** Per-step displacement ceiling per particle, blocks; see the solver. */
     private static final float MAX_STEP_VELOCITY = 0.4F;
 
@@ -67,16 +76,19 @@ public final class YsmMeshCloth {
         final int[] vertexOfParticle;
         /** The piece's pivot in model bind space: what its rotation is measured about. */
         final Vector3f pivot;
+        /** The skeleton bone the pinned particles follow. */
+        final int pinBoneIndex;
         final String boneName;
 
         Piece(YsmClothSolver.Cloth cloth, int[] partOrdinal, int[] partStart, int[] partCount,
-              int[] vertexOfParticle, Vector3f pivot, String boneName) {
+              int[] vertexOfParticle, Vector3f pivot, int pinBoneIndex, String boneName) {
             this.cloth = cloth;
             this.partOrdinal = partOrdinal;
             this.partStart = partStart;
             this.partCount = partCount;
             this.vertexOfParticle = vertexOfParticle;
             this.pivot = pivot;
+            this.pinBoneIndex = pinBoneIndex;
             this.boneName = boneName;
         }
     }
@@ -93,6 +105,8 @@ public final class YsmMeshCloth {
         /** How many part transforms the last frame wrote, and the largest turn among them. */
         int lastWrites;
         float lastTurnDegrees;
+        /** How far the cloth sat from its bind pose on the last frame, blocks. */
+        float lastSpread;
         boolean reported;
 
         State(YSMRuntimeModel model, YSMMesh mesh) {
@@ -264,7 +278,7 @@ public final class YsmMeshCloth {
                 }
             }
 
-            YsmClothSolver.Cloth cloth = YsmClothSolver.allocate(vertices.size(), links.size());
+            YsmClothSolver.Cloth cloth = YsmClothSolver.allocate(vertices.size(), links.size(), model.bones.length);
             for (int i = 0; i < vertices.size(); i++) {
                 int v = vertices.get(i) * 3;
                 YsmClothSolver.initParticle(cloth, i, positions[v], positions[v + 1], positions[v + 2]);
@@ -275,49 +289,44 @@ public final class YsmMeshCloth {
                         link[2] == 0 ? YsmClothSolver.structuralStiffness() : YsmClothSolver.bendingStiffness());
             }
 
-            // The piece hangs from its own root bone, and the skeleton bone that root sits
-            // on is what carries it: pinning to the root bone's own pivot instead put the
-            // attachment region at the wrong place - a head bone's pivot is not where a lock
-            // of hair leaves the skull - and every piece came out unattached.
+            // Where the piece hangs from, taken from the geometry rather than from the
+            // skeleton: the attachment end of a hanging piece is its highest point in bind
+            // pose - hair leaves the skull downwards, a skirt leaves the waist downwards.
+            //
+            // Reading it off a bone was tried twice and both attempts teleported the piece,
+            // because this model's bind matrices carry no translation at all: its UpBody
+            // binds at (0, 0, 0) while posing at y = 1.09, so anything derived from the bind
+            // side lands a block away from the geometry it is meant to hold. The pinned
+            // particles are therefore held where they already are and moved by the bone's own
+            // motion, which needs no bind frame.
             int pinBone = nearestMappedBone(model, chain);
             if (pinBone < 0) {
                 return null;
             }
-            Quaternionf bindRotation = new Quaternionf();
-            YsmClothSolver.rotationOf(model.bones[pinBone].bindWorld, bindRotation);
-            Quaternionf inverseBind = new Quaternionf(bindRotation).conjugate();
-            float pivotX = model.bones[chain.boneIndex()].bindWorld.m30();
-            float pivotY = model.bones[chain.boneIndex()].bindWorld.m31();
-            float pivotZ = model.bones[chain.boneIndex()].bindWorld.m32();
-
-            // The piece's own extent decides what counts as "attached": a fixed radius would
-            // pin either everything or nothing depending on the model's scale.
-            float extent = 0.0F;
+            float pivotX = 0.0F, pivotY = 0.0F, pivotZ = 0.0F;
+            float highestY = -Float.MAX_VALUE;
+            float lowestY = Float.MAX_VALUE;
             for (int i = 0; i < vertices.size(); i++) {
                 int v = vertices.get(i) * 3;
-                float d = (float) Math.sqrt(sq(positions[v] - pivotX) + sq(positions[v + 1] - pivotY)
-                        + sq(positions[v + 2] - pivotZ));
-                extent = Math.max(extent, d);
+                pivotX += positions[v];
+                pivotY += positions[v + 1];
+                pivotZ += positions[v + 2];
+                highestY = Math.max(highestY, positions[v + 1]);
+                lowestY = Math.min(lowestY, positions[v + 1]);
             }
-            float pinRadius = Math.max(extent * 0.25F, 0.02F);
+            int count = vertices.size();
+            pivotX /= count;
+            pivotY /= count;
+            pivotZ /= count;
+            // The top slice of the piece, scaled by its own height so a bobble and a
+            // floor-length braid both pin a comparable share of themselves.
+            float attachment = highestY - Math.max((highestY - lowestY) * PIN_FRACTION, 0.01F);
 
-            Vector3f local = new Vector3f();
             int pinned = 0;
-            int nearest = -1;
-            float nearestDistance = Float.MAX_VALUE;
             for (int i = 0; i < vertices.size(); i++) {
                 int v = vertices.get(i) * 3;
-                float dx = positions[v] - pivotX;
-                float dy = positions[v + 1] - pivotY;
-                float dz = positions[v + 2] - pivotZ;
-                float distance = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
-                if (distance < nearestDistance) {
-                    nearestDistance = distance;
-                    nearest = i;
-                }
-                if (distance <= pinRadius) {
-                    YsmClothSolver.toLocal(local, dx, dy, dz, inverseBind);
-                    YsmClothSolver.pin(cloth, i, pinBone, local.x, local.y, local.z);
+                if (positions[v + 1] <= attachment) {
+                    YsmClothSolver.pin(cloth, i, pinBone);
                     pinned++;
                 }
                 // Collision: the nearest mapped body bone to where the particle sits.
@@ -325,20 +334,48 @@ public final class YsmMeshCloth {
                 cloth.avoidBone[i] = avoid;
                 cloth.avoidRadius[i] = avoid >= 0 ? YsmClothTuning.current().bodyRadius : 0.0F;
             }
-            if (pinned == 0 && nearest >= 0) {
-                // Geometry that does not actually sit on its own root bone still has to hang
-                // from something; pinning the single closest vertex keeps the piece attached
-                // instead of dropping it, and is reported through the pinned count.
-                int v = vertices.get(nearest) * 3;
-                YsmClothSolver.toLocal(local, positions[v] - pivotX, positions[v + 1] - pivotY,
-                        positions[v + 2] - pivotZ, inverseBind);
-                YsmClothSolver.pin(cloth, nearest, pinBone, local.x, local.y, local.z);
-                pinned = 1;
-            }
             if (pinned == 0) {
+                // A piece whose geometry is a single row still has to hang from something;
+                // the highest particle is the attachment by the same definition.
+                int best = 0;
+                for (int i = 1; i < count; i++) {
+                    if (positions[vertices.get(i) * 3 + 1] > positions[vertices.get(best) * 3 + 1]) {
+                        best = i;
+                    }
+                }
+                YsmClothSolver.pin(cloth, best, pinBone);
+            }
+            if (cloth.pinnedCount() == 0) {
                 // A piece with nothing attached to the body would fall off the model.
                 return null;
             }
+            // The point the piece turns about, and the orientation it starts from: the
+            // attachment's own bind centroid, and the bone's bind rotation. Both are taken
+            // from the piece's geometry and its bone's bind pose so that the first frame's
+            // motion is measured against something consistent, which is what keeps the pin
+            // on its own geometry - see anchorPins.
+            float attachY = 0.0F;
+            float attachX = 0.0F;
+            float attachZ = 0.0F;
+            int attachCount = 0;
+            for (int i = 0; i < vertices.size(); i++) {
+                int v = vertices.get(i) * 3;
+                if (cloth.isPinned(i)) {
+                    attachX += positions[v];
+                    attachY += positions[v + 1];
+                    attachZ += positions[v + 2];
+                    attachCount++;
+                }
+            }
+            if (attachCount > 0) {
+                attachX /= attachCount;
+                attachY /= attachCount;
+                attachZ /= attachCount;
+            }
+            YSMRuntimeModel.BoneRt pinBoneRt = model.bones[pinBone];
+            Quaternionf bindRotation = new Quaternionf();
+            YsmClothSolver.rotationOf(pinBoneRt.bindWorld, bindRotation);
+            YsmClothSolver.anchorPins(cloth, pinBone, attachX, attachY, attachZ, bindRotation);
 
             int[] ordinals = new int[owningOrdinals.size()];
             int[] starts = new int[owningStarts.size()];
@@ -353,7 +390,7 @@ public final class YsmMeshCloth {
                 particleVertices[i] = vertices.get(i);
             }
             return new Piece(cloth, ordinals, starts, counts, particleVertices,
-                    new Vector3f(pivotX, pivotY, pivotZ), chain.boneName());
+                    new Vector3f(pivotX, pivotY, pivotZ), pinBone, chain.boneName());
         }
     }
 
@@ -431,12 +468,41 @@ public final class YsmMeshCloth {
         state.lastWrites = 0;
         state.lastTurnDegrees = 0.0F;
         for (Piece piece : state.pieces) {
-            YsmClothSolver.INSTANCE.step(piece.cloth, state.poseCache, state.originCache,
+            YsmClothSolver.INSTANCE.step(piece.cloth, state.originCache, state.poseCache,
                     state.boneSlots, dt, MAX_STEP_VELOCITY, tuning);
             writeBack(mesh, state, piece, positions);
         }
 
         state.frames++;
+        // Where the first piece's pin sits against the geometry it is supposed to hold, and
+        // where that geometry's particles are. Reported rather than reasoned about: the two
+        // being in different frames is invisible in every other number this class can print.
+        if (state.frames == 1 || state.frames % 300 == 0) {
+            Piece first = state.pieces.get(0);
+            YSMRuntimeModel.BoneRt pinBoneRt = model.bones[first.pinBoneIndex];
+            first.cloth.pinnedPosition(scratchProbe);
+            YSMEpicFightCompat.LOGGER.info(
+                    "YSM-EF Compat: [cloth] probe '{}': pin bone '{}' bind=({}, {}, {}) pose=({}, {}, {}) pin=({}, {}, {}), first particle bind=({}, {}, {})",
+                    first.boneName, pinBoneRt == null ? "?" : pinBoneRt.name,
+                    round(pinBoneRt == null ? 0 : pinBoneRt.bindWorld.m30()),
+                    round(pinBoneRt == null ? 0 : pinBoneRt.bindWorld.m31()),
+                    round(pinBoneRt == null ? 0 : pinBoneRt.bindWorld.m32()),
+                    round(state.originCache[first.pinBoneIndex].x),
+                    round(state.originCache[first.pinBoneIndex].y),
+                    round(state.originCache[first.pinBoneIndex].z),
+                    round(scratchProbe.x), round(scratchProbe.y), round(scratchProbe.z),
+                    round(positions[first.vertexOfParticle[0] * 3]),
+                    round(positions[first.vertexOfParticle[0] * 3 + 1]),
+                    round(positions[first.vertexOfParticle[0] * 3 + 2]));
+        }
+        // How far the free particles have stretched away from their attachment, in blocks:
+        // near zero means the solve is holding the piece together, and a value that grows
+        // with time means it is being pulled apart.
+        float spread = 0.0F;
+        for (Piece piece : state.pieces) {
+            spread = Math.max(spread, piece.cloth.largestStretch());
+        }
+        state.lastSpread = spread;
         if (!state.reported) {
             state.reported = true;
             int particles = 0;
@@ -454,15 +520,21 @@ public final class YsmMeshCloth {
         }
         if (state.frames % 300 == 0) {
             YSMEpicFightCompat.LOGGER.info(
-                    "YSM-EF Compat: [cloth] frame {}: dt={}ms, {} piece(s) solved, {} part transform(s) written, largest turn {}deg (cap {}deg)",
+                    "YSM-EF Compat: [cloth] frame {}: dt={}ms, {} piece(s) solved, cloth stretch {} blocks, {} part transform(s) written, largest turn {}deg (cap {}deg)",
                     state.frames, Math.round(dt * 1000.0F), state.pieces.size(),
+                    Math.round(state.lastSpread * 1000.0F) / 1000.0F,
                     state.lastWrites, Math.round(state.lastTurnDegrees * 10.0F) / 10.0F, Math.round(MAX_TURN_DEGREES));
         }
     }
 
     /**
-     * The current rotation and origin of every body bone, which is all the solver needs
-     * from Epic Fight's pose.
+     * The current rotation and origin of every body bone, which is all the solver needs from
+     * Epic Fight's pose.
+     *
+     * <p>The origins are used as given. They are already in this mesh's own frame - the same
+     * frame its vertices are in - which was established by measurement rather than assumed:
+     * subtracting the entity's world position on the theory that they were not put the whole
+     * solve three hundred blocks out of frame.
      */
     private static void fillBoneState(YSMRuntimeModel model, OpenMatrix4f[] poses, State state) {
         for (int bone = 0; bone < state.boneSlots; bone++) {
@@ -517,9 +589,14 @@ public final class YsmMeshCloth {
     private static final Quaternionf scratchRotation = new Quaternionf();
     private static final Matrix4f scratchDelta = new Matrix4f();
     private static final OpenMatrix4f scratchOpen = new OpenMatrix4f();
+    private static final Vector3f scratchProbe = new Vector3f();
+
+    private static String round(float value) {
+        return String.valueOf(Math.round(value * 1000.0F) / 1000.0F);
+    }
 
     /** Below this the piece counts as settled and no transform is written. */
-    private static final float MIN_TURN_RADIANS = 0.005F;
+    private static final float MIN_TURN_RADIANS = 0.002F;
     /**
      * Above this the rotation is not applied.
      *
@@ -561,7 +638,14 @@ public final class YsmMeshCloth {
                 continue;
             }
             scratchBindCentroid.set(fromX / n, fromY / n, fromZ / n).sub(piece.pivot);
-            scratchSolvedCentroid.set(toX / n, toY / n, toZ / n).sub(piece.pivot);
+            // The pivot has to be the one the cloth hangs from <i>now</i>, not the one it was
+            // bound at. Measuring the solved centroid against the bind pivot mixes an
+            // animated position with a bind-pose one: the two directions then land nearly
+            // parallel by accident, which reads as "the cloth never moves" - and did, for
+            // fifty-five thousand frames - or nearly opposed, which reads as a half-turn
+            // applied to a piece that had not moved at all.
+            piece.cloth.pinnedPosition(scratchSolvedCentroid);
+            scratchSolvedCentroid.set(toX / n, toY / n, toZ / n).sub(scratchSolvedCentroid);
             Quaternionf turn = rotationBetween(scratchBindCentroid, scratchSolvedCentroid);
             if (turn != null) {
                 scratchDelta.identity().rotate(turn);
