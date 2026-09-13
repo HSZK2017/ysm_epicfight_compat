@@ -47,6 +47,15 @@ public final class YsmClothSolver {
 
     /** A step longer than this is clamped, so a lag spike cannot fling the cloth. */
     private static final float MAX_DT = 0.05F;
+    /**
+     * How far a body bone may move in one frame before the change is treated as not motion.
+     *
+     * <p>Well above anything a real animation produces between two frames - a sprinting
+     * entity moves a few centimetres - and well below the scale of a frame mismatch, which is
+     * the failure this guards against. See advancePins.
+     */
+    private static final float MAX_BONE_STEP = 1.0F;
+
     /** Speed below which a particle counts as stopped, blocks/s. */
     private static final float SLEEP_SPEED = 0.002F;
     /** Structural links are held at full strength; bending links only shape the fold. */
@@ -119,6 +128,20 @@ public final class YsmClothSolver {
         final int[] vertexOfParticle;
         /** How many particles are pinned, reported once so a silent failure is visible. */
         int pinnedCount;
+        /** How many bone steps were too large to be motion, for the one-line report. */
+        long rejectedSteps;
+        /** The largest bone step accepted as motion, blocks. */
+        float largestBoneStep;
+        /**
+         * How far the pinned bones have moved from where the piece was built.
+         *
+         * <p>Accumulated here rather than derived from the current position, because the pins
+         * are placed at a fixed anchor plus this: a running total cannot drift out of step
+         * with the reference position the way two independently updated quantities can.
+         */
+        float totalDx;
+        float totalDy;
+        float totalDz;
 
         Cloth(int particleCount, int linkCount, int boneSlots) {
             this.x = new float[particleCount];
@@ -332,6 +355,23 @@ public final class YsmClothSolver {
     }
 
     /**
+     * Take the bone's current position as the reference its next motion is measured from,
+     * without moving anything.
+     *
+     * <p>Called once when the piece is built. Without it the solver's first step would
+     * measure the bone's motion against the zero it was initialised with, and read the
+     * bone's entire height as a step - which is a jump of 1.09 blocks on this mod's test
+     * model, dragging the pinned particles clear off their geometry before the cloth has
+     * moved at all.
+     */
+    public static void seedPreviousOrigin(Cloth cloth, int bone, Vector3f origin) {
+        if (origin == null || cloth == null || bone < 0 || bone >= cloth.lastOriginX.length) {
+            return;
+        }
+        recordPreviousOrigin(cloth, bone, origin.x, origin.y, origin.z);
+    }
+
+    /**
      * Carry the pinned particles of one bone to where that bone has just moved.
      *
      * <p>Three things move a hanging piece, and all three are needed: the bone's translation,
@@ -351,7 +391,27 @@ public final class YsmClothSolver {
         float dy = y - cloth.lastOriginY[bone];
         float dz = z - cloth.lastOriginZ[bone];
 
-        // The change in the bone's rotation, applied about the pin's own anchor so the piece
+        // A body bone cannot move further than this in one frame. A larger change is not
+        // motion: it is the pose being read differently - a model swap, a respawn, the first
+        // frame after the entity was replaced - and treating it as motion drags the whole
+        // piece across the model at the velocity ceiling, every frame, for as long as the
+        // difference persists.
+        float step = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (step > MAX_BONE_STEP) {
+            cloth.rejectedSteps++;
+            recordPreviousOrigin(cloth, bone, x, y, z);
+            return;
+        }
+        if (step > cloth.largestBoneStep) {
+            cloth.largestBoneStep = step;
+        }
+        // The bone's accumulated displacement from where the piece was built, advanced before
+        // the pins are placed from it.
+        cloth.totalDx += dx;
+        cloth.totalDy += dy;
+        cloth.totalDz += dz;
+
+        // The change in the bone's rotation, applied about the pin's anchor so the piece
         // swings with the bone rather than only following its origin.
         Quaternionf change = null;
         if (rotation != null && cloth.lastRotationValid[bone]) {
@@ -361,9 +421,9 @@ public final class YsmClothSolver {
             if (!cloth.pinned[i] || cloth.pinBone[i] != bone) {
                 continue;
             }
-            float ox = cloth.x[i] - cloth.anchorX[bone];
-            float oy = cloth.y[i] - cloth.anchorY[bone];
-            float oz = cloth.z[i] - cloth.anchorZ[bone];
+            float ox = cloth.pinBindX[i] - cloth.anchorX[bone];
+            float oy = cloth.pinBindY[i] - cloth.anchorY[bone];
+            float oz = cloth.pinBindZ[i] - cloth.anchorZ[bone];
             if (change != null) {
                 scratchOffset.set(ox, oy, oz);
                 change.transform(scratchOffset);
@@ -371,18 +431,18 @@ public final class YsmClothSolver {
                 oy = scratchOffset.y;
                 oz = scratchOffset.z;
             }
+            // Where the bone has carried this particle: its bind point moved by how far the
+            // bone has moved <i>from where it was bound</i>. The anchor does not advance with
+            // the bone - a moving anchor is what made the bone's step get applied twice per
+            // frame, which is a piece that creeps at the velocity ceiling forever.
             cloth.px[i] = cloth.x[i];
             cloth.py[i] = cloth.y[i];
             cloth.pz[i] = cloth.z[i];
-            cloth.x[i] = cloth.anchorX[bone] + ox + dx;
-            cloth.y[i] = cloth.anchorY[bone] + oy + dy;
-            cloth.z[i] = cloth.anchorZ[bone] + oz + dz;
+            cloth.x[i] = cloth.anchorX[bone] + ox + cloth.totalDx;
+            cloth.y[i] = cloth.anchorY[bone] + oy + cloth.totalDy;
+            cloth.z[i] = cloth.anchorZ[bone] + oz + cloth.totalDz;
         }
 
-        // The anchor follows the bone, so the next step's rotation is measured about it.
-        cloth.anchorX[bone] += dx;
-        cloth.anchorY[bone] += dy;
-        cloth.anchorZ[bone] += dz;
         recordPreviousOrigin(cloth, bone, x, y, z);
         if (rotation != null) {
             cloth.lastRotation[bone].set(rotation);
@@ -476,7 +536,7 @@ public final class YsmClothSolver {
      * @param maxVelocityPerStep per-particle displacement ceiling, blocks
      */
     public void step(Cloth cloth, Vector3f[] jointPos, Quaternionf[] poseOfBone, int boneCount,
-                     float dt, float maxVelocityPerStep, YsmClothTuning tuning) {
+                     float dt, YsmClothTuning tuning) {
         if (cloth == null || jointPos == null
                 || boneCount <= 0 || !(dt > 0.0F) || !Float.isFinite(dt)) {
             return;
@@ -518,12 +578,13 @@ public final class YsmClothSolver {
                 vy = 0.0F;
                 vz = 0.0F;
             }
-            // A per-step velocity ceiling. Without it one bad frame - a model swap, a lag
-            // spike, a teleport - hands the solver a displacement it will happily keep, and
-            // the piece flies. The pinned particles are exempt: their motion is the body's.
-            vx = clamp(vx, maxVelocityPerStep);
-            vy = clamp(vy, maxVelocityPerStep);
-            vz = clamp(vz, maxVelocityPerStep);
+            // Deliberately no per-particle speed clamp. One was here, at a quarter of a block
+            // per step, and it is what left the cloth permanently behind: a body bone on this
+            // model moves up to 0.9 blocks in a step, which is more than twice that, so the
+            // free particles could never catch up and the piece grew a stretch that only got
+            // larger with time. The distance constraints are the real limit and they do not
+            // need help - a projection places particles on a legal configuration whatever
+            // speed they arrived at, which is the whole reason this is position-based.
             cloth.px[i] = oldX;
             cloth.py[i] = oldY;
             cloth.pz[i] = oldZ;

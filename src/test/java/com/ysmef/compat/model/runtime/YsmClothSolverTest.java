@@ -36,7 +36,7 @@ class YsmClothSolverTest {
         }
 
         void step(YsmClothSolver.Cloth cloth) {
-            YsmClothSolver.INSTANCE.step(cloth, origin, pose, 1, FRAME, 0.5F, YsmClothTuning.DEFAULTS);
+            YsmClothSolver.INSTANCE.step(cloth, origin, pose, 1, FRAME, YsmClothTuning.DEFAULTS);
         }
 
         /**
@@ -68,6 +68,9 @@ class YsmClothSolverTest {
     /**
      * The property the whole method rests on: the pinned end follows the bone it hangs from,
      * because that is the only thing carrying the body's motion into the cloth.
+     *
+     * <p>The bone walks in per-frame steps a body could actually make. A single large jump is
+     * deliberately not followed - see {@code aBoneStepTooLargeToBeMotionIsRefused}.
      */
     @Test
     void aPinnedParticleFollowsTheBoneItHangsFrom() {
@@ -75,14 +78,48 @@ class YsmClothSolverTest {
         YsmClothSolver.Cloth cloth = strand();
         rig.settle(cloth);
 
-        rig.moveTo(3.0F, 1.0F, -2.0F);
+        rig.moveTo(0.3F, 0.1F, -0.2F);
         rig.step(cloth);
 
         Vector3f pinned = new Vector3f();
         cloth.position(0, pinned);
-        assertEquals(3.0F, pinned.x, 1.0E-4F, "the pinned particle is carried to the bone");
-        assertEquals(1.0F, pinned.y, 1.0E-4F);
-        assertEquals(-2.0F, pinned.z, 1.0E-4F);
+        assertEquals(0.3F, pinned.x, 1.0E-4F, "the pinned particle is carried to the bone");
+        assertEquals(0.1F, pinned.y, 1.0E-4F);
+        assertEquals(-0.2F, pinned.z, 1.0E-4F);
+
+        rig.moveTo(0.6F, 0.2F, -0.4F);
+        rig.step(cloth);
+        cloth.position(0, pinned);
+        assertEquals(0.6F, pinned.x, 1.0E-4F, "and keeps following as it keeps moving");
+    }
+
+    /**
+     * A bone step no body could make is not motion, and following it drags the piece across
+     * the model at the velocity ceiling for as long as the difference lasts - which is how a
+     * piece ends up stretched a dozen blocks with the body standing still.
+     */
+    @Test
+    void aBoneStepTooLargeToBeMotionIsRefused() {
+        Rig rig = new Rig();
+        YsmClothSolver.Cloth cloth = strand();
+        rig.settle(cloth);
+
+        Vector3f before = new Vector3f();
+        cloth.position(0, before);
+
+        rig.moveTo(40.0F, 0.0F, 0.0F);
+        rig.step(cloth);
+
+        Vector3f after = new Vector3f();
+        cloth.position(0, after);
+        assertEquals(0.0F, after.x, 1.0E-4F, "an impossible step must not be followed");
+        assertEquals(1L, cloth.rejectedSteps, "and it is reported rather than silently dropped");
+
+        // The bone is now believed to be there, so ordinary motion from it is followed again.
+        rig.moveTo(40.3F, 0.0F, 0.0F);
+        rig.step(cloth);
+        cloth.position(0, after);
+        assertEquals(0.3F, after.x, 1.0E-4F, "the next real step is followed normally");
     }
 
     /**
@@ -241,9 +278,9 @@ class YsmClothSolverTest {
         Vector3f before = new Vector3f();
         cloth.position(1, before);
 
-        YsmClothSolver.INSTANCE.step(cloth, rig.origin, rig.pose, 1, 0.0F, 0.5F, YsmClothTuning.DEFAULTS);
-        YsmClothSolver.INSTANCE.step(cloth, rig.origin, rig.pose, 1, -1.0F, 0.5F, YsmClothTuning.DEFAULTS);
-        YsmClothSolver.INSTANCE.step(cloth, rig.origin, rig.pose, 1, Float.NaN, 0.5F, YsmClothTuning.DEFAULTS);
+        YsmClothSolver.INSTANCE.step(cloth, rig.origin, rig.pose, 1, 0.0F, YsmClothTuning.DEFAULTS);
+        YsmClothSolver.INSTANCE.step(cloth, rig.origin, rig.pose, 1, -1.0F, YsmClothTuning.DEFAULTS);
+        YsmClothSolver.INSTANCE.step(cloth, rig.origin, rig.pose, 1, Float.NaN, YsmClothTuning.DEFAULTS);
 
         Vector3f after = new Vector3f();
         cloth.position(1, after);

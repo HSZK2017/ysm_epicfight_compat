@@ -107,6 +107,13 @@ public final class YsmMeshCloth {
         float lastTurnDegrees;
         /** How far the cloth sat from its bind pose on the last frame, blocks. */
         float lastSpread;
+        /** The largest distance any part's cloth moved on the last frame, blocks. */
+        float lastMove;
+        /** Bone steps refused as impossible, and the largest accepted, for the report. */
+        long lastRejectedSteps;
+        float lastBoneStep;
+        /** Whether the pins have been given their first reference position. */
+        boolean pinsSeeded;
         boolean reported;
 
         State(YSMRuntimeModel model, YSMMesh mesh) {
@@ -325,7 +332,9 @@ public final class YsmMeshCloth {
             int pinned = 0;
             for (int i = 0; i < vertices.size(); i++) {
                 int v = vertices.get(i) * 3;
-                if (positions[v + 1] <= attachment) {
+                // At or above the attachment line. Comparing the other way pins the piece from
+                // the bottom up, which left 1842 of 2208 particles rigid and nothing to swing.
+                if (positions[v + 1] >= attachment) {
                     YsmClothSolver.pin(cloth, i, pinBone);
                     pinned++;
                 }
@@ -349,11 +358,13 @@ public final class YsmMeshCloth {
                 // A piece with nothing attached to the body would fall off the model.
                 return null;
             }
-            // The point the piece turns about, and the orientation it starts from: the
-            // attachment's own bind centroid, and the bone's bind rotation. Both are taken
-            // from the piece's geometry and its bone's bind pose so that the first frame's
-            // motion is measured against something consistent, which is what keeps the pin
-            // on its own geometry - see anchorPins.
+            // The point the piece turns about: its own attachment. The pin is placed as
+            // anchor + boneMotion + rotation(bindOffset), which lands exactly on the bind
+            // vertex whenever the bone is where it was bound - the sum is exactly zero there.
+            // Two earlier shapes of this were wrong in ways that only showed as drift: an
+            // offset taken from a moving anchor applied the bone's step twice per frame, and
+            // an anchor that advanced with the bone made the piece creep at the velocity
+            // ceiling for as long as the session ran.
             float attachY = 0.0F;
             float attachX = 0.0F;
             float attachZ = 0.0F;
@@ -375,7 +386,8 @@ public final class YsmMeshCloth {
             YSMRuntimeModel.BoneRt pinBoneRt = model.bones[pinBone];
             Quaternionf bindRotation = new Quaternionf();
             YsmClothSolver.rotationOf(pinBoneRt.bindWorld, bindRotation);
-            YsmClothSolver.anchorPins(cloth, pinBone, attachX, attachY, attachZ, bindRotation);
+            YsmClothSolver.anchorPins(cloth, pinBone, attachX - pinBoneRt.bindWorld.m30(),
+                    attachY - pinBoneRt.bindWorld.m31(), attachZ - pinBoneRt.bindWorld.m32(), bindRotation);
 
             int[] ordinals = new int[owningOrdinals.size()];
             int[] starts = new int[owningStarts.size()];
@@ -463,13 +475,23 @@ public final class YsmMeshCloth {
         state.lastStepSeconds = now;
 
         fillBoneState(model, poses, state);
+        // Each piece's pins start from where their bone is on the frame the piece was built,
+        // so the first step measures a change of zero rather than the bone's whole height.
+        if (!state.pinsSeeded) {
+            state.pinsSeeded = true;
+            for (Piece piece : state.pieces) {
+                YsmClothSolver.seedPreviousOrigin(piece.cloth, piece.pinBoneIndex,
+                        state.originCache[piece.pinBoneIndex]);
+            }
+        }
         float[] positions = mesh.positions();
         YsmClothTuning tuning = YsmClothTuning.current();
         state.lastWrites = 0;
+        state.lastMove = 0.0F;
         state.lastTurnDegrees = 0.0F;
         for (Piece piece : state.pieces) {
             YsmClothSolver.INSTANCE.step(piece.cloth, state.originCache, state.poseCache,
-                    state.boneSlots, dt, MAX_STEP_VELOCITY, tuning);
+                    state.boneSlots, dt, tuning);
             writeBack(mesh, state, piece, positions);
         }
 
@@ -499,10 +521,16 @@ public final class YsmMeshCloth {
         // near zero means the solve is holding the piece together, and a value that grows
         // with time means it is being pulled apart.
         float spread = 0.0F;
+        long rejectedSteps = 0L;
+        float largestBoneStep = 0.0F;
         for (Piece piece : state.pieces) {
             spread = Math.max(spread, piece.cloth.largestStretch());
+            rejectedSteps += piece.cloth.rejectedSteps;
+            largestBoneStep = Math.max(largestBoneStep, piece.cloth.largestBoneStep);
         }
         state.lastSpread = spread;
+        state.lastRejectedSteps = rejectedSteps;
+        state.lastBoneStep = largestBoneStep;
         if (!state.reported) {
             state.reported = true;
             int particles = 0;
@@ -520,10 +548,12 @@ public final class YsmMeshCloth {
         }
         if (state.frames % 300 == 0) {
             YSMEpicFightCompat.LOGGER.info(
-                    "YSM-EF Compat: [cloth] frame {}: dt={}ms, {} piece(s) solved, cloth stretch {} blocks, {} part transform(s) written, largest turn {}deg (cap {}deg)",
+                    "YSM-EF Compat: [cloth] frame {}: dt={}ms, {} piece(s) solved, cloth stretch {} blocks, cloth moved {} blocks, {} part transform(s) written, largest turn {}deg (cap {}deg), bone step max {} ({} refused)",
                     state.frames, Math.round(dt * 1000.0F), state.pieces.size(),
                     Math.round(state.lastSpread * 1000.0F) / 1000.0F,
-                    state.lastWrites, Math.round(state.lastTurnDegrees * 10.0F) / 10.0F, Math.round(MAX_TURN_DEGREES));
+                    Math.round(state.lastMove * 1000.0F) / 1000.0F,
+                    state.lastWrites, Math.round(state.lastTurnDegrees * 10.0F) / 10.0F, Math.round(MAX_TURN_DEGREES),
+                    Math.round(state.lastBoneStep * 1000.0F) / 1000.0F, state.lastRejectedSteps);
         }
     }
 
@@ -582,6 +612,7 @@ public final class YsmMeshCloth {
      * origin, because the model origin is nowhere near the hair.
      */
     private static final Vector3f scratchBindCentroid = new Vector3f();
+    private static final Vector3f scratchDisplacement = new Vector3f();
     private static final Vector3f scratchSolvedCentroid = new Vector3f();
     private static final Vector3f scratchFromAxis = new Vector3f();
     private static final Vector3f scratchToAxis = new Vector3f();
@@ -596,7 +627,7 @@ public final class YsmMeshCloth {
     }
 
     /** Below this the piece counts as settled and no transform is written. */
-    private static final float MIN_TURN_RADIANS = 0.002F;
+    private static final float MIN_MOVE = 0.002F;
     /**
      * Above this the rotation is not applied.
      *
@@ -638,42 +669,57 @@ public final class YsmMeshCloth {
                 continue;
             }
             scratchBindCentroid.set(fromX / n, fromY / n, fromZ / n).sub(piece.pivot);
-            // The pivot has to be the one the cloth hangs from <i>now</i>, not the one it was
-            // bound at. Measuring the solved centroid against the bind pivot mixes an
-            // animated position with a bind-pose one: the two directions then land nearly
-            // parallel by accident, which reads as "the cloth never moves" - and did, for
-            // fifty-five thousand frames - or nearly opposed, which reads as a half-turn
-            // applied to a piece that had not moved at all.
-            piece.cloth.pinnedPosition(scratchSolvedCentroid);
-            scratchSolvedCentroid.set(toX / n, toY / n, toZ / n).sub(scratchSolvedCentroid);
-            Quaternionf turn = rotationBetween(scratchBindCentroid, scratchSolvedCentroid);
-            if (turn != null) {
-                scratchDelta.identity().rotate(turn);
-                importInto(scratchOpen, scratchDelta);
-                mesh.setRuntimeTransformAt(piece.partOrdinal[i], scratchOpen);
-                state.lastWrites++;
-                float degrees = (float) Math.toDegrees(turn.angle());
-                if (degrees > state.lastTurnDegrees) {
-                    state.lastTurnDegrees = degrees;
-                }
+            scratchSolvedCentroid.set(toX / n, toY / n, toZ / n).sub(piece.pivot);
+            // How far the part's own cloth has moved, and how far it is from the pivot that
+            // motion turns about. That pair is the honest measurement: the angle between the
+            // hang direction at bind and now is not, because a hanging piece stays hanging -
+            // its direction barely changes however far its geometry swings.
+            scratchDisplacement.set(scratchSolvedCentroid).sub(scratchBindCentroid);
+            float moved = scratchDisplacement.length();
+            float radius = scratchBindCentroid.length();
+            if (moved > state.lastMove) {
+                state.lastMove = moved;
+            }
+            if (moved < MIN_MOVE || radius < 1.0E-4F) {
+                continue;
+            }
+            float angle = moved / radius;
+            if (angle > MAX_TURN_RADIANS) {
+                continue;
+            }
+            // Turned about pivot x displacement: the axis a piece swings on, which for a
+            // hanging one is horizontal and perpendicular to the way it was pushed.
+            scratchFromAxis.set(scratchBindCentroid).div(radius).cross(scratchDisplacement, scratchCross);
+            float axisLength = scratchCross.length();
+            if (axisLength < 1.0E-6F) {
+                // The cloth moved straight along the hang direction: a stretch, not a swing.
+                continue;
+            }
+            scratchCross.div(axisLength);
+            scratchRotation.fromAxisAngleRad(scratchCross.x, scratchCross.y, scratchCross.z, angle);
+            scratchDelta.identity().rotate(scratchRotation);
+            importInto(scratchOpen, scratchDelta);
+            mesh.setRuntimeTransformAt(piece.partOrdinal[i], scratchOpen);
+            state.lastWrites++;
+            float degrees = (float) Math.toDegrees(angle);
+            if (degrees > state.lastTurnDegrees) {
+                state.lastTurnDegrees = degrees;
             }
         }
     }
 
     /**
-     * The rotation taking one direction onto another, both measured from the same pivot,
-     * or null when there is nothing expressible to apply.
+     * The rotation turning the direction a part hangs in at bind onto the direction it hangs
+     * in now, both measured from where the piece is attached.
      *
      * <p>Built from the cross product and {@code atan2} rather than from the shortest-arc
-     * formula, because the two directions can end up nearly opposed - and there the
-     * shortest arc is ill-conditioned, reporting a half-turn about an arbitrary axis, which
-     * throws the piece to the other side of the model. This form stays continuous and falls
-     * through to "no rotation" instead.
+     * formula, because the two directions can end up nearly opposed and there the shortest
+     * arc is ill-conditioned - it reports a half-turn about an arbitrary axis, which throws
+     * the piece to the other side of the model.
      *
-     * <p>The result is also capped: a piece of cloth cannot turn further than
-     * {@link #MAX_TURN_DEGREES} in one frame, so a larger turn means the solve produced
-     * something a single rigid transform cannot represent, and the part is better left where
-     * the animation put it.
+     * <p>Returns null when there is nothing worth applying: the part has not turned, or it
+     * has turned further than a single rigid transform can honestly express. A null result
+     * means the part is left exactly as the animation drew it.
      */
     private static Quaternionf rotationBetween(Vector3f from, Vector3f to) {
         float fromLength = from.length();
@@ -684,12 +730,18 @@ public final class YsmMeshCloth {
         scratchFromAxis.set(from).div(fromLength);
         scratchToAxis.set(to).div(toLength);
         float dot = Math.max(-1.0F, Math.min(1.0F, scratchFromAxis.dot(scratchToAxis)));
-        // axis = from x to, the axis the rotation turns about; its length is sin(angle).
+        // axis = from x to, and its length is sin(angle): the angle itself comes from atan2 so
+        // that a small swing is still measured accurately instead of being lost to acos.
         scratchToAxis.cross(scratchFromAxis, scratchCross);
         float sine = scratchCross.length();
         float angle = (float) Math.atan2(sine, dot);
-        if (angle < MIN_TURN_RADIANS || angle > MAX_TURN_RADIANS || sine < 1.0E-5F) {
-            // Settled, collapsed, or beyond anything a rigid transform should express.
+        if (sine < 1.0E-5F) {
+            // Parallel or antiparallel: no axis is determined, so there is no honest rotation
+            // to apply. A part that has genuinely turned through half a turn is not something
+            // the animation produced.
+            return null;
+        }
+        if (angle > MAX_TURN_RADIANS) {
             return null;
         }
         scratchCross.div(sine);
