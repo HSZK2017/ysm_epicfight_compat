@@ -28,6 +28,9 @@ import java.util.Locale;
  *       one place so it can be extended from evidence rather than scattered.</li>
  * </ol>
  *
+ * <p>and then one way to be disqualified, described on {@link #isWrapper}: carrying a
+ * mapped body joint underneath.
+ *
  * <h2>Why the wrapper test matters more here than upstream</h2>
  *
  * <p>Animations often drive a container bone ("AllHead", "UpperBody") rather than the
@@ -40,9 +43,15 @@ import java.util.Locale;
  * work - a wrapper is a bone that contains something Epic Fight already poses - and it
  * costs one pass over the bone table.
  *
- * <p>Rejecting wrappers is what keeps the simulation from moving a body part: if a
- * "skirt" bone resolved to the torso joint were accepted, swinging it would drag the
- * hips (and everything parented under them) with it.
+ * <p>Rejecting wrappers is what keeps the simulation from moving a body part: the swing
+ * goes into the bone's <i>local</i> transform, so it rotates that bone's whole subtree,
+ * and a "skirt" bone with the legs under it would drag them along. The test is on the
+ * subtree rather than on the candidate's own joint, and the reason is worth reading
+ * before changing it - see {@link #isWrapper}.
+ *
+ * <p>Everything here is a question about what lies <i>under</i> a candidate. That
+ * direction is the whole design: see {@link #isWrapper} for what happens when it is
+ * reversed.
  */
 public final class YsmPhysicsChains {
 
@@ -59,11 +68,49 @@ public final class YsmPhysicsChains {
     };
 
     /**
-     * How many bones one model may turn into chains. A model with more hanging pieces
-     * than this is either mis-named or pathological, and the cap keeps the per-frame
-     * simulation bounded on a phone.
+     * Bone-name fragments that rule a bone out however it is named otherwise.
+     *
+     * <p>Taken from the names real models actually use, because each family is a
+     * different kind of mistake:
+     *
+     * <ul>
+     *   <li><b>Emissive overlays.</b> {@code ysmGlow_*} names mark the extra pass YSM
+     *       draws for a glowing part; those bones usually sit under a hair bone, so they
+     *       inherit the hint and would swing as a second copy of hair that is drawn at
+     *       the same time as the real one. Two copies moving differently is visible as
+     *       flicker along the whole glowing piece.</li>
+     *   <li><b>Locators.</b> {@code *Locator} bones carry no geometry: other mods read
+     *       their position to attach an item. Swinging one moves whatever is attached,
+     *       for a reason nobody can see on the model.</li>
+     *   <li><b>Physics and IK helpers.</b> {@code *_physics}, {@code *bone}, {@code *tail}
+     *       of a solver: their transforms are an input to something else's maths, so a
+     *       swing here is not decoration, it is a corrupted input.</li>
+     *   <li><b>Invisible, empty and clipped parts.</b> Nothing to swing, and rotating
+     *       them can only move their children - which is exactly the accident the
+     *       wrapper rule exists to prevent, reached through a name instead.</li>
+     * </ul>
      */
-    private static final int MAX_CHAINS = 40;
+    private static final String[] NAME_VETOES = {
+            "glow", "locator", "physics", "invisible", "hidden",
+            "empty", "clip", "hitbox", "collision", "helper", "dummy", "anchor",
+            // Exporters emit "bone<N>" for a joint whose name was never set. It says
+            // nothing about what the bone carries - the probe over real models found them
+            // accepted in groups of six to eight under a single garment, which is a
+            // segment mesh, not something that hangs.
+            "bone"
+    };
+
+    /**
+     * How many bones one model may turn into chains before the config says otherwise.
+     * Bounded for the per-frame cost on a phone: the classifier keeps only the top of each
+     * hanging piece (see {@link #build(YSMRuntimeModel.BoneRt[])}), so a real model lands
+     * at 4-24, and this is the backstop for a model whose bones are named pathologically.
+     *
+     * <p>Overridable at runtime through {@code secondaryMotionMaxChains}, including
+     * downward to zero, which is a cleaner way to measure the feature's cost than turning
+     * it off and comparing two different runs.
+     */
+    public static final int DEFAULT_MAX_CHAINS = 24;
 
     /**
      * One chain: the bone to swing, the chain it hangs from, and how far the piece
@@ -105,14 +152,30 @@ public final class YsmPhysicsChains {
      * <p>Separated from {@link #build(YSMRuntimeModel)} so the rules below can be
      * tested directly: the decision is what goes wrong here (a mis-detected wrapper
      * swings a body part), and it depends on nothing but the table.
+     *
+     * <p><b>Only the top of each hanging piece becomes a chain.</b> A ponytail modelled
+     * as ten segments is one swinging object, not ten, and its segments are already
+     * parented to each other - rotating the top of the piece carries all of them, which
+     * is what secondary motion is supposed to look like. Chaining every segment would
+     * also multiply each segment's swing by the one above it, and it is how a real model
+     * reached a hundred candidates and hit the cap. So a candidate whose ancestor is
+     * already a chain is skipped.
+     *
+     * <p>Note the ancestor search stops at a wrapper rather than inheriting its verdict:
+     * a model whose hair hangs under an "AllHead" container has that container rejected,
+     * and its hair must still swing.
      */
     static List<Chain> build(YSMRuntimeModel.BoneRt[] bones) {
         List<Chain> chains = new ArrayList<>();
         if (bones == null) {
             return chains;
         }
+        int limit = YsmPhysicsTuning.maxChains();
+        if (limit <= 0) {
+            return chains;
+        }
 
-        for (int i = 0; i < bones.length && chains.size() < MAX_CHAINS; i++) {
+        for (int i = 0; i < bones.length && chains.size() < limit; i++) {
             YSMRuntimeModel.BoneRt bone = bones[i];
             if (bone == null || bone.name == null || bone.name.isEmpty()) {
                 continue;
@@ -121,15 +184,21 @@ public final class YsmPhysicsChains {
             if (bone.mapped) {
                 continue;
             }
+            if (isVetoed(bone.name)) {
+                continue;
+            }
             if (!hangs(bones, i)) {
+                continue;
+            }
+            if (continuesAnAcceptedChain(chains, bones, i)) {
                 continue;
             }
             if (isWrapper(bones, i)) {
                 continue;
             }
             // Only pieces that actually reach a mapped ancestor can be swung: a bone
-            // whose chain never reaches Epic Fight's skeleton has no stable frame, and
-            // one that is its own root would swing the whole model.
+            // whose chain never reaches Epic Fight's skeleton has no stable frame to
+            // hang the swing from.
             int parentJoint = nearestMappedJoint(bones, i);
             if (parentJoint < 0) {
                 continue;
@@ -139,6 +208,31 @@ public final class YsmPhysicsChains {
                     hangsAroundLegs(parentJoint)));
         }
         return chains;
+    }
+
+    /**
+     * Whether an ancestor of this bone is already a chain, i.e. this bone is a segment of
+     * a piece that is already swinging. See the note on
+     * {@link #build(YSMRuntimeModel.BoneRt[])}.
+     *
+     * <p>Stops at a wrapper: an ancestor that was rejected as a container is not carrying
+     * a swing, so the bones under it are still free to be the top of their own piece.
+     */
+    private static boolean continuesAnAcceptedChain(List<Chain> accepted,
+                                                    YSMRuntimeModel.BoneRt[] bones,
+                                                    int index) {
+        int guard = 0;
+        for (int i = bones[index].parent; i >= 0 && guard++ <= bones.length; i = bones[i].parent) {
+            for (Chain chain : accepted) {
+                if (chain.boneIndex() == i) {
+                    return true;
+                }
+            }
+            if (isWrapper(bones, i)) {
+                return false;
+            }
+        }
+        return false;
     }
 
     /**
@@ -170,20 +264,68 @@ public final class YsmPhysicsChains {
     }
 
     /**
-     * Whether this candidate is a container for geometry Epic Fight already poses.
+     * Whether the bone's own name rules it out regardless of anything else. See
+     * {@link #NAME_VETOES} for which families this covers and what each one breaks.
      *
-     * <p>See the class comment: this replaces upstream's cube-count test with the
-     * structural property behind it.
+     * <p>Only the bone's own name is consulted, deliberately: a veto on an ancestor would
+     * disqualify the real cloth hanging under it, which is the same mistake as testing
+     * ancestors for the wrapper rule.
+     *
+     * <p>Package-private so the vocabulary can be tested directly: the lists are matched
+     * as substrings, so a wrong entry silently swallows real cloth, and that is worth a
+     * test that does not have to construct a whole bone table to reach.
+     */
+    static boolean isVetoed(String name) {
+        if (name == null) {
+            return false;
+        }
+        String lower = name.toLowerCase(Locale.ROOT);
+        for (String veto : NAME_VETOES) {
+            if (lower.contains(veto)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether this candidate is a body part rather than a piece hanging off one.
+     *
+     * <p>One test: a bone <b>below</b> it is directly mapped to a body joint. The swing
+     * is folded into the bone's local transform, so it rotates that bone's whole subtree
+     * - which means what the bone carries is exactly what hangs under it. A bone called
+     * "AllHead" or "HairGroup" with the model's head underneath carries the head, and
+     * swinging it moves the head. This is the structural stand-in for upstream's
+     * cube-count test, which asks the same question - how much of the model is under this
+     * bone - but needs cube data this mod's runtime table does not carry.
+     *
+     * <p><b>Why the bone's own {@code joint} is not the test.</b> The two fields come
+     * from different questions: {@code mapped} is the bone's own name appearing in the
+     * mapping table, while {@code joint} is resolved by walking <i>up</i> to the nearest
+     * named ancestor. A real model therefore contains bones that are unmapped and still
+     * carry a body joint - the wine fox's {@code Skirt} is unmapped, yet resolves to the
+     * torso through its parent {@code qunzi}. Reading that joint as "this bone drives the
+     * torso" rejects the skirt, and rejects nearly every lock of hair the same way: hair
+     * resolves to the head or to the root through an unmapped parent chain. Measured over
+     * eighteen real cached models, that rule left three of them with a single swingable
+     * bone and most of the rest with only the head hair.
+     *
+     * <p>The joint a bone resolves to describes where it sits, which is why it is still
+     * the right thing for {@code aroundLegs} and for {@code parentJointId}; it is the
+     * wrong thing for deciding what the bone carries, and the subtree answers that.
+     *
+     * <p>What is deliberately <b>not</b> a rejection rule either is a mapped bone
+     * <i>above</i> the candidate. Hair hangs off a head and a skirt hangs off a torso in
+     * every real model, so a rule phrased that way rejects every candidate there is -
+     * which is how this classifier first shipped, and why the feature moved nothing at
+     * all.
      */
     private static boolean isWrapper(YSMRuntimeModel.BoneRt[] bones, int index) {
         for (int i = 0; i < bones.length; i++) {
             if (i == index || bones[i] == null) {
                 continue;
             }
-            if (!isDescendantOf(bones, i, index)) {
-                continue;
-            }
-            if (bones[i].mapped && isBodyJoint(bones[i].joint)) {
+            if (bones[i].mapped && isBodyJoint(bones[i].joint) && descendsFrom(bones, i, index)) {
                 return true;
             }
         }
@@ -191,32 +333,43 @@ public final class YsmPhysicsChains {
     }
 
     /**
-     * Whether {@code candidate} sits under {@code ancestor} in the bone tree. The
-     * parent chain is walked with a depth guard: model data is untrusted input and a
-     * malformed table can contain a cycle.
-     */
-    private static boolean isDescendantOf(YSMRuntimeModel.BoneRt[] bones, int candidate, int ancestor) {
-        int guard = 0;
-        for (int i = bones[candidate].parent; i >= 0 && guard++ <= bones.length; i = bones[i].parent) {
-            if (i == ancestor) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * The body joints a wrapper would be hiding. Head, chest and torso are body parts
-     * rather than accessories, and the arms and legs are limbs; a "hanging" bone whose
-     * subtree reaches any of them is a container, not a piece of cloth.
+     * The joints whose subtree is most of the model: the trunk, the hips and the legs.
+     *
+     * <p>Deliberately narrow, because rejecting too much is a failure too - the first
+     * version of this rule rejected every candidate in the model and the feature did
+     * nothing at all. The head is excluded: hair hangs off it, that is the normal and
+     * wanted case. So are the arms, where a sleeve or a ribbon hangs off a hand.
+     *
+     * <p>The root is excluded as well, which looks alarming and is not: nothing that
+     * matters can be under a root-mapped bone. Only the bone actually named for the root
+     * is directly mapped to joint 0, and a bone that merely resolves up to the root is
+     * unmapped, so a candidate's subtree can contain joint 0 only when the root itself
+     * hangs under it - and a bone with the model's root under it carries everything, so
+     * it is caught by the mapped trunk or hips it also contains.
      */
     private static boolean isBodyJoint(int joint) {
         return joint == JOINT_TORSO
                 || joint == JOINT_CHEST
                 || joint == JOINT_THIGH_R
                 || joint == JOINT_THIGH_L
-                || joint == 0                      // Root
-                || (joint >= 9 && joint <= 19);     // Head, shoulders, arms, hands, tools, elbows
+                || joint == 3                   // Knee_R
+                || joint == 6;                  // Knee_L
+    }
+
+    /**
+     * Whether {@code bone} hangs anywhere under {@code ancestor}.
+     *
+     * <p>Bounded by the table length so the cyclic parent tables that model data can
+     * contain terminate here instead of spinning.
+     */
+    private static boolean descendsFrom(YSMRuntimeModel.BoneRt[] bones, int bone, int ancestor) {
+        int guard = 0;
+        for (int i = bones[bone].parent; i >= 0 && guard++ <= bones.length; i = bones[i].parent) {
+            if (i == ancestor) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** The joint of the nearest ancestor that Epic Fight poses directly, or -1. */
@@ -230,8 +383,15 @@ public final class YsmPhysicsChains {
         return -1;
     }
 
-    /** True when the bone above this one is not itself a chain, i.e. this is a root. */
-    private static boolean isChainRoot(YSMRuntimeModel.BoneRt[] bones, int index) {
+    /**
+     * True when the bone above this one is not itself a chain, i.e. this is a root.
+     *
+     * <p>Position in the chain, not a name match: this is asked of bones that never
+     * become chains, because a bone's root-ness decides how firmly it is held, while its
+     * name decides whether it is swung at all. Folding the two together is how a
+     * classifier ends up with nothing to swing.
+     */
+    static boolean isChainRoot(YSMRuntimeModel.BoneRt[] bones, int index) {
         int parent = bones[index].parent;
         if (parent < 0) {
             return true;

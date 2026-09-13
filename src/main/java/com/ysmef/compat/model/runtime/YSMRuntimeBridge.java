@@ -69,6 +69,11 @@ public final class YSMRuntimeBridge {
                 } else {
                     model.applyDefaultVisibility(mesh);
                 }
+                // Secondary motion for the mesh that is actually on screen: this is the
+                // only path that draws the converted mesh, so it is the only path where
+                // swinging its hair and cloth can be seen. Written after the visibility
+                // pass because it writes the same per-part transforms.
+                YsmMeshSecondaryMotion.apply(mesh, model, entity, poses);
             } else {
                 unhideAllBoneParts(mesh);
             }

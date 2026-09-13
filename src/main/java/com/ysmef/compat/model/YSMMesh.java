@@ -103,6 +103,20 @@ public class YSMMesh extends HumanoidMesh {
         }
     }
 
+    /**
+     * Set a part's runtime transform by ordinal.
+     *
+     * <p>The ordinal form exists for the per-frame physics write, which addresses the
+     * same handful of parts every frame and would otherwise pay a name lookup each time.
+     * An out-of-range ordinal is ignored rather than throwing: part counts come from
+     * model data, and a mesh being drawn is the wrong place to discover a bad one.
+     */
+    public void setRuntimeTransformAt(int ordinal, OpenMatrix4f transform) {
+        if (this.transformByPart != null && ordinal >= 0 && ordinal < this.transformByPart.length) {
+            this.transformByPart[ordinal] = transform;
+        }
+    }
+
     /** Number of mesh parts (the bone SSBO of the GPU path has one entry per part). */
     public int getPartCount() {
         return this.transformByPart != null ? this.transformByPart.length : 0;

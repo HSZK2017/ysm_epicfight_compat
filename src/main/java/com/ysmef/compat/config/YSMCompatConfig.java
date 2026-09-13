@@ -65,6 +65,40 @@ public class YSMCompatConfig {
      */
     public static final ForgeConfigSpec.IntValue ANIMATION_EVAL_RATE_LIMIT_HZ;
 
+    /**
+     * Whether the hanging parts of a converted model - hair, tails, skirts, capes -
+     * swing after the body instead of being glued to it.
+     *
+     * <p>Off by default, and deliberately so: it is a look, not a fix. The pieces to
+     * swing are found by reading the model's bone names, so a model that names its
+     * hair unconventionally either gets no motion or gets motion on the wrong bone, and
+     * the only way to judge the result is to look at it. A per-model override is the
+     * intended answer for the second case.
+     *
+     * <p>Cost is one damped-spring step per chain per full evaluation, plus one
+     * identity check per bone on the compose path; the chain classification itself runs
+     * once per model, not per frame.
+     */
+    public static final ForgeConfigSpec.BooleanValue ENABLE_SECONDARY_MOTION;
+
+    /**
+     * How strongly a swinging piece is pulled back to the animated pose, 1/s^2.
+     *
+     * <p>Read on every simulation step rather than captured once, so the four shape
+     * settings below can be tuned in the config file and felt without restarting.
+     */
+    public static final ForgeConfigSpec.DoubleValue SECONDARY_MOTION_STIFFNESS;
+    /** How fast a swinging piece loses its own velocity, 1/s. */
+    public static final ForgeConfigSpec.DoubleValue SECONDARY_MOTION_DAMPING;
+    /** Extra droop while the body moves, blocks/s^2. */
+    public static final ForgeConfigSpec.DoubleValue SECONDARY_MOTION_GRAVITY;
+    /** Ceiling on how far a segment may bend from its animated pose, degrees. */
+    public static final ForgeConfigSpec.DoubleValue SECONDARY_MOTION_MAX_ANGLE_DEGREES;
+    /** The same ceiling for the top of a hanging piece, degrees. */
+    public static final ForgeConfigSpec.DoubleValue SECONDARY_MOTION_MAX_ANGLE_ROOT_DEGREES;
+    /** How many bones of one model may swing at once. */
+    public static final ForgeConfigSpec.IntValue SECONDARY_MOTION_MAX_CHAINS;
+
     static {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
 
@@ -109,6 +143,53 @@ public class YSMCompatConfig {
                         "This caps the built-in distance LOD (near players every frame, far ones at 30/10 Hz), so the",
                         "effective cadence is the slower of the two. The local player is never rate-limited.")
                 .defineInRange("animationEvaluationRateLimitHz", 0, 0, 240);
+
+        ENABLE_SECONDARY_MOTION = builder
+                .comment("Let the hanging parts of a converted model - hair, tails, skirts, capes - swing after the body",
+                        "instead of being glued to it (spring-damper secondary motion, ported from EpicYSM).",
+                        "Off by default: which bones swing is inferred from the model's bone names, so a model that names",
+                        "its hair unconventionally may get no motion or motion on the wrong bone - judge it by looking.",
+                        "The converted mesh is what Epic Fight draws in battle mode, so that is where this is visible; each",
+                        "model reports its chains once at startup under the '[physics]' log tag, to tell 'no motion' from",
+                        "'nothing classified'. The four settings below shape the swing and are read live.")
+                .define("enableSecondaryMotion", false);
+
+        // The shape of the swing is a matter of taste, and taste is not something a
+        // default can settle: these four are the whole of it, separated so a model that
+        // looks wrong can be corrected without a rebuild.
+        SECONDARY_MOTION_STIFFNESS = builder
+                .comment("How hard a swinging piece is pulled back to the pose the animation asks for, in 1/s^2.",
+                        "Higher snaps hair back to the animated shape; lower lets it drift and trail further behind.")
+                .defineInRange("secondaryMotionStiffness", 220.0, 10.0, 2000.0);
+
+        SECONDARY_MOTION_DAMPING = builder
+                .comment("How fast a swinging piece loses its own velocity, in 1/s.",
+                        "Higher settles the swing sooner; too low and the piece keeps oscillating after the body stops.")
+                .defineInRange("secondaryMotionDamping", 24.0, 0.0, 200.0);
+
+        SECONDARY_MOTION_GRAVITY = builder
+                .comment("Extra droop while the body moves, in blocks/s^2.",
+                        "Zero makes the pieces weightless; higher makes them hang and lag more heavily.")
+                .defineInRange("secondaryMotionGravity", 8.0, 0.0, 64.0);
+
+        SECONDARY_MOTION_MAX_ANGLE_DEGREES = builder
+                .comment("How far a swinging piece may bend from its animated pose, in degrees.",
+                        "This is the ceiling on how wild the swing can look; lower it first if a piece swings",
+                        "through the body. Real models put the useful range at 30-70.")
+                .defineInRange("secondaryMotionMaxAngleDegrees", 60.0, 0.0, 150.0);
+
+        SECONDARY_MOTION_MAX_ANGLE_ROOT_DEGREES = builder
+                .comment("The same ceiling for the top of a hanging piece, in degrees.",
+                        "A root carries the whole hairdo or skirt, so its own swing is what the rest multiply",
+                        "against; this is deliberately much smaller than the per-piece limit above.")
+                .defineInRange("secondaryMotionMaxAngleRootDegrees", 20.0, 0.0, 90.0);
+
+        SECONDARY_MOTION_MAX_CHAINS = builder
+                .comment("How many bones of one model may swing at once, or 0 for none.",
+                        "The classifier keeps only the top of each hanging piece, so real models land at 4-24;",
+                        "this is the backstop for a model whose bones are named pathologically. Lower it if a",
+                        "busy model costs too much on a phone.")
+                .defineInRange("secondaryMotionMaxChains", 24, 0, 128);
 
         builder.pop();
 
