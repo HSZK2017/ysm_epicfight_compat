@@ -54,6 +54,19 @@ public class YSMRenderHook {
         if (!(event.getEntity() instanceof Player player)) {
             return;
         }
+        if (!(player instanceof net.minecraft.client.player.AbstractClientPlayer clientPlayer)) {
+            return;
+        }
+        // Ask every frame, whether or not this handler ends up drawing: a mod that
+        // vanishes a player for a moment cancels the render before anyone draws (the
+        // sibling listener below records that), and a frame that does reach here is
+        // the visible side of the same state machine. LookOwners derives "hidden"
+        // from which signal is more recent and logs only on a change - asking only on
+        // the drawing path would leave the state stale and, logging every call, is
+        // what previously produced one log line pair per frame.
+        if (com.ysmef.compat.compat.LookOwners.hiddenLately(clientPlayer, event.getRenderer())) {
+            return;
+        }
         // This bridge is only for Epic Fight battle mode. Outside battle mode
         // YSM must keep rendering its own GEO model; taking over there makes
         // the converted EF mesh and YSM's renderer fight over the same entity
@@ -101,6 +114,23 @@ public class YSMRenderHook {
     }
 
     private static final java.util.Set<String> LOGGED_PLAYERS = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * Runs after every mod that hides a player for a moment (a teleport inside an
+     * attack, a cut in a cinematic) and after this mod's own handler above, with
+     * cancelled events delivered: if the event is already cancelled by then, someone
+     * else hid the player, and this mod's own drawing paths must skip it too - YSM's
+     * model would otherwise stay on screen through a moment meant to hide it.
+     */
+    @SubscribeEvent(priority = EventPriority.HIGH, receiveCanceled = true)
+    public static void onRenderLivingPreAfterHiders(RenderLivingEvent.Pre<?, ?> event) {
+        if (!event.isCanceled()) {
+            return;
+        }
+        if (event.getEntity() instanceof net.minecraft.client.player.AbstractClientPlayer player) {
+            com.ysmef.compat.compat.LookOwners.hiddenByAnotherMod(player, event.getRenderer());
+        }
+    }
 
     private static void logTakeoverOnce(Player player) {
         if (LOGGED_PLAYERS.add(player.getGameProfile().getName())) {

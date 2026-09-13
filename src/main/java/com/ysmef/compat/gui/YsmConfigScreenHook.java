@@ -175,6 +175,6 @@ public final class YsmConfigScreenHook {
 
     /** Whether the checkbox row should be shown at all (not for ModernYSM, which has its own). */
     public static boolean shouldAddGpuRenderOption() {
-        return YsmGpuRenderEnable.fork() != YsmGpuRenderEnable.YsmFork.MODERN_YSM;
+        return YsmGpuRenderEnable.fork() != com.ysmef.compat.ysm.YsmFork.Fork.MODERN_YSM;
     }
 }

@@ -1,6 +1,7 @@
 package com.ysmef.compat.mixin;
 
 import com.ysmef.compat.renderer.YSMBattleMode;
+import com.ysmef.compat.renderer.YSMModelAccess;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraftforge.client.event.RenderHandEvent;
@@ -11,7 +12,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
  * Suppresses YSM's first-person background hand rendering while the local player
- * is in Epic Fight battle mode.
+ * is in Epic Fight battle mode, and whenever the local player uses one of YSM's
+ * built-in vanilla player models (misc/2_steve, misc/1_alex) - the vanilla hand
+ * model is the correct one for those.
  *
  * The target is YSM's RenderFirstPlayerBackground#onRenderHand. YSM's release jar
  * is obfuscated, so the obfuscated class/method names are used; they can be
@@ -25,7 +28,7 @@ public abstract class YsmBackgroundHandMixin {
             at = @At("HEAD"), cancellable = true, require = 0)
     private static void ysmef$suppressYsmBackgroundHandInBattleMode(RenderHandEvent event, CallbackInfo ci) {
         LocalPlayer player = Minecraft.getInstance().player;
-        if (player != null && YSMBattleMode.isBattleMode(player)) {
+        if (player != null && (YSMBattleMode.isBattleMode(player) || !YSMModelAccess.isYsmDriven(player))) {
             ci.cancel();
         }
     }

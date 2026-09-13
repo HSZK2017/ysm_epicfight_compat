@@ -1,6 +1,7 @@
 package com.ysmef.compat.renderer;
 
 import com.ysmef.compat.YSMEpicFightCompat;
+import com.ysmef.compat.ysm.YsmFork;
 import net.minecraft.world.entity.player.Player;
 import net.minecraftforge.common.capabilities.Capability;
 import net.minecraftforge.common.util.LazyOptional;
@@ -326,18 +327,58 @@ public final class YsmWheelAnimationState {
             return capability;
         }
         capabilityResolved = true;
-        capability = resolveCapabilityFrom(
-                "com.elfmcys.yesstevemodel.O0OooOo0oOOoOoOoOooO000o",   // YSM 2.6.5 obfuscated provider
-                "Oo0Oo0o00O00Oo0OOoOOoooo");
-        if (capability == null) {
-            capability = resolveCapabilityFrom(
-                    "com.elfmcys.yesstevemodel.capability.PlayerCapabilityProvider", // OpenYSM / ModernYSM
-                    "PLAYER_CAP");
+        // YsmFork resolves the provider by scanning YSM's own class list for the
+        // class declaring a Capability<PlayerCapability> field, falling back to its
+        // fingerprint table. Either way the exact class and field names come from
+        // there, so this no longer probes layouts blindly - a blind probe chain
+        // that omitted ModernYSM's forge.capability layout is precisely what
+        // silently disabled the wheel bridge on ModernYSM.
+        YsmFork.Info forkInfo = YsmFork.info();
+
+        String providerClass = forkInfo.playerCapabilityProviderClass();
+        if (providerClass == null) {
+            // Obfuscated original: the provider exists but only under an obfuscated
+            // name, which the scan cannot turn into a readable one.
+            providerClass = forkInfo.obfuscatedPlayerCapabilityProviderClass();
         }
+        if (providerClass != null) {
+            capability = resolveCapabilityFrom(providerClass, forkInfo.playerCapabilityField());
+        }
+        if (capability == null && !forkInfo.obfuscated()) {
+            // Last resort for a build whose provider moved somewhere the scan could
+            // not classify: try the other known readable layouts.
+            for (String candidate : new String[]{
+                    "com.elfmcys.yesstevemodel.forge.capability.PlayerCapabilityProvider",
+                    "com.elfmcys.yesstevemodel.capability.PlayerCapabilityProvider"}) {
+                if (candidate.equals(providerClass)) {
+                    continue;
+                }
+                capability = resolveCapabilityFrom(candidate, YsmFork.PLAYER_CAPABILITY_FIELD);
+                if (capability != null) {
+                    break;
+                }
+            }
+        }
+
         if (capability == null) {
-            YSMEpicFightCompat.LOGGER.info("YSM-EF Compat: [wheel] YSM PlayerCapability not resolvable, wheel animation bridge disabled");
+            YSMEpicFightCompat.LOGGER.info(
+                    "YSM-EF Compat: [wheel] YSM PlayerCapability not resolvable for fork {} (provider {}), wheel animation bridge disabled",
+                    forkInfo.fork(), providerDescription(forkInfo));
+        } else {
+            YSMEpicFightCompat.LOGGER.info(
+                    "YSM-EF Compat: [wheel] YSM PlayerCapability resolved for fork {} (provider {})",
+                    forkInfo.fork(), providerDescription(forkInfo));
         }
         return capability;
+    }
+
+    /** Human-readable description of the provider class + field used for a fork. */
+    private static String providerDescription(YsmFork.Info forkInfo) {
+        String className = forkInfo.playerCapabilityProviderClass();
+        if (className == null) {
+            className = forkInfo.obfuscatedPlayerCapabilityProviderClass();
+        }
+        return className == null ? "not addressable" : className + "#" + forkInfo.playerCapabilityField();
     }
 
     private static Capability<?> resolveCapabilityFrom(String className, String fieldName) {
@@ -358,7 +399,7 @@ public final class YsmWheelAnimationState {
         }
         methodLookupDone = true;
         getSelectedModelIdMethod = findNoArgStringMethod(animatableClass,
-                "OOOoOOo0oO00O0OoOO0oO00O", "getSelectedModelId");
+                "OOOoOOo0oO00O0OoOO0oO00O", "getSelectedModelId", "getModelId");
         isModelSwitchingMethod = findNoArgBooleanMethod(animatableClass,
                 "O0OooOo0oOOoOoOoOooO000o", "isModelSwitching");
     }

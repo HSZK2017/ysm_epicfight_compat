@@ -1,6 +1,7 @@
 package com.ysmef.compat.mixin;
 
 import com.ysmef.compat.renderer.YSMBattleMode;
+import com.ysmef.compat.renderer.YSMModelAccess;
 import net.minecraft.world.entity.player.Player;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -14,6 +15,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * returns true). In Epic Fight battle mode the compat returns false so the
  * vanilla arm (with Epic Fight's patched weapon rendering) renders instead of
  * ModernYSM's custom arm model.
+ *
+ * It returns false as well for YSM's built-in vanilla player models
+ * (misc/2_steve, misc/1_alex), which are the vanilla rig skinned with the
+ * player's own skin - the vanilla arm is exactly the right thing to draw.
  *
  * The old event-handler signature (RenderArmEvent) is handled by
  * OpenYsmHandRenderMixin; both injections are non-critical (require = 0).
@@ -29,7 +34,7 @@ public abstract class ModernYsmHandRenderMixin {
                                                                 net.minecraft.client.renderer.MultiBufferSource buffer,
                                                                 int packedLight,
                                                                 CallbackInfoReturnable<Boolean> cir) {
-        if (YSMBattleMode.isBattleMode(player)) {
+        if (YSMBattleMode.isBattleMode(player) || !YSMModelAccess.isYsmDriven(player)) {
             cir.setReturnValue(false);
         }
     }

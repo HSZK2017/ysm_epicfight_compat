@@ -66,6 +66,52 @@ public final class YSMModelAccess {
     public record YSMModelRef(String modelId, String textureName) {}
 
     /**
+     * YSM's built-in "vanilla player" models (the "杂项模型" / Misc model pack):
+     * {@code misc/2_steve} is Steve and {@code misc/1_alex} is Alex, both declared
+     * in the shipped ysm.json as "原版史蒂夫模型（Minecraft Steve Model）" /
+     * "原版艾利克斯模型（Minecraft Alex Model）".
+     *
+     * They are not custom models at all: YSM itself special-cases exactly these two
+     * ids (ServerModelManager's hardcoded {@code isCustomSkinModel}) and renders them
+     * with the player's own Mojang skin - falling back to the vanilla
+     * wide/slim skin when the profile carries none - on the vanilla player rig.
+     * For the compat mod that means the Epic Fight biped reproduces them exactly,
+     * so they are treated as "no YSM model" (see {@link #isVanillaPlayerModel}).
+     */
+    private static final String[] VANILLA_PLAYER_MODEL_IDS = {"misc/2_steve", "misc/1_alex"};
+
+    /**
+     * Whether the model id is one of YSM's built-in vanilla player models (see
+     * {@link #VANILLA_PLAYER_MODEL_IDS}). Does not consult the current selection.
+     */
+    public static boolean isVanillaPlayerModelId(String modelId) {
+        if (modelId == null || modelId.isEmpty()) {
+            return false;
+        }
+        for (String vanillaId : VANILLA_PLAYER_MODEL_IDS) {
+            if (vanillaId.equals(modelId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether the player is currently running a YSM model that this mod needs to
+     * bridge: false when the player has no YSM model, and false when the selection
+     * is one of YSM's built-in vanilla player models (Steve/Alex), which render
+     * through the plain vanilla player renderer instead.
+     */
+    public static boolean isYsmDriven(Player player) {
+        return !isVanillaPlayerModel(getCurrentModel(player));
+    }
+
+    /** {@link #isVanillaPlayerModelId} applied to a resolved selection. */
+    private static boolean isVanillaPlayerModel(YSMModelRef model) {
+        return model != null && isVanillaPlayerModelId(model.modelId());
+    }
+
+    /**
      * Get the current YSM model selection of the player, or null if the player has no
      * YSM model (or the selection cannot be determined, e.g. on a server without the
      * model-sync channel).
@@ -88,7 +134,23 @@ public final class YSMModelAccess {
         YSMModelRef model = readModel(player);
         CACHE.put(uuid, new CacheEntry(level, model, gameTime));
         logCapabilityRead(player, model);
+        logVanillaModelOnce(player, model);
         return model;
+    }
+
+    /**
+     * Once per player: the selection is one of YSM's built-in vanilla player models,
+     * so the compat mod leaves the player to the plain biped render path.
+     */
+    private static final java.util.Set<java.util.UUID> LOGGED_VANILLA_MODELS = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    private static void logVanillaModelOnce(Player player, YSMModelRef model) {
+        if (!isVanillaPlayerModel(model) || !LOGGED_VANILLA_MODELS.add(player.getUUID())) {
+            return;
+        }
+        com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
+                "YSM-EF Compat: player '{}' selected YSM's built-in vanilla player model '{}' - using the Epic Fight default biped and letting YSM's own rendering be skipped",
+                player.getGameProfile().getName(), model.modelId());
     }
 
     /**
@@ -183,5 +245,6 @@ public final class YSMModelAccess {
     public static void clearCache() {
         CACHE.clear();
         LOGGED_MODEL_READS.clear();
+        LOGGED_VANILLA_MODELS.clear();
     }
 }

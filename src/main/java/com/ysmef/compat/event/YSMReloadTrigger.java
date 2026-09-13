@@ -55,6 +55,11 @@ public class YSMReloadTrigger {
         YsmWheelPlayback.clear();
         com.ysmef.compat.renderer.YSMMeshSelector.clear();
         com.ysmef.compat.renderer.YsmWheelAnimationState.invalidate();
+        // Per-player look ownership and hidden episodes belong to the connection
+        // that is ending; a stale "someone else owns this look" would silently
+        // suppress this mod for that player in the next world.
+        com.ysmef.compat.compat.LookOwners.resetAll();
+        com.ysmef.compat.ysm.YsmClasses.invalidate();
     }
 
     @SubscribeEvent

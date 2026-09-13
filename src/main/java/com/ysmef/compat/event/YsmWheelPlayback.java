@@ -64,6 +64,13 @@ public final class YsmWheelPlayback {
         // Register freshly generated public templates on the render thread.
         YsmExtraAnimationLibrary.clientTick();
 
+        // Every few seconds: confirm this mod's renderer still holds Epic Fight's
+        // single player-renderer slot. A mod that registered after this one would
+        // otherwise silently take it and YSM models would stop being drawn through
+        // Epic Fight. Cheap (the tick gate is inside).
+        com.ysmef.compat.renderer.YSMPlayerRenderer.ensureInFront(
+                (int) (System.currentTimeMillis() / 50L));
+
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null || mc.player == null) {
             return;

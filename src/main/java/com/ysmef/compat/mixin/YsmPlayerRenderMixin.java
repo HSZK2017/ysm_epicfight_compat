@@ -1,6 +1,7 @@
 package com.ysmef.compat.mixin;
 
 import com.ysmef.compat.renderer.YSMBattleMode;
+import com.ysmef.compat.renderer.YSMModelAccess;
 import net.minecraftforge.client.event.RenderPlayerEvent;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -9,7 +10,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
  * Suppresses YSM's third-person player render interception while the player is in
- * Epic Fight battle mode.
+ * Epic Fight battle mode, and whenever the player selected one of YSM's built-in
+ * vanilla player models.
  *
  * YSM listens to RenderPlayerEvent.Pre (NORMAL) and, whenever its model is active,
  * cancels the event and draws the player through its own CustomPlayerRenderer. That
@@ -27,6 +29,12 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * Fight's own handler never runs for the canceled event: it is registered with
  * the default receiveCanceled=false.)
  *
+ * Skipping it for YSM's built-in vanilla player models (Steve/Alex) is the same
+ * mechanism for a different reason: those models ARE the vanilla player rig, so
+ * the vanilla PlayerRenderer (biped mesh in battle mode via YSMRenderHook,
+ * vanilla model otherwise) reproduces them exactly. Nothing is lost because YSM
+ * itself renders those two ids with the player's own Mojang skin.
+ *
  * The target is YSM's ReplacePlayerRenderEvent#onRenderPlayerPre. YSM's release jar
  * is obfuscated, so the obfuscated class/method names are used; they can be
  * re-derived for other YSM versions by scanning the jar for classes referencing
@@ -38,7 +46,8 @@ public abstract class YsmPlayerRenderMixin {
     @Inject(method = "Oo0Oo0o00O00Oo0OOoOOoooo(Lnet/minecraftforge/client/event/RenderPlayerEvent$Pre;)V",
             at = @At("HEAD"), cancellable = true, require = 0)
     private static void ysmef$suppressYsmPlayerRenderInBattleMode(RenderPlayerEvent.Pre event, CallbackInfo ci) {
-        if (YSMBattleMode.isBattleMode(event.getEntity())) {
+        if (YSMBattleMode.isBattleMode(event.getEntity())
+                || !YSMModelAccess.isYsmDriven(event.getEntity())) {
             ci.cancel();
         }
     }

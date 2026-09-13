@@ -44,6 +44,27 @@ public class YSMCompatConfig {
      */
     public static final ForgeConfigSpec.BooleanValue DISABLE_EXTRA_PLAYER_IN_BATTLE_MODE;
 
+    /**
+     * Upper bound on how often a non-local player's YSM script/animation state is
+     * evaluated, in Hz; 0 means unlimited (every frame the distance LOD allows).
+     *
+     * <p>Every evaluation runs the model's molang: query refresh, state machine,
+     * keyframe lookup and matrix composition. Frames between evaluations replay the
+     * last published pose, so this trades update smoothness for render-thread time -
+     * the knob that matters on a phone or a weak GPU.
+     *
+     * <p>This multiplies with the built-in distance LOD (near players every frame,
+     * far ones at 30/10 Hz already), so the effective cadence is the slower of the
+     * two. The local player is never limited: its animation is what the player is
+     * looking at.
+     *
+     * <p>Default 0 keeps the previous behaviour exactly. The rate is honoured by
+     * carrying the deadline phase rather than re-scheduling from each render frame,
+     * because the latter makes the achieved rate sag below the target whenever the
+     * frame rate exceeds it (see {@link com.ysmef.compat.animation.EvaluationRateLimiter}).
+     */
+    public static final ForgeConfigSpec.IntValue ANIMATION_EVAL_RATE_LIMIT_HZ;
+
     static {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
 
@@ -79,6 +100,15 @@ public class YSMCompatConfig {
                         "per frame (measured 20-30 FPS with the paperdoll enabled vs 100+ FPS disabled).",
                         "The player model is already visible in-world during battle, so the paperdoll is off by default.")
                 .define("disableExtraPlayerInBattleMode", true);
+
+        ANIMATION_EVAL_RATE_LIMIT_HZ = builder
+                .comment("Upper bound on how often a NON-local player's YSM script/animation state is evaluated, in Hz.",
+                        "0 = unlimited (every frame the distance LOD allows), which is the previous behaviour.",
+                        "Allowed values: 0, or 30-240. Lower values reduce render-thread cost at the price of less",
+                        "smooth model updates: frames between evaluations replay the last evaluated pose.",
+                        "This caps the built-in distance LOD (near players every frame, far ones at 30/10 Hz), so the",
+                        "effective cadence is the slower of the two. The local player is never rate-limited.")
+                .defineInRange("animationEvaluationRateLimitHz", 0, 0, 240);
 
         builder.pop();
 

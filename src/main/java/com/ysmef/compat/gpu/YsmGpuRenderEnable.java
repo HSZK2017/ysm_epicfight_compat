@@ -2,7 +2,7 @@ package com.ysmef.compat.gpu;
 
 import com.ysmef.compat.YSMEpicFightCompat;
 import com.ysmef.compat.config.YSMCompatConfig;
-import net.minecraftforge.fml.ModList;
+import com.ysmef.compat.ysm.YsmFork;
 
 /**
  * Gates the compat mod's GPU skinning path depending on which YSM fork is loaded:
@@ -17,42 +17,39 @@ import net.minecraftforge.fml.ModList;
  *   config (enableGpuRender), mirroring ModernYSM's UseGpuRenderer toggle.
  *   Like ModernYSM, the toggle is auto-disabled when the GPU path proves
  *   unavailable at runtime (see disableIfOwned).
+ *
+ * The fork identification itself lives in {@link YsmFork} (single source of
+ * truth, reported at client setup); this class only decides what to do with it.
  */
 public final class YsmGpuRenderEnable {
 
-    public enum YsmFork { MODERN_YSM, OPEN_YSM, LEGACY_YSM, NONE }
-
-    private static final String YSM_MOD_ID = "yes_steve_model";
     private static final String MODERN_GENERAL_CONFIG = "com.elfmcys.yesstevemodel.config.GeneralConfig";
-
-    private static volatile YsmFork fork = null;
 
     private YsmGpuRenderEnable() {}
 
     /**
-     * Which YSM fork is installed. Detected once via ModList + class presence:
-     * ModernYSM is identified by its GPU package (rip.ysm.gpu.*), OpenYSM by its
-     * un-obfuscated render event class, everything else (obfuscated classes) is
-     * LegacyYSM.
+     * Which YSM fork is installed. Delegates to {@link YsmFork#fork()}.
      */
-    public static YsmFork fork() {
-        YsmFork f = fork;
-        if (f != null) {
-            return f;
+    public static YsmFork.Fork fork() {
+        return YsmFork.fork();
+    }
+
+    /**
+     * Emit the GPU-toggle half of the fork verdict. {@link YsmFork#reportAtStartup()}
+     * already logged the identification itself, so this only explains which
+     * toggle owns the GPU path - the detail that otherwise has to be inferred
+     * from behaviour.
+     */
+    public static void reportToggleLinkage() {
+        YsmFork.Fork f = fork();
+        if (f == YsmFork.Fork.NONE) {
+            return;
         }
-        synchronized (YsmGpuRenderEnable.class) {
-            f = fork;
-            if (f == null) {
-                f = detect();
-                fork = f;
-                YSMEpicFightCompat.LOGGER.info(
-                        "YSM-EF Compat: detected YSM fork '{}' - GPU render toggle: {}",
-                        f, f == YsmFork.MODERN_YSM
-                                ? "linked to ModernYSM UseGpuRenderer/UseCompatibilityRenderer"
-                                : "own enableGpuRender config");
-            }
-        }
-        return f;
+        YSMEpicFightCompat.LOGGER.info(
+                "YSM-EF Compat: GPU render toggle for fork {}: {}",
+                f, f == YsmFork.Fork.MODERN_YSM
+                        ? "linked to ModernYSM UseGpuRenderer/UseCompatibilityRenderer"
+                        : "own enableGpuRender config");
     }
 
     /**
@@ -63,7 +60,7 @@ public final class YsmGpuRenderEnable {
      * - OpenYSM / LegacyYSM: the mod's own enableGpuRender config.
      */
     public static boolean isEnabled() {
-        if (fork() == YsmFork.MODERN_YSM) {
+        if (fork() == YsmFork.Fork.MODERN_YSM) {
             return modernGpuEnabled();
         }
         return YSMCompatConfig.ENABLE_GPU_RENDER.get();
@@ -76,7 +73,7 @@ public final class YsmGpuRenderEnable {
      * toggle is owned by ModernYSM itself.
      */
     public static void disableIfOwned() {
-        if (fork() == YsmFork.MODERN_YSM) {
+        if (fork() == YsmFork.Fork.MODERN_YSM) {
             return;
         }
         try {
@@ -86,33 +83,6 @@ public final class YsmGpuRenderEnable {
                         "YSM-EF Compat: GPU skinning path unavailable, disabled 'enableGpuRender' (mirrors ModernYSM's auto-disable)");
             }
         } catch (Throwable ignored) {
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // Detection
-    // ------------------------------------------------------------------
-
-    private static YsmFork detect() {
-        ModList modList = ModList.get();
-        if (modList == null || !modList.isLoaded(YSM_MOD_ID)) {
-            return YsmFork.NONE;
-        }
-        if (classExists("rip.ysm.gpu.GpuCapability") || classExists("rip.ysm.gpu.GpuRenderPath")) {
-            return YsmFork.MODERN_YSM;
-        }
-        if (classExists("com.elfmcys.yesstevemodel.client.event.ReplacePlayerRenderEvent")) {
-            return YsmFork.OPEN_YSM;
-        }
-        return YsmFork.LEGACY_YSM;
-    }
-
-    private static boolean classExists(String name) {
-        try {
-            Class.forName(name, false, YsmGpuRenderEnable.class.getClassLoader());
-            return true;
-        } catch (Throwable t) {
-            return false;
         }
     }
 

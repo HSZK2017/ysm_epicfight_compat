@@ -44,14 +44,25 @@ public class YSMCompatClientEvents {
     /**
      * Register the YSM-aware patched renderer for the player entity type.
      * LOWEST priority so this registration wins over other Epic Fight addons.
+     *
+     * <p>Winning the slot must not mean destroying what was in it: Epic Fight keeps
+     * exactly one patched renderer per entity type, so anything registered earlier
+     * would simply never be called again. Whatever provider held the slot is read
+     * out of the event and handed to {@link YSMPlayerRenderer}, which passes players
+     * this mod does not handle straight back to it. Ported from EpicYSM's
+     * {@code PlayerRendererSlot} (MIT).
      */
     @SubscribeEvent(priority = net.minecraftforge.eventbus.api.EventPriority.LOWEST)
     public static void registerRenderer(PatchedRenderersEvent.Add event) {
+        YSMPlayerRenderer.Previous previous = YSMPlayerRenderer.takePreviousProvider(event);
         event.addPatchedEntityRenderer(EntityType.PLAYER,
-                (entityType) -> new YSMPlayerRenderer(event.getContext(), entityType)
+                (entityType) -> new YSMPlayerRenderer(event.getContext(), entityType, previous.renderer())
                         .initLayerLast(event.getContext(), entityType));
+        YSMPlayerRenderer.rememberContext(event.getContext());
 
-        YSMEpicFightCompat.LOGGER.info("YSM-EF Compat: Registered YSMPlayerRenderer for Player entity");
+        YSMEpicFightCompat.LOGGER.info(
+                "YSM-EF Compat: Registered YSMPlayerRenderer for Player entity{}",
+                previous.description().isEmpty() ? "" : ", keeping " + previous.description() + " behind it");
     }
 
     /**
@@ -95,6 +106,18 @@ public class YSMCompatClientEvents {
      */
     @SubscribeEvent
     public static void onClientSetup(net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent event) {
+        // Identify the loaded YSM build once, up front. All three known builds
+        // share modId "yes_steve_model" and a version inside this mod's
+        // [2.6,2.7) contract, so the verdict cannot come from the mod list or the
+        // version range - yet it decides which render hooks and which capability
+        // provider are reachable. Reporting it here (instead of letting whichever
+        // feature asks first log a fragment) is what made the earlier
+        // mis-attribution between the OpenYSM and ModernYSM lineages possible.
+        com.ysmef.compat.ysm.YsmFork.reportAtStartup();
+        com.ysmef.compat.gpu.YsmGpuRenderEnable.reportToggleLinkage();
+        // Let other mods' appearance takeovers claim a player; this mod steps aside
+        // for as long as they do (see LookOwners).
+        com.ysmef.compat.compat.LookOwners.registerBuiltIn();
         event.enqueueWork(com.ysmef.compat.realcamera.YsmRealCameraBridge::initApiFunction);
     }
 

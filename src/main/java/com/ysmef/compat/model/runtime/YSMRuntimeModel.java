@@ -457,6 +457,10 @@ public final class YSMRuntimeModel {
         for (int i = 0; i < n; i++) {
             hidden[i] = effectiveScale(i, scales, done, eff, 0) < HIDE_SCALE_EPSILON;
         }
+        // Last word to the user: the automatic pass above is a guess about someone
+        // else's model, so hidden-bones.txt / bone_overrides/<model>.json can add a
+        // bone this mod did not recognise and force back one it hid by mistake.
+        YsmBoneOverrides.apply(modelId, bones, hidden);
         return hidden;
     }
 

@@ -21,11 +21,17 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * Returns a mesh accessor for the entity's current YSM model (with the texture
  * override applied), or null to let Epic Fight use its default mesh.
+ *
+ * One deliberate exception: YSM's built-in vanilla player models
+ * ("misc/2_steve" / "misc/1_alex", see {@link YSMModelAccess#isVanillaPlayerModelId})
+ * always yield null, so the plain Epic Fight biped is used and no YSM mesh is
+ * converted or drawn for them.
  */
 public final class YSMMeshSelector {
 
     private static final Map<java.util.UUID, String[]> LOGGED_MESH_USE = new ConcurrentHashMap<>();
     private static final Map<java.util.UUID, String> LOGGED_MESH_MISSING = new ConcurrentHashMap<>();
+    private static final Map<java.util.UUID, String> LOGGED_VANILLA_FALLBACK = new ConcurrentHashMap<>();
 
     private YSMMeshSelector() {}
 
@@ -33,9 +39,18 @@ public final class YSMMeshSelector {
      * Select the converted base mesh for the player's current YSM model.
      *
      * @return the mesh accessor, or null if no converted mesh exists for the model
+     *         (or the model is YSM's built-in vanilla player model)
      */
     public static AssetAccessor<HumanoidMesh> selectMesh(AbstractClientPlayer player) {
         if (player == null) {
+            return null;
+        }
+        // Another mod owns this player's look right now (a transformation, a
+        // possession, a costume it draws itself): abstain, so this mod does not pose
+        // and layer a model that mod has replaced. Answered once a tick and cached
+        // there - see LookOwners for why the two questions have different lifetimes.
+        if (com.ysmef.compat.compat.LookOwners.ownsLook(player)) {
+            logLookOwnerOnce(player);
             return null;
         }
         YSMModelAccess.YSMModelRef modelRef = YSMModelAccess.getCurrentModel(player);
@@ -43,8 +58,42 @@ public final class YSMMeshSelector {
             logNoModelDiagOnce(player);
             return null;
         }
+        if (YSMModelAccess.isVanillaPlayerModelId(modelRef.modelId())) {
+            logVanillaFallbackOnce(player, modelRef.modelId());
+            return null;
+        }
         return selectMeshForModel(player, modelRef.modelId(), modelRef.textureName(),
                 player.getGameProfile().getName());
+    }
+
+    /** Once per player: another mod owns the look, so this mod abstains. */
+    private static final Map<java.util.UUID, String> LOGGED_LOOK_OWNER = new ConcurrentHashMap<>();
+
+    private static void logLookOwnerOnce(AbstractClientPlayer player) {
+        String reason = com.ysmef.compat.compat.LookOwners.reason(player);
+        String prev = LOGGED_LOOK_OWNER.put(player.getUUID(), String.valueOf(reason));
+        if (reason != null && !reason.equals(prev)) {
+            YSMEpicFightCompat.LOGGER.info(
+                    "YSM-EF Compat: player '{}' is drawn by another mod ({}); this mod abstains until the look is given back",
+                    player.getGameProfile().getName(), reason);
+        }
+    }
+
+    /**
+     * YSM's built-in "原版史蒂夫模型" (Steve) and "原版艾利克斯模型" (Alex) are the
+     * vanilla player rig skinned with the player's own Mojang skin, so there is
+     * nothing to convert: returning null hands the player to Epic Fight's default
+     * biped, which renders identically and keeps vanilla armor/head/elytra layers
+     * working. See YSMModelAccess#isVanillaPlayerModelId.
+     */
+    private static void logVanillaFallbackOnce(AbstractClientPlayer player, String modelId) {
+        String prev = LOGGED_VANILLA_FALLBACK.put(player.getUUID(), modelId);
+        if (modelId.equals(prev)) {
+            return;
+        }
+        YSMEpicFightCompat.LOGGER.info(
+                "YSM-EF Compat: '{}' uses YSM's built-in vanilla player model '{}' - using the Epic Fight default biped instead of a converted YSM mesh",
+                player.getGameProfile().getName(), modelId);
     }
 
     /** Once per player: the selection cache resolved no YSM model (diagnostics). */
@@ -148,6 +197,8 @@ public final class YSMMeshSelector {
     public static void clear() {
         LOGGED_MESH_USE.clear();
         LOGGED_MESH_MISSING.clear();
+        LOGGED_VANILLA_FALLBACK.clear();
+        LOGGED_LOOK_OWNER.clear();
         DIAG_NO_MODEL.clear();
     }
 }

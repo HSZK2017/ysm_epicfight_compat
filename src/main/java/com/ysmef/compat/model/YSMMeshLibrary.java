@@ -837,6 +837,10 @@ public class YSMMeshLibrary {
         YSMRuntimeModel.invalidateAll();
         com.ysmef.compat.model.runtime.YsmBindArmature.invalidateAll();
         YsmExtraAnimationLibrary.invalidateAll();
+        // Re-read the user's bone overrides too: an edited hidden-bones.txt should
+        // take effect on the same reload that rebuilds the runtime models, without
+        // a game restart.
+        com.ysmef.compat.model.runtime.YsmBoneOverrides.invalidate();
     }
 
     /**

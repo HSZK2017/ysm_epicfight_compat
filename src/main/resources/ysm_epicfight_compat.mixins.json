@@ -25,6 +25,7 @@
     "SkinnedMeshCpuRenderMixin",
     "YsmAnimationTransitionGuardMixin",
     "YsmLivingMovementPredicateMixin",
+    "YsmObfuscatedExtraPlayerOverlayMixin",
     "YsmArmaturePoseMixin",
     "YsmArmRenderMixin",
     "YsmBackgroundHandMixin",

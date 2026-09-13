@@ -50,6 +50,13 @@ public final class YSMPlayerAnimator implements Molang.Env {
 
     private final YSMRuntimeModel model;
 
+    /**
+     * Per-entity cadence gate for the {@code animationEvaluationRateLimitHz} cap.
+     * One animator exists per player, so one limiter per player falls out of that.
+     */
+    private final com.ysmef.compat.animation.EvaluationRateLimiter<String> rateLimiter =
+            new com.ysmef.compat.animation.EvaluationRateLimiter<>();
+
     // molang state (id-keyed slots, see Molang#idOf: queries and variables are
     // interned into stable integer ids at compile time, so the hot evaluation
     // path does no String hashing)
@@ -302,6 +309,17 @@ public final class YSMPlayerAnimator implements Molang.Env {
      * camera) evaluates every frame; entities beyond 40/64 blocks drop to
      * 30/10 Hz. The first evaluation is always full so the mesh starts with
      * correct state.
+     *
+     * <p>On top of that sits the configurable {@code animationEvaluationRateLimitHz}
+     * cap, expressed in Hz rather than in ticks. The two multiply: a far entity under
+     * a 60 Hz cap evaluates at the slower of the two, which is the point - the cap is
+     * the global ceiling and the LOD keeps distant players from hitting it.
+     *
+     * <p>The cap deliberately does not use {@code tick % n}. Aside from being unable
+     * to express an arbitrary Hz, a modulo of the tick counter has a phase unrelated
+     * to when this entity was last evaluated, so the achieved rate depends on the
+     * frame rate. {@link com.ysmef.compat.animation.EvaluationRateLimiter} keeps an
+     * absolute per-entity deadline instead.
      */
     private boolean shouldFullEval(LivingEntity entity) {
         if (!evaluatedOnce) {
@@ -311,6 +329,30 @@ public final class YSMPlayerAnimator implements Molang.Env {
         if (local == null || entity == local) {
             return true;
         }
+
+        int rateHz = configuredRateLimitHz();
+        double now = rateHz > 0 ? System.nanoTime() / 1.0E9D : 0.0D;
+        // The context carries the resolved animation state, so a state change is
+        // evaluated immediately instead of waiting out the deadline - a transition is
+        // exactly the moment the previous pose stops being a usable stand-in.
+        String context = this.currentState;
+
+        // Both gates are evaluated before either records anything: advancing the
+        // deadline for an evaluation the distance LOD then refuses would schedule the
+        // next one as if this one had happened.
+        boolean decided = rateHz <= 0
+                || rateLimiter.shouldEvaluate(now, rateHz, context, false);
+        if (decided) {
+            decided = distanceAllows(entity, local);
+        }
+        if (decided && rateHz > 0) {
+            rateLimiter.evaluated(now, rateHz, context);
+        }
+        return decided;
+    }
+
+    /** The distance LOD: near entities every frame, distant ones throttled. */
+    private static boolean distanceAllows(LivingEntity entity, Player local) {
         double distSqr = entity.distanceToSqr(local);
         int tick = entity.tickCount;
         if (distSqr > LOD_DIST_SQR_FAR) {
@@ -320,6 +362,16 @@ public final class YSMPlayerAnimator implements Molang.Env {
             return tick % 2 == 0;
         }
         return true;
+    }
+
+    /** The configured Hz cap, or 0 for unlimited. */
+    private static int configuredRateLimitHz() {
+        try {
+            return com.ysmef.compat.config.YSMCompatConfig.ANIMATION_EVAL_RATE_LIMIT_HZ.get();
+        } catch (Throwable t) {
+            // Config not loaded yet (early frame): behave as unlimited.
+            return 0;
+        }
     }
 
     /**
