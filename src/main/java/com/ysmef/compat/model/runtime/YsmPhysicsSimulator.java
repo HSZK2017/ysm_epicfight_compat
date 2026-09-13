@@ -63,6 +63,18 @@ public final class YsmPhysicsSimulator {
     /** One simulator; the per-chain state lives in the callers' {@link ChainState}s. */
     public static final YsmPhysicsSimulator INSTANCE = new YsmPhysicsSimulator();
 
+    /**
+     * The angle of the swing produced by the last {@link #update}, in radians.
+     *
+     * <p>Exposed because "the physics is not working" and "the physics is producing a
+     * rotation too small to see" look identical on screen, and only this tells them
+     * apart. Zero for a chain that is at rest or exactly opposed.
+     */
+    public float lastAngleRad;
+
+    /** How far the tip was from where the pose asks it to be, in blocks. */
+    public float lastTipError;
+
     // Reused scratch, so a per-frame update allocates nothing.
     private final Vector3f aim = new Vector3f();
     private final Vector3f accel = new Vector3f();
@@ -103,6 +115,8 @@ public final class YsmPhysicsSimulator {
                        YsmPhysicsChains.Chain chain, float dt, YsmPhysicsTuning tuning,
                        Quaternionf out) {
         out.identity();
+        this.lastAngleRad = 0.0F;
+        this.lastTipError = 0.0F;
         if (state == null || pivot == null || restTip == null || chain == null) {
             return;
         }
@@ -134,6 +148,7 @@ public final class YsmPhysicsSimulator {
         // velocity. The aim point is pulled onto the chain's fixed sphere first, so a
         // rest pose that has moved outward cannot lengthen the chain.
         aim.set(restTip).sub(pivot).mul(state.segment / reach).add(pivot);
+        this.lastTipError = aim.distance(state.tip);
         accel.set(aim).sub(state.tip).mul((float) shape.stiffness)
                 .fma((float) -shape.damping, state.velocity);
         // Gravity droops the chain, scaled by how fast it is already moving: a standing
@@ -173,6 +188,7 @@ public final class YsmPhysicsSimulator {
         if (angle > limit) {
             angle = limit;
         }
+        this.lastAngleRad = angle;
         out.fromAxisAngleRad(cross.x, cross.y, cross.z, angle);
     }
 

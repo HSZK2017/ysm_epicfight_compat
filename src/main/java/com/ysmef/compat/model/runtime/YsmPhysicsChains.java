@@ -166,6 +166,28 @@ public final class YsmPhysicsChains {
      * and its hair must still swing.
      */
     static List<Chain> build(YSMRuntimeModel.BoneRt[] bones) {
+        return build(bones, null);
+    }
+
+    /**
+     * The classification, restricted to the bones that can actually move something.
+     *
+     * <p>The {@code carriesGeometry} preference exists because the classification cannot
+     * see the mesh, and on a real model the bones that read as hanging are often not the
+     * ones holding the hair. A model that splits a braid into a container bone and a fan
+     * of leaf strands puts the hint on the container and the geometry on the leaves, and
+     * two things then go wrong at once: the leaves have no descendants, so the simulation
+     * has no lever and produces no swing at all, while the container swings a piece whose
+     * geometry is somewhere else entirely. Seven of the twenty chains classified on the
+     * test model were leaves like this. Preferring bones with geometry swings the piece
+     * where it is drawn.
+     *
+     * @param bones            the bone table
+     * @param carriesGeometry  which bones carry mesh, or null to accept every bone - the
+     *                         animator's path has no mesh at classification time and
+     *                         keeps the original behaviour
+     */
+    static List<Chain> build(YSMRuntimeModel.BoneRt[] bones, java.util.function.IntPredicate carriesGeometry) {
         List<Chain> chains = new ArrayList<>();
         if (bones == null) {
             return chains;
@@ -190,6 +212,11 @@ public final class YsmPhysicsChains {
             if (!hangs(bones, i)) {
                 continue;
             }
+            if (carriesGeometry != null && !carriesGeometry.test(i) && hasGeometricDescendant(bones, i, carriesGeometry)) {
+                // Something under this bone holds the geometry, so that is the bone to
+                // swing; this one is a container by another name. See the method comment.
+                continue;
+            }
             if (continuesAnAcceptedChain(chains, bones, i)) {
                 continue;
             }
@@ -208,6 +235,17 @@ public final class YsmPhysicsChains {
                     hangsAroundLegs(parentJoint)));
         }
         return chains;
+    }
+
+    /** Whether any bone under this one carries mesh. */
+    private static boolean hasGeometricDescendant(YSMRuntimeModel.BoneRt[] bones, int index,
+                                                  java.util.function.IntPredicate carriesGeometry) {
+        for (int i = 0; i < bones.length; i++) {
+            if (i != index && bones[i] != null && descendsFrom(bones, i, index) && carriesGeometry.test(i)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

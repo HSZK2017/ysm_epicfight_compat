@@ -7,6 +7,7 @@ import com.ysmef.compat.model.YSMMesh;
 import net.minecraft.world.entity.LivingEntity;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
+import yesman.epicfight.api.client.model.MeshPart;
 import yesman.epicfight.api.utils.math.OpenMatrix4f;
 
 import java.util.ArrayList;
@@ -60,11 +61,31 @@ public final class YsmMeshSecondaryMotion {
         /** JOML twin of {@link #deltas}, where the rotation is composed. */
         final org.joml.Matrix4f[] deltaScratch;
         double lastStepSeconds = -1.0;
+        long frames;
+        int detailLogged;
+        /** The swing each chain produced on the last frame, degrees, for the log. */
+        final float[] lastDegrees;
+        /** How far each chain's tip sat from its aim, blocks, for the log. */
+        final float[] lastError;
+        /** The lever each chain was classified with, blocks, for the log. */
+        final float[] lever;
         boolean logged;
         boolean wiringLogged;
 
         State(YSMRuntimeModel model) {
-            List<YsmPhysicsChains.Chain> classified = YsmPhysicsChains.build(model);
+            this(model, null);
+        }
+
+        /**
+         * @param mesh the mesh being drawn, used to find out which bones actually carry
+         *             geometry - the classification is much better with that than without
+         *             it; see {@link YsmPhysicsChains#build(YSMRuntimeModel.BoneRt[], java.util.function.IntPredicate)}
+         */
+        State(YSMRuntimeModel model, YSMMesh mesh) {
+            java.util.function.IntPredicate carries = mesh == null
+                    ? null
+                    : bone -> partsOf(mesh, model, bone).length > 0;
+            List<YsmPhysicsChains.Chain> classified = YsmPhysicsChains.build(model.bones, carries);
             this.chains = classified.toArray(new YsmPhysicsChains.Chain[0]);
             this.sims = new YsmPhysicsSimulator.ChainState[chains.length];
             this.pivots = new Vector3f[chains.length];
@@ -72,6 +93,9 @@ public final class YsmMeshSecondaryMotion {
             this.bindOffsets = new Vector3f[chains.length];
             this.bindRots = new Quaternionf[chains.length];
             this.parts = new int[chains.length][];
+            this.lastDegrees = new float[chains.length];
+            this.lastError = new float[chains.length];
+            this.lever = new float[chains.length];
             this.deltas = new OpenMatrix4f[chains.length];
             this.deltaScratch = new org.joml.Matrix4f[chains.length];
 
@@ -82,7 +106,9 @@ public final class YsmMeshSecondaryMotion {
                 // The average offset to the bones under this one, in this bone's own bind
                 // frame: a piece of hair is usually a short fan of strands, and their
                 // midpoint is a better lever than any single strand.
-                this.bindOffsets[c] = bindHangOffset(model, chains[c]);
+                float[] centroid = geometryCentroid(mesh, model, chains[c].boneIndex());
+                this.bindOffsets[c] = bindHangOffset(model, chains[c], centroid);
+                this.lever[c] = this.bindOffsets[c].length();
                 this.restTips[c] = new Vector3f();
                 this.bindRots[c] = new Quaternionf();
                 YsmPhysicsSimulator.rotationOf(bone.bindWorld, this.bindRots[c]);
@@ -129,7 +155,7 @@ public final class YsmMeshSecondaryMotion {
         State state = STATES.get(model.modelId);
         if (state == null) {
             try {
-                state = new State(model);
+                state = new State(model, mesh);
             } catch (Throwable t) {
                 // A model whose bone table defeats the classifier must still draw.
                 YSMEpicFightCompat.LOGGER.warn(
@@ -202,6 +228,10 @@ public final class YsmMeshSecondaryMotion {
         state.lastStepSeconds = now;
         YsmPhysicsTuning tuning = YsmPhysicsTuning.current();
 
+        state.frames++;
+        float maxDegrees = 0.0F;
+        int moving = 0;
+
         for (int c = 0; c < state.chains.length; c++) {
             YsmPhysicsChains.Chain chain = state.chains[c];
             int joint = model.bones[chain.boneIndex()].joint;
@@ -223,6 +253,16 @@ public final class YsmMeshSecondaryMotion {
 
             YsmPhysicsSimulator.INSTANCE.update(state.sims[c], state.pivots[c], state.restTips[c],
                     chain, dt, tuning, scratch);
+            float degrees = (float) Math.toDegrees(YsmPhysicsSimulator.INSTANCE.lastAngleRad);
+            state.lastDegrees[c] = degrees;
+            // How far this chain's tip sat from where the pose asked it to be. Non-zero is
+            // what makes a swing possible at all: a chain whose tip always matches its aim
+            // is one the animation never moves, and it will read as "physics off" however
+            // correct the simulation is.
+            state.lastError[c] = YsmPhysicsSimulator.INSTANCE.lastTipError;
+            if (degrees > maxDegrees) {
+                maxDegrees = degrees;
+            }
             int[] parts = state.parts[c];
             if (parts == null) {
                 parts = partsOf(mesh, model, chain.boneIndex());
@@ -234,6 +274,7 @@ public final class YsmMeshSecondaryMotion {
                 // place instead would hold the piece permanently swung.
                 continue;
             }
+            moving++;
             YsmPhysicsSimulator.toLocal(local, scratch, state.bindRots[c]);
             // The part transform is a local offset applied inside the bone's own frame, so
             // it is the rotation alone - no translation, no scale.
@@ -241,6 +282,45 @@ public final class YsmMeshSecondaryMotion {
             importInto(state.deltas[c], state.deltaScratch[c]);
             for (int ordinal : parts) {
                 mesh.setRuntimeTransformAt(ordinal, state.deltas[c]);
+            }
+        }
+
+        // Throttled, because "the pieces do not move" has three different causes - the
+        // swing is never computed, it is computed as zero, or it is computed and written
+        // somewhere that is not drawn - and the log has to say which. The per-chain detail
+        // is what names the ones that are being skipped.
+        if (state.frames % 240 == 0) {
+            YSMEpicFightCompat.LOGGER.info(
+                    "YSM-EF Compat: [physics] frame {}: dt={}ms, max swing={}deg, {} of {} chain(s) written, tipError={} blocks",
+                    state.frames, Math.round(dt * 1000.0F),
+                    Math.round(maxDegrees * 10.0F) / 10.0F, moving, state.chains.length,
+                    Math.round(YsmPhysicsSimulator.INSTANCE.lastTipError * 1000.0F) / 1000.0F);
+            if (state.detailLogged < 3) {
+                state.detailLogged++;
+                StringBuilder detail = new StringBuilder();
+                for (int c = 0; c < state.chains.length; c++) {
+                    detail.append(detail.length() == 0 ? "" : ", ")
+                            .append(state.chains[c].boneName())
+                            .append(state.chains[c].chainRoot() ? "(root," : "(tip,")
+                            .append(state.parts[c] == null ? "?" : state.parts[c].length)
+                            .append(" parts,")
+                            .append(Math.round(state.lastDegrees[c] * 10.0F) / 10.0F)
+                            .append("deg, lever=")
+                            .append(Math.round(state.lever[c] * 1000.0F) / 1000.0F)
+                            .append(", err=")
+                            .append(Math.round(state.lastError[c] * 1000.0F) / 1000.0F)
+                            .append(")");
+                }
+                YSMEpicFightCompat.LOGGER.info(
+                        "YSM-EF Compat: [physics] chains of '{}': {}", model.modelId, detail);
+                StringBuilder vertices = new StringBuilder();
+                for (int c = 0; c < state.chains.length; c++) {
+                    vertices.append(vertices.length() == 0 ? "" : ", ")
+                            .append(state.chains[c].boneName())
+                            .append("=").append(vertexCount(mesh, state.chains[c].boneName()));
+                }
+                YSMEpicFightCompat.LOGGER.info(
+                        "YSM-EF Compat: [physics] vertices per chain on '{}': {}", model.modelId, vertices);
             }
         }
     }
@@ -280,31 +360,91 @@ public final class YsmMeshSecondaryMotion {
     }
 
     /**
-     * The bone's average hang offset in its own bind frame: the mean of the bind-space
-     * offsets from the bone to every bone under it, turned back into the bone's frame.
+     * The average position of the geometry this bone carries, in model bind space, or
+     * null when it carries none.
      *
-     * <p>Bind-local rather than model-space because that is the frame the live pose
-     * carries: {@code pose x offset} then lands on the same point of the model that the
-     * bind pose put the piece's tip on, without the pose's scale having to be undone.
+     * <p>This is where the lever comes from, and taking it from the bone hierarchy
+     * instead is the mistake this method exists to fix: the bones named for hair on a
+     * real model are usually the leaf strands, which have no bones under them, so a
+     * hierarchy-derived lever is zero, the simulation has nothing to swing, and the
+     * feature looks switched off while reporting itself active. Sixteen of the
+     * twenty-four chains on the test model were in exactly that state, including one
+     * holding three hundred and sixty vertices.
      */
-    private static Vector3f bindHangOffset(YSMRuntimeModel model, YsmPhysicsChains.Chain chain) {
-        YSMRuntimeModel.BoneRt[] bones = model.bones;
-        YSMRuntimeModel.BoneRt root = bones[chain.boneIndex()];
-        float sx = 0.0F, sy = 0.0F, sz = 0.0F;
+    private static float[] geometryCentroid(YSMMesh mesh, YSMRuntimeModel model, int boneIndex) {
+        String prefix = EFMeshJsonWriter.BONE_PART_PREFIX;
+        float[] positions = mesh.positions();
+        if (positions == null) {
+            return null;
+        }
+        double sx = 0.0, sy = 0.0, sz = 0.0;
         int found = 0;
-        for (int i = 0; i < bones.length; i++) {
-            if (i == chain.boneIndex() || bones[i] == null || !isUnder(bones, i, chain.boneIndex())) {
+        for (Map.Entry<String, MeshPart> entry : mesh.getPartEntrySetSafe()) {
+            String partName = entry.getKey();
+            if (!partName.startsWith(prefix)) {
                 continue;
             }
-            sx += bones[i].bindWorld.m30() - root.bindWorld.m30();
-            sy += bones[i].bindWorld.m31() - root.bindWorld.m31();
-            sz += bones[i].bindWorld.m32() - root.bindWorld.m32();
-            found++;
+            Integer idx = model.boneIndex.get(partName.substring(prefix.length()));
+            if (idx == null || idx != boneIndex) {
+                continue;
+            }
+            MeshPart part = entry.getValue();
+            if (part == null || part.getVertices() == null) {
+                continue;
+            }
+            for (var vb : part.getVertices()) {
+                int p = vb.position * 3;
+                if (p + 2 < positions.length) {
+                    sx += positions[p];
+                    sy += positions[p + 1];
+                    sz += positions[p + 2];
+                    found++;
+                }
+            }
         }
         if (found == 0) {
-            return new Vector3f();
+            return null;
         }
-        Vector3f worldOffset = new Vector3f(sx / found, sy / found, sz / found);
+        return new float[]{(float) (sx / found), (float) (sy / found), (float) (sz / found)};
+    }
+
+    /**
+     * The bone's hang offset in its own bind frame: from the bone's bind pivot to
+     * {@code centroid}, turned back into the bone's frame.
+     *
+     * <p>The geometry centroid when it has one, and the bones under it otherwise - a
+     * container bone with no geometry of its own still has to swing the pieces below it.
+     * Bind-local because that is the frame the live pose carries: {@code pose x offset}
+     * then lands where the bind pose put the piece, without the pose's scale being undone.
+     *
+     * @param centroid the geometry centroid in model space, or null
+     */
+    private static Vector3f bindHangOffset(YSMRuntimeModel model, YsmPhysicsChains.Chain chain,
+                                           float[] centroid) {
+        YSMRuntimeModel.BoneRt[] bones = model.bones;
+        YSMRuntimeModel.BoneRt root = bones[chain.boneIndex()];
+        Vector3f worldOffset = new Vector3f();
+        if (centroid != null) {
+            worldOffset.set(centroid[0] - root.bindWorld.m30(),
+                    centroid[1] - root.bindWorld.m31(),
+                    centroid[2] - root.bindWorld.m32());
+        } else {
+            float sx = 0.0F, sy = 0.0F, sz = 0.0F;
+            int found = 0;
+            for (int i = 0; i < bones.length; i++) {
+                if (i == chain.boneIndex() || bones[i] == null || !isUnder(bones, i, chain.boneIndex())) {
+                    continue;
+                }
+                sx += bones[i].bindWorld.m30() - root.bindWorld.m30();
+                sy += bones[i].bindWorld.m31() - root.bindWorld.m31();
+                sz += bones[i].bindWorld.m32() - root.bindWorld.m32();
+                found++;
+            }
+            if (found == 0) {
+                return worldOffset;
+            }
+            worldOffset.set(sx / found, sy / found, sz / found);
+        }
         if (worldOffset.lengthSquared() < 1.0E-8F) {
             return worldOffset;
         }
@@ -359,5 +499,25 @@ public final class YsmMeshSecondaryMotion {
             names.append(names.length() == 0 ? "" : ", ").append(c.boneName());
         }
         return names.toString();
+    }
+
+    /**
+     * How many vertices the parts behind a chain hold.
+     *
+     * <p>Worth measuring rather than assuming from the part count: the exporter emits a
+     * part per bone, so a chain can look wired while the part behind it carries no
+     * geometry at all - which swings nothing, and reads on screen exactly like a swing
+     * that is too small to see.
+     */
+    private static int vertexCount(YSMMesh mesh, String boneName) {
+        MeshPart part = mesh.getPartEntrySetSafe().stream()
+                .filter(entry -> entry.getKey().equals(EFMeshJsonWriter.BONE_PART_PREFIX + boneName))
+                .map(Map.Entry::getValue)
+                .findFirst()
+                .orElse(null);
+        if (part == null || part.getVertices() == null) {
+            return 0;
+        }
+        return part.getVertices().size();
     }
 }
