@@ -105,8 +105,9 @@ public final class YsmMeshCloth {
         float lastTurnDegrees;
         /** How far the cloth sat from where it was bound on the last frame, blocks. */
         float lastSpread;
-        /** The worst single link stretch on the last frame, as a fraction. */
+        /** The worst single link stretch on the last frame, as a fraction, and its length. */
         float lastLinkStretch;
+        float lastLinkRest;
         /** How far the cloth's parts swung about their attachment, blocks. */
         float lastSwing;
         /** How far the attachment itself moved on the last frame, blocks. */
@@ -413,6 +414,7 @@ public final class YsmMeshCloth {
         float stretch = 0.0F;
         float pinJump = 0.0F;
         float linkStretch = 0.0F;
+        float linkRest = 0.0F;
         for (Piece piece : state.pieces) {
             YsmClothSolver.INSTANCE.step(piece.cloth, poses, state.toOrigin, piece.pinJoint, dt, tuning);
             float[] result = writeBack(mesh, piece, positions);
@@ -422,12 +424,16 @@ public final class YsmMeshCloth {
             stretch = Math.max(stretch, result[3]);
             pinJump = Math.max(pinJump, result[4]);
             linkStretch = Math.max(linkStretch, result[5]);
+            if (result[5] >= linkStretch) {
+                linkRest = result[6];
+            }
         }
         state.lastWrites = written;
         state.lastSwing = swing;
         state.lastSpread = stretch;
         state.lastPinJump = pinJump;
         state.lastLinkStretch = linkStretch;
+        state.lastLinkRest = linkRest;
 
         state.frames++;
         if (!state.reported) {
@@ -452,11 +458,14 @@ public final class YsmMeshCloth {
             // many parts it was written to. Reading one of these without the others is how a
             // report of "the cloth moved seven blocks" turned out to be the body walking.
             YSMEpicFightCompat.LOGGER.info(
-                    "YSM-EF Compat: [cloth] frame {}: dt={}ms, {} piece(s), pin step {} blocks, cloth moved {} blocks, worst link {}%, {} part(s) written, largest turn {}deg",
+                    "YSM-EF Compat: [cloth] frame {}: dt={}ms, {} piece(s), pin step {} blocks, cloth moved {} blocks, worst link {}% of a {} block link ({} mm), {} part(s) written, largest turn {}deg",
                     state.frames, Math.round(dt * 1000.0F), state.pieces.size(),
                     Math.round(state.lastPinJump * 1000.0F) / 1000.0F,
                     Math.round(state.lastSpread * 1000.0F) / 1000.0F,
-                    Math.round(state.lastLinkStretch * 1000.0F) / 10.0F, written,
+                    Math.round(state.lastLinkStretch * 1000.0F) / 10.0F,
+                    Math.round(state.lastLinkRest * 1000.0F) / 1000.0F,
+                    Math.round(state.lastLinkStretch * state.lastLinkRest * 10000.0F) / 10.0F,
+                    written,
                     Math.round(state.lastTurnDegrees * 10.0F) / 10.0F);
         }
     }
@@ -471,7 +480,7 @@ public final class YsmMeshCloth {
     private static final Quaternionf scratchRotation = new Quaternionf();
     private static final Matrix4f scratchDelta = new Matrix4f();
     private static final OpenMatrix4f scratchOpen = new OpenMatrix4f();
-    private static final float[] scratchResult = new float[6];
+    private static final float[] scratchResult = new float[7];
 
     /** Below this a piece counts as settled and no transform is written. */
     private static final float MIN_TURN_RADIANS = 0.003F;
@@ -541,6 +550,7 @@ public final class YsmMeshCloth {
         scratchResult[3] = piece.cloth.largestStretch();
         scratchResult[4] = YsmClothSolver.pinJump(piece.cloth);
         scratchResult[5] = YsmClothSolver.worstLinkStretch(piece.cloth);
+        scratchResult[6] = YsmClothSolver.worstLinkRestLength(piece.cloth);
         return scratchResult;
     }
 

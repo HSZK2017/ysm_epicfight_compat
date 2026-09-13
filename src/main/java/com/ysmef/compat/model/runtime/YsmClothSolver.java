@@ -513,9 +513,27 @@ public final class YsmClothSolver {
      * <p>The direct check on whether the constraints are doing their job, and the one that
      * separates a solve that is falling apart from a measurement that is misreading it: if the
      * links are holding, the piece is holding together whatever the aggregate numbers say.
+     *
+     * <p>Read it together with {@link #worstLinkRestLength}: a fraction is only meaningful
+     * against the length it is a fraction of. A single short link - the two vertices of a
+     * degenerate triangle, say - reports a large percentage for an absolute error too small to
+     * see, which is how a lattice that is actually held can keep reporting half its length.
      */
     public static float worstLinkStretch(Cloth cloth) {
+        return worstLink(cloth)[0];
+    }
+
+    /** The rest length of the link {@link #worstLinkStretch} is reporting, in blocks. */
+    public static float worstLinkRestLength(Cloth cloth) {
+        return worstLink(cloth)[1];
+    }
+
+    private static final float[] worstLinkScratch = new float[2];
+
+    /** {worst relative stretch, that link's rest length}. */
+    private static float[] worstLink(Cloth cloth) {
         float worst = 0.0F;
+        float worstRest = 0.0F;
         for (int l = 0; l < cloth.linkA.length; l++) {
             if (cloth.linkRest[l] < 1.0E-5F) {
                 continue;
@@ -524,9 +542,15 @@ public final class YsmClothSolver {
             float dy = cloth.y[cloth.linkB[l]] - cloth.y[cloth.linkA[l]];
             float dz = cloth.z[cloth.linkB[l]] - cloth.z[cloth.linkA[l]];
             float ratio = distance(dx, dy, dz) / cloth.linkRest[l];
-            worst = Math.max(worst, Math.abs(ratio - 1.0F));
+            float stretch = Math.abs(ratio - 1.0F);
+            if (stretch > worst) {
+                worst = stretch;
+                worstRest = cloth.linkRest[l];
+            }
         }
-        return worst;
+        worstLinkScratch[0] = worst;
+        worstLinkScratch[1] = worstRest;
+        return worstLinkScratch;
     }
 
     /** The rotation part of a matrix, as a quaternion; identity when it is not a rotation. */

@@ -54,14 +54,32 @@ public class EFMeshJsonWriter {
     /** Prefix of the Epic Fight part generated for a YSM bone. */
     public static final String BONE_PART_PREFIX = "y/";
 
-    private record VertexKey(int px, int py, int pz, int nx, int ny, int nz, int u, int v, int jointId) {}
+    /**
+     * The edge length a quad is resampled down to, in blocks.
+     *
+     * <p>Small enough that a limb bend has several rows of vertices to spread over, large
+     * enough that the vertex count stays in the tens of thousands rather than the hundreds.
+     */
+    private static final float TARGET_EDGE_BLOCKS = 0.05F;
 
-    private static VertexKey keyOf(Vector3f pos, Vector3f normal, float u, float v, int jointId) {
-        return new VertexKey(
-                Math.round(pos.x() * 1000f), Math.round(pos.y() * 1000f), Math.round(pos.z() * 1000f),
-                Math.round(normal.x() * 100f), Math.round(normal.y() * 100f), Math.round(normal.z() * 100f),
-                Math.round(u * 4096f), Math.round(v * 4096f), jointId);
-    }
+    /** A quad is never split finer than this, however large it is. */
+    private static final int MAX_CELLS_PER_EDGE = 4;
+
+    /**
+     * How far a child bone's pivot must sit from its parent's to count as a joint worth
+     * blending across, in blocks. Below this the two are the same point and the surface does
+     * not bend there.
+     */
+    private static final float MIN_JOINT_OFFSET = 0.02F;
+
+    /**
+     * The identity of a vertex for deduplication: position, normal, UV, and which joints it is
+     * blended between. The blend is part of the key because two vertices can share a position
+     * and still belong to different joints - the same point on a seam is a different vertex on
+     * either side of it.
+     */
+    private record VertexKey(int px, int py, int pz, int nx, int ny, int nz, int u, int v, int jointId,
+                             int secondJointId, int blend) {}
 
     /**
      * Convert a YSM model package into an Epic Fight mesh JSON file.
@@ -96,6 +114,7 @@ public class EFMeshJsonWriter {
         List<Float> uvs = new ArrayList<>();
         List<Integer> vcounts = new ArrayList<>();
         List<Integer> vindices = new ArrayList<>();
+        List<Float> weights = new ArrayList<>();
 
         Map<VertexKey, Integer> dedup = new HashMap<>();
         Map<String, List<Integer>> partIndices = new LinkedHashMap<>();
@@ -103,7 +122,7 @@ public class EFMeshJsonWriter {
         int[] quadCount = {0};
         for (YSMGeoModel.Bone rootBone : geoModel.topLevelBones) {
             walkBone(rootBone, new Matrix4f(), scaleW, scaleH, dedup,
-                    positions, normals, uvs, vcounts, vindices, partIndices, quadCount, 0);
+                    positions, normals, uvs, vcounts, vindices, weights, partIndices, quadCount, 0);
         }
 
         if (positions.isEmpty()) {
@@ -123,14 +142,7 @@ public class EFMeshJsonWriter {
         vertices.add("uvs", floatArray(uvs, 2));
         vertices.add("vcounts", intArray(vcounts, 1));
         vertices.add("vindices", intArray(vindices, 2));
-
-        JsonObject weightsObj = new JsonObject();
-        weightsObj.addProperty("stride", 1);
-        weightsObj.addProperty("count", 1);
-        JsonArray weightsArray = new JsonArray();
-        weightsArray.add(1.0f);
-        weightsObj.add("array", weightsArray);
-        vertices.add("weights", weightsObj);
+        vertices.add("weights", weightArray(weights));
 
         JsonObject parts = new JsonObject();
         for (String partName : HUMANOID_PARTS) {
@@ -144,6 +156,21 @@ public class EFMeshJsonWriter {
         root.add("vertices", vertices);
 
         writeFileAtomic(outFile, new GsonBuilder().create().toJson(root).getBytes(StandardCharsets.UTF_8));
+        // What the resampling and the joint blending actually produced, so the cost and the
+        // coverage of both are measured rather than assumed. A model whose geometry turns out
+        // to have no joint boundaries to blend across - or one whose quads are large enough to
+        // multiply its vertex count - is visible here rather than only in a frame time.
+        if (com.ysmef.compat.YSMEpicFightCompat.LOGGER.isDebugEnabled()) {
+            int blended = 0;
+            for (int i = 0; i < weights.size(); i++) {
+                if (weights.get(i) < 0.999F) {
+                    blended++;
+                }
+            }
+            com.ysmef.compat.YSMEpicFightCompat.LOGGER.debug(
+                    "YSM-EF Compat: [mesh] {} quads -> {} vertices ({} influence slots, {} blended)",
+                    quadCount[0], positions.size() / 3, weights.size(), blended);
+        }
         return quadCount[0];
     }
 
@@ -240,7 +267,7 @@ public class EFMeshJsonWriter {
     private static void walkBone(YSMGeoModel.Bone bone, Matrix4f parentTransform, float scaleW, float scaleH,
                                  Map<VertexKey, Integer> dedup,
                                  List<Float> positions, List<Float> normals, List<Float> uvs,
-                                 List<Integer> vcounts, List<Integer> vindices,
+                                 List<Integer> vcounts, List<Integer> vindices, List<Float> weights,
                                  Map<String, List<Integer>> partIndices, int[] quadCount, int depth) {
         if (depth > YSMGeoModel.MAX_BONE_DEPTH) {
             throw new IllegalStateException(
@@ -255,76 +282,272 @@ public class EFMeshJsonWriter {
 
         if (!bone.quads.isEmpty()) {
             int jointId = YSMJointMapper.resolveJointId(bone);
+            List<YSMGeoModel.Bone> children = blendTargets(bone);
             List<Integer> partList = partIndices.computeIfAbsent(partNameOf(bone), k -> new ArrayList<>());
 
             for (YSMGeoModel.Quad quad : bone.quads) {
                 quadCount[0]++;
-                int[] cornerIndices = new int[4];
-                for (int i = 0; i < 4; i++) {
-                    Vector3f pos = new Vector3f(quad.positions[i]);
-                    pos.mulPosition(boneTransform);
-                    Vector3f normal = new Vector3f(quad.normal);
-                    normal.mulDirection(boneTransform);
-
-                    float px = pos.x() * scaleW;
-                    float py = pos.y() * scaleH;
-                    float pz = pos.z() * scaleW;
-
-                    // Non-uniform (width != height) player scales squash the
-                    // vertices anisotropically; the normals must follow the
-                    // inverse-transpose (1/s per axis), otherwise Epic Fight's
-                    // lighting (compute and GPU paths) shades the model wrong.
-                    if (Math.abs(scaleW - scaleH) > 1e-6f && scaleW > 1e-6f && scaleH > 1e-6f) {
-                        normal.x /= scaleW;
-                        normal.y /= scaleH;
-                        normal.z /= scaleW;
-                        normal.normalize();
-                    }
-
-                    VertexKey key = keyOf(new Vector3f(px, py, pz), normal, quad.uvs[i][0], quad.uvs[i][1], jointId);
-                    Integer index = dedup.get(key);
-                    if (index == null) {
-                        index = positions.size() / 3;
-                        // Epic Fight's mesh JSON is authored in Blender space and the
-                        // loader applies (x, y, z)_mc -> (x, -z, y); convert accordingly.
-                        positions.add(px);
-                        positions.add(-pz);
-                        positions.add(py);
-                        normals.add(normal.x());
-                        normals.add(-normal.z());
-                        normals.add(normal.y());
-                        uvs.add(quad.uvs[i][0]);
-                        uvs.add(quad.uvs[i][1]);
-                        vcounts.add(1);
-                        vindices.add(jointId);
-                        vindices.add(0);
-                        dedup.put(key, index);
-                    }
-                    cornerIndices[i] = index;
-                }
-                // Epic Fight parts store pre-triangulated corner triplets
-                // (see biped.json: six corners per quad); every three consecutive
-                // VertexBuilders become one triangle at draw time. Fan each quad
-                // as (0,1,2) + (2,3,0), preserving the quad's winding.
-                int[] fan = {cornerIndices[0], cornerIndices[1], cornerIndices[2],
-                        cornerIndices[2], cornerIndices[3], cornerIndices[0]};
-                for (int index : fan) {
-                    partList.add(index);
-                    partList.add(index);
-                    partList.add(index);
-                }
+                emitQuadRefined(quad, boneTransform, scaleW, scaleH, jointId, children, bone, dedup,
+                        partList, positions, normals, uvs, vcounts, vindices, weights);
             }
         }
 
         for (YSMGeoModel.Bone child : bone.children) {
             walkBone(child, boneTransform, scaleW, scaleH, dedup,
-                    positions, normals, uvs, vcounts, vindices, partIndices, quadCount, depth + 1);
+                    positions, normals, uvs, vcounts, vindices, weights, partIndices, quadCount, depth + 1);
         }
+    }
+
+    /**
+     * Emit one source quad, resampled onto a grid so the geometry near a joint has something
+     * for a blend to act on.
+     *
+     * <p>Two things were wrong with emitting a quad as four rigidly-bound corners, and both
+     * showed up as the model tearing in poses a humanoid rig is not shaped for - the EF fly
+     * animation, a raised head:
+     *
+     * <ul>
+     *   <li>the limb geometry is far coarser than the model it came from - this mod's test model
+     *       carries 456 vertices per leg against 6532 for its hair - so a bend has almost no
+     *       geometry to distribute itself over;</li>
+     *   <li>every vertex took its bone's joint at full weight, so the surface at a joint is a
+     *       hard step between two rigid pieces rather than a continuous bend.</li>
+     * </ul>
+     *
+     * <p>Resampling gives the second problem something to work with: a grid point can sit near
+     * a joint and be shared between the two joints either side of it. Interpolation uses the
+     * quad's own corners so the original four are reproduced exactly - the interior points are
+     * the only ones added, which is what keeps the model's shape and UVs unchanged.
+     */
+    private static void emitQuadRefined(YSMGeoModel.Quad quad, Matrix4f boneTransform,
+                                        float scaleW, float scaleH, int jointId,
+                                        List<YSMGeoModel.Bone> children, YSMGeoModel.Bone bone,
+                                        Map<VertexKey, Integer> dedup, List<Integer> partList,
+                                        List<Float> positions, List<Float> normals, List<Float> uvs,
+                                        List<Integer> vcounts, List<Integer> vindices, List<Float> weights) {
+        // How many cells this quad is worth, from its own size in blocks.
+        float longest = 0.0F;
+        for (int i = 0; i < 4; i++) {
+            Vector3f a = new Vector3f(quad.positions[i]).mulPosition(boneTransform);
+            Vector3f b = new Vector3f(quad.positions[(i + 1) % 4]).mulPosition(boneTransform);
+            longest = Math.max(longest, a.distance(b));
+        }
+        int cells = Math.min(MAX_CELLS_PER_EDGE, Math.max(1, Math.round(longest / TARGET_EDGE_BLOCKS)));
+
+        Vector3f pos = new Vector3f();
+        Vector3f normal = new Vector3f();
+        int[] cornerIndices = new int[cells * cells * 4];
+        for (int cy = 0; cy < cells; cy++) {
+            for (int cx = 0; cx < cells; cx++) {
+                int c = (cy * cells + cx) * 4;
+                cornerIndices[c] = emitVertex(quad, boneTransform, scaleW, scaleH, jointId, children, bone,
+                        cx / (float) cells, cy / (float) cells, dedup, positions, normals, uvs,
+                        vcounts, vindices, weights, pos, normal);
+                cornerIndices[c + 1] = emitVertex(quad, boneTransform, scaleW, scaleH, jointId, children, bone,
+                        (cx + 1) / (float) cells, cy / (float) cells, dedup, positions, normals, uvs,
+                        vcounts, vindices, weights, pos, normal);
+                cornerIndices[c + 2] = emitVertex(quad, boneTransform, scaleW, scaleH, jointId, children, bone,
+                        (cx + 1) / (float) cells, (cy + 1) / (float) cells, dedup, positions, normals, uvs,
+                        vcounts, vindices, weights, pos, normal);
+                cornerIndices[c + 3] = emitVertex(quad, boneTransform, scaleW, scaleH, jointId, children, bone,
+                        cx / (float) cells, (cy + 1) / (float) cells, dedup, positions, normals, uvs,
+                        vcounts, vindices, weights, pos, normal);
+            }
+        }
+
+        // Epic Fight parts store pre-triangulated corner triplets (see biped.json: six corners
+        // per quad); every three consecutive VertexBuilders become one triangle at draw time.
+        // Fan each cell as (0,1,2) + (2,3,0), preserving the quad's winding.
+        for (int cell = 0; cell < cells * cells; cell++) {
+            int c = cell * 4;
+            int[] fan = {cornerIndices[c], cornerIndices[c + 1], cornerIndices[c + 2],
+                    cornerIndices[c + 2], cornerIndices[c + 3], cornerIndices[c]};
+            for (int index : fan) {
+                partList.add(index);
+                partList.add(index);
+                partList.add(index);
+            }
+        }
+    }
+
+    /** Emit one grid point of a quad and return its vertex index. */
+    private static int emitVertex(YSMGeoModel.Quad quad, Matrix4f boneTransform,
+                                  float scaleW, float scaleH, int jointId, List<YSMGeoModel.Bone> children,
+                                  YSMGeoModel.Bone bone, float fu, float fv,
+                                  Map<VertexKey, Integer> dedup, List<Float> positions, List<Float> normals,
+                                  List<Float> uvs, List<Integer> vcounts, List<Integer> vindices,
+                                  List<Float> weights, Vector3f pos, Vector3f normal) {
+        bilinear(quad.positions, fu, fv, pos);
+        pos.mulPosition(boneTransform);
+        bilinearDirection(quad.normal, normal);
+        normal.mulDirection(boneTransform);
+
+        float px = pos.x() * scaleW;
+        float py = pos.y() * scaleH;
+        float pz = pos.z() * scaleW;
+
+        // Non-uniform player scales squash the vertices anisotropically; the normals must
+        // follow the inverse-transpose (1/s per axis), or Epic Fight's lighting (compute and
+        // GPU paths) shades the model wrong.
+        if (Math.abs(scaleW - scaleH) > 1e-6f && scaleW > 1e-6f && scaleH > 1e-6f) {
+            normal.x /= scaleW;
+            normal.y /= scaleH;
+            normal.z /= scaleW;
+            normal.normalize();
+        }
+
+        float u = bilinearValue(quad.uvs, 0, fu, fv);
+        float v = bilinearValue(quad.uvs, 1, fu, fv);
+
+        // Up to two influences: this bone's joint, and the nearest child's within reach.
+        int jointA = jointId;
+        int weightSlotA = weights.size();
+        weights.add(1.0F);
+        int jointB = jointA;
+        int count = 1;
+        float blend = 0.0F;
+        for (YSMGeoModel.Bone child : children) {
+            float radius = Math.max(blendRadius(child), 1.0E-4F);
+            float distance = (float) Math.sqrt(
+                    sq(px - child.pivotX) + sq(py - child.pivotY) + sq(pz - child.pivotZ));
+            float w = 1.0F - smoothstep(radius * 1.5F, radius * 3.0F, distance);
+            if (w > blend) {
+                blend = w;
+                jointB = YSMJointMapper.resolveJointId(child);
+            }
+        }
+        if (blend > 0.0F && jointB != jointA) {
+            weights.set(weightSlotA, 1.0F - blend);
+            weights.add(blend);
+            count = 2;
+        }
+
+        VertexKey key = new VertexKey(
+                Math.round(px * 1000f), Math.round(py * 1000f), Math.round(pz * 1000f),
+                Math.round(normal.x() * 100f), Math.round(normal.y() * 100f), Math.round(normal.z() * 100f),
+                Math.round(u * 4096f), Math.round(v * 4096f), jointA,
+                count > 1 ? jointB : -1, Math.round(blend * 255f));
+        Integer index = dedup.get(key);
+        if (index != null) {
+            // A vertex shared with an earlier quad keeps that quad's weight slots; the ones
+            // just appended for this attempt are the duplicates.
+            if (count > 1) {
+                weights.remove(weights.size() - 1);
+            }
+            return index;
+        }
+
+        index = positions.size() / 3;
+        // Epic Fight's mesh JSON is authored in Blender space and the loader applies
+        // (x, y, z)_mc -> (x, -z, y); convert accordingly.
+        positions.add(px);
+        positions.add(-pz);
+        positions.add(py);
+        normals.add(normal.x());
+        normals.add(-normal.z());
+        normals.add(normal.y());
+        uvs.add(u);
+        uvs.add(v);
+        vcounts.add(1);
+        vindices.add(jointA);
+        vindices.add(jointB);
+        dedup.put(key, index);
+        return index;
+    }
+
+    /** The children of a bone whose pivot is far enough from the bone's to be a joint. */
+    private static List<YSMGeoModel.Bone> blendTargets(YSMGeoModel.Bone bone) {
+        List<YSMGeoModel.Bone> targets = new ArrayList<>();
+        for (YSMGeoModel.Bone child : bone.children) {
+            if (blendRadius(child) > MIN_JOINT_OFFSET) {
+                targets.add(child);
+            }
+        }
+        return targets;
+    }
+
+    /**
+     * How far from a child's pivot the blend reaches, in blocks: the child bone's own size, so
+     * a long limb blends over a long distance and a fingertip over a short one.
+     *
+     * <p>Zero for a child that sits on its parent, which is a bone split for authoring rather
+     * than a joint - blending across it would soften geometry that is not bending.
+     */
+    private static float blendRadius(YSMGeoModel.Bone child) {
+        float extent = 0.0F;
+        for (YSMGeoModel.Quad quad : child.quads) {
+            for (Vector3f corner : quad.positions) {
+                extent = Math.max(extent, (float) Math.sqrt(
+                        sq(corner.x() - child.pivotX) + sq(corner.y() - child.pivotY)
+                                + sq(corner.z() - child.pivotZ)));
+            }
+        }
+        if (extent <= 1.0E-5F) {
+            // A bone that draws nothing of its own still marks a joint: reach the whole way to
+            // its children, whose geometry is what actually bends.
+            for (YSMGeoModel.Bone grandchild : child.children) {
+                extent = Math.max(extent, (float) Math.sqrt(
+                        sq(grandchild.pivotX - child.pivotX) + sq(grandchild.pivotY - child.pivotY)
+                                + sq(grandchild.pivotZ - child.pivotZ)));
+            }
+        }
+        return extent;
+    }
+
+    private static void bilinear(Vector3f[] corners, float u, float v, Vector3f out) {
+        out.set(0.0F, 0.0F, 0.0F);
+        out.x = bilinearValue(corners, 0, u, v);
+        out.y = bilinearValue(corners, 1, u, v);
+        out.z = bilinearValue(corners, 2, u, v);
+    }
+
+    /** Interpolate one axis of four corners in quad order (0,1,2,3 = TL,TR,BR,BL). */
+    private static float bilinearValue(Vector3f[] corners, int axis, float u, float v) {
+        float top = corners[0].get(axis) + (corners[1].get(axis) - corners[0].get(axis)) * u;
+        float bottom = corners[3].get(axis) + (corners[2].get(axis) - corners[3].get(axis)) * u;
+        return top + (bottom - top) * v;
+    }
+
+    private static float bilinearValue(float[][] uvs, int axis, float u, float v) {
+        float top = uvs[0][axis] + (uvs[1][axis] - uvs[0][axis]) * u;
+        float bottom = uvs[3][axis] + (uvs[2][axis] - uvs[3][axis]) * u;
+        return top + (bottom - top) * v;
+    }
+
+    private static void bilinearDirection(Vector3f normal, Vector3f out) {
+        // A quad carries one normal rather than four, so every grid point of it shares it;
+        // only the transform below changes it.
+        out.set(normal);
+    }
+
+    private static float smoothstep(float edge0, float edge1, float x) {
+        if (edge1 <= edge0) {
+            return x <= edge0 ? 1.0F : 0.0F;
+        }
+        float t = Math.max(0.0F, Math.min(1.0F, (x - edge0) / (edge1 - edge0)));
+        return t * t * (3.0F - 2.0F * t);
+    }
+
+    private static float sq(float value) {
+        return value * value;
     }
 
     /** The Epic Fight part name carrying the geometry of the given YSM bone. */
     public static String partNameOf(YSMGeoModel.Bone bone) {
         return BONE_PART_PREFIX + bone.name;
+    }
+
+    /** The flat per-influence weight table that {@code affectingWeightIndices} indexes into. */
+    private static JsonObject weightArray(List<Float> weights) {
+        JsonObject obj = new JsonObject();
+        obj.addProperty("stride", 1);
+        obj.addProperty("count", weights.size());
+        JsonArray array = new JsonArray();
+        for (Float weight : weights) {
+            array.add(weight);
+        }
+        obj.add("array", array);
+        return obj;
     }
 
     private static JsonObject partArray(List<Integer> indices) {

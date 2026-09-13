@@ -25,8 +25,14 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class ManifestStore {
 
-    /** Bump when the generated mesh/runtime/descriptor formats change; entries from older generations are ignored. */
-    public static final int GENERATOR_VERSION = 11;
+    /**
+     * Bump when the generated mesh/runtime/descriptor formats change; entries from older
+     * generations are ignored and the models are converted again on next start.
+     *
+     * <p>12: quads are resampled onto a grid and vertices near a joint are blended between the
+     * two joints either side of it, instead of every vertex being bound rigidly to one.
+     */
+    public static final int GENERATOR_VERSION = 12;
 
     private static final Path MANIFEST =
             Paths.get("config", "ysm_epicfight_compat").resolve("manifest.json");
