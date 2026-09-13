@@ -2,6 +2,7 @@ package com.ysmef.compat.model.runtime;
 
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
+import yesman.epicfight.api.utils.math.OpenMatrix4f;
 
 /**
  * A position-based cloth solver for the pieces of a converted model that hang and swing.
@@ -9,28 +10,34 @@ import org.joml.Vector3f;
  * <h2>Why cloth rather than a spring per bone</h2>
  *
  * <p>The first implementation put a damped spring on one rigid bone per hanging piece and
- * rotated that bone. That can only ever rotate the piece as a whole: every vertex of a
- * hair strand turns by the same angle, so the strand reads as a stiff card being flung
- * rather than as hair. It also had nothing to work with on most models - the bones named
- * for hair are the leaf strands, which have no bones under them, so a lever derived from
- * the bone hierarchy is zero and the piece cannot move at all.
+ * rotated that bone. That can only ever rotate the piece as a whole: every vertex of a strand
+ * turns by the same angle, so the strand reads as a stiff card being flung rather than as hair.
  *
- * <p>Cloth fixes both by construction. Every vertex gets its own particle, only the top
- * row is pinned, and links between neighbouring particles carry the motion down the piece
- * with delay and overshoot. Nothing here needs a lever, and a strand bends along its
- * length instead of turning as one.
+ * <p>Cloth fixes that by construction. Every vertex gets a particle, only the attachment is
+ * pinned, and links between neighbours carry the motion down the piece with delay and
+ * overshoot. A strand bends along its length instead of turning as one.
  *
  * <h2>The method</h2>
  *
- * <p>Position-based dynamics: integrate each free particle with Verlet, project the
- * distance constraints a fixed number of times, then resolve collisions. Constraints are
- * solved by projection rather than by force, which is what makes it stable at the frame
- * rates a phone actually produces - a force-based solver stiff enough to hold hair shape
- * has to be substepped to stay put, while this one cannot explode, because every
- * projection moves particles back onto a legal configuration.
+ * <p>Position-based dynamics: integrate each free particle with Verlet, project the distance
+ * constraints a fixed number of times, then resolve collisions. Constraints are solved by
+ * projection rather than by force, which is what makes it stable at the frame rates a phone
+ * actually produces - and why there is no speed limit anywhere in here: a projection puts
+ * particles on a legal configuration whatever speed they arrived at, so a clamp can only hold
+ * the cloth back. One was tried at a quarter of a block per step, against a model whose bones
+ * move three times that, and the cloth spent the session unable to catch up.
  *
- * <p>Free of Minecraft types: the caller supplies positions and receives positions, so the
- * solve can be tested without a game.
+ * <h2>Where a piece hangs from</h2>
+ *
+ * <p>A pinned particle is placed where the skinning path places the vertex it belongs to:
+ * {@code pose(joint) x toOrigin(joint) x bindVertex}. Both matrices are passed in for that one
+ * joint, because together they <i>are</i> the transform. Deriving the same position from the
+ * bone's motion instead means crossing between the mesh's bind frame and the pose's own, and a
+ * converted model's two frames do not have to agree - this one's {@code UpBody} binds at
+ * (0, 0, 0) and poses at y = 1.09, which is what broke three attempts at reconstructing it.
+ *
+ * <p>Free of Minecraft types: the caller supplies matrices and positions, so the solve can be
+ * tested without a game.
  */
 public final class YsmClothSolver {
 
@@ -47,23 +54,13 @@ public final class YsmClothSolver {
 
     /** A step longer than this is clamped, so a lag spike cannot fling the cloth. */
     private static final float MAX_DT = 0.05F;
-    /**
-     * How far a body bone may move in one frame before the change is treated as not motion.
-     *
-     * <p>Well above anything a real animation produces between two frames - a sprinting
-     * entity moves a few centimetres - and well below the scale of a frame mismatch, which is
-     * the failure this guards against. See advancePins.
-     */
-    private static final float MAX_BONE_STEP = 1.0F;
-
     /** Speed below which a particle counts as stopped, blocks/s. */
     private static final float SLEEP_SPEED = 0.002F;
-    /** Structural links are held at full strength; bending links only shape the fold. */
+    /** Structural links hold the cloth's shape; bending links only resist folding. */
     private static final float BEND_STIFFNESS = 0.25F;
 
     /**
-     * A piece of cloth: its particles, the links between them, and the body it must stay
-     * out of.
+     * A piece of cloth: its particles, the links between them, and the body it must stay out of.
      *
      * <p>Allocated once per piece per model. Everything the solver touches lives in these
      * arrays, so a step allocates nothing.
@@ -77,41 +74,18 @@ public final class YsmClothSolver {
         final float[] px;
         final float[] py;
         final float[] pz;
-        /** Where each particle sat in bind pose, kept for the displacement measurement. */
+        /** Where each particle sat in bind pose, which is also where the solve starts. */
         final float[] bindX;
         final float[] bindY;
         final float[] bindZ;
-        /** Pinned particles follow the skeleton and are not simulated. */
+        /** Pinned particles are placed from the joint matrices instead of being simulated. */
         final boolean[] pinned;
-        /** Where each pinned particle sits at bind, and where the skeleton has carried it. */
-        final float[] pinBindX;
-        final float[] pinBindY;
-        final float[] pinBindZ;
-        final float[] pinX;
-        final float[] pinY;
-        final float[] pinZ;
-        /** Each pinned particle's bind offset from the bone it follows, in model space. */
-        final float[] pinOffsetX;
-        final float[] pinOffsetY;
-        final float[] pinOffsetZ;
-        /** The body bone each pinned particle follows, or -1. */
-        final int[] pinBone;
-        /** The body bone each particle must stay outside, or -1. */
-        final int[] avoidBone;
-        /** How far outside that bone's axis the particle must stay, blocks. */
+        /** The joint each pinned particle follows, or -1. */
+        final int[] pinJoint;
+        /** The body joint each particle must stay outside, or -1. */
+        final int[] avoidJoint;
+        /** How far outside that joint the particle must stay, blocks. */
         final float[] avoidRadius;
-        /** Where each body bone sat on the previous step, to measure its motion. */
-        final float[] lastOriginX;
-        final float[] lastOriginY;
-        final float[] lastOriginZ;
-        final boolean[] lastOriginValid;
-        /** The point a bone's rotation change turns its pinned particles about. */
-        final float[] anchorX;
-        final float[] anchorY;
-        final float[] anchorZ;
-        /** The bone's rotation on the previous step, for measuring how it turned. */
-        final Quaternionf[] lastRotation;
-        final boolean[] lastRotationValid;
         /** Distance links, as particle index pairs. */
         final int[] linkA;
         final int[] linkB;
@@ -120,30 +94,18 @@ public final class YsmClothSolver {
         /** How strongly each link is held: 1 structural, less for bending links. */
         final float[] linkStiffness;
         /**
-         * The mesh vertex each particle belongs to, for writing the result back.
+         * The mesh vertex each particle belongs to.
          *
-         * <p>A vertex is shared between the triangles around it, so a particle and a vertex
-         * are not one to one and the mapping has to be carried rather than assumed.
+         * <p>A vertex is shared between the triangles around it, so particles and vertices are
+         * not one to one and the mapping has to be carried rather than assumed.
          */
         final int[] vertexOfParticle;
         /** How many particles are pinned, reported once so a silent failure is visible. */
         int pinnedCount;
-        /** How many bone steps were too large to be motion, for the one-line report. */
-        long rejectedSteps;
-        /** The largest bone step accepted as motion, blocks. */
-        float largestBoneStep;
-        /**
-         * How far the pinned bones have moved from where the piece was built.
-         *
-         * <p>Accumulated here rather than derived from the current position, because the pins
-         * are placed at a fixed anchor plus this: a running total cannot drift out of step
-         * with the reference position the way two independently updated quantities can.
-         */
-        float totalDx;
-        float totalDy;
-        float totalDz;
+        /** How far the free particles have stretched from their attachment, blocks. */
+        float largestStretch;
 
-        Cloth(int particleCount, int linkCount, int boneSlots) {
+        Cloth(int particleCount, int linkCount) {
             this.x = new float[particleCount];
             this.y = new float[particleCount];
             this.z = new float[particleCount];
@@ -154,42 +116,26 @@ public final class YsmClothSolver {
             this.bindY = new float[particleCount];
             this.bindZ = new float[particleCount];
             this.pinned = new boolean[particleCount];
-            this.pinBindX = new float[particleCount];
-            this.pinBindY = new float[particleCount];
-            this.pinBindZ = new float[particleCount];
-            this.pinX = new float[particleCount];
-            this.pinY = new float[particleCount];
-            this.pinZ = new float[particleCount];
-            this.pinOffsetX = new float[particleCount];
-            this.pinOffsetY = new float[particleCount];
-            this.pinOffsetZ = new float[particleCount];
-            this.pinBone = new int[particleCount];
-            this.avoidBone = new int[particleCount];
+            this.pinJoint = new int[particleCount];
+            this.avoidJoint = new int[particleCount];
             this.avoidRadius = new float[particleCount];
             this.vertexOfParticle = new int[particleCount];
-            this.lastOriginX = new float[Math.max(1, boneSlots)];
-            this.lastOriginY = new float[Math.max(1, boneSlots)];
-            this.lastOriginZ = new float[Math.max(1, boneSlots)];
-            this.lastOriginValid = new boolean[Math.max(1, boneSlots)];
-            this.anchorX = new float[Math.max(1, boneSlots)];
-            this.anchorY = new float[Math.max(1, boneSlots)];
-            this.anchorZ = new float[Math.max(1, boneSlots)];
-            this.lastRotation = new Quaternionf[Math.max(1, boneSlots)];
-            this.lastRotationValid = new boolean[Math.max(1, boneSlots)];
-            for (int b = 0; b < this.lastRotation.length; b++) {
-                this.lastRotation[b] = new Quaternionf();
-            }
             this.linkA = new int[linkCount];
             this.linkB = new int[linkCount];
             this.linkRest = new float[linkCount];
             this.linkStiffness = new float[linkCount];
-            java.util.Arrays.fill(this.pinBone, -1);
-            java.util.Arrays.fill(this.avoidBone, -1);
+            java.util.Arrays.fill(this.pinJoint, -1);
+            java.util.Arrays.fill(this.avoidJoint, -1);
         }
 
         /** Number of particles, for the caller that writes the result back. */
         public int particleCount() {
             return x.length;
+        }
+
+        /** The mesh vertex a particle belongs to. */
+        public int vertexOf(int particle) {
+            return vertexOfParticle[particle];
         }
 
         /** A particle's current position, model space. */
@@ -198,67 +144,14 @@ public final class YsmClothSolver {
         }
 
         /**
-         * How much the piece's free particles have stretched away from where they hang.
+         * Where the piece hangs from now, model space: the centroid of its pinned particles.
          *
-         * <p>Measured as the change in distance from each free particle to the piece's pinned
-         * centroid, against the same distance at bind. That form is deliberate: it is
-         * independent of any frame, so it cannot be fooled by the pins and the particles
-         * being expressed differently - which is exactly what a plain displacement from the
-         * bind position could not tell apart, and what made one of this feature's faults look
-         * like "the cloth moved nine blocks" while standing still.
-         *
-         * <p>Near zero means the cloth is tracking its attachment, which is correct; a value
-         * that grows with time means the solve is being pulled apart.
+         * <p>What a swing has to be measured against. Measuring from where the piece was
+         * <i>bound</i> instead reports the body's own travel as if it were the cloth's motion -
+         * a player walking across the room reads as a piece displaced seven blocks, which says
+         * nothing about whether the cloth is behaving.
          */
-        public float largestStretch() {
-            float pinX = 0.0F, pinY = 0.0F, pinZ = 0.0F;
-            float bindPinX = 0.0F, bindPinY = 0.0F, bindPinZ = 0.0F;
-            int pins = 0;
-            for (int i = 0; i < pinned.length; i++) {
-                if (pinned[i]) {
-                    pinX += x[i];
-                    pinY += y[i];
-                    pinZ += z[i];
-                    bindPinX += bindX[i];
-                    bindPinY += bindY[i];
-                    bindPinZ += bindZ[i];
-                    pins++;
-                }
-            }
-            if (pins == 0) {
-                return 0.0F;
-            }
-            pinX /= pins;
-            pinY /= pins;
-            pinZ /= pins;
-            bindPinX /= pins;
-            bindPinY /= pins;
-            bindPinZ /= pins;
-
-            float largest = 0.0F;
-            for (int i = 0; i < x.length; i++) {
-                if (pinned[i]) {
-                    continue;
-                }
-                float now = distance(x[i] - pinX, y[i] - pinY, z[i] - pinZ);
-                float atBind = distance(bindX[i] - bindPinX, bindY[i] - bindPinY, bindZ[i] - bindPinZ);
-                largest = Math.max(largest, Math.abs(now - atBind));
-            }
-            return largest;
-        }
-
-        private static float distance(float dx, float dy, float dz) {
-            return (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
-        }
-
-        /** Where the piece hangs from now, model space: the centroid of its pinned
-         * particles.
-         *
-         * <p>The caller measures a part's swing against this rather than against the bind
-         * pivot, because only this moves with the body. Zeros when nothing is pinned, which
-         * cannot happen for a piece that was built.
-         */
-        public void pinnedPosition(Vector3f out) {
+        public void attachment(Vector3f out) {
             out.set(0.0F, 0.0F, 0.0F);
             int found = 0;
             for (int i = 0; i < pinned.length; i++) {
@@ -281,11 +174,16 @@ public final class YsmClothSolver {
         public int pinnedCount() {
             return pinnedCount;
         }
+
+        /** How far the free particles have stretched away from their attachment, blocks. */
+        public float largestStretch() {
+            return largestStretch;
+        }
     }
 
     /** Builds a cloth with the given sizes, for the caller that knows the geometry. */
-    public static Cloth allocate(int particleCount, int linkCount, int boneSlots) {
-        return new Cloth(particleCount, linkCount, boneSlots);
+    public static Cloth allocate(int particleCount, int linkCount) {
+        return new Cloth(particleCount, linkCount);
     }
 
     /** One solver; state lives entirely in the {@link Cloth}es it is given. */
@@ -294,200 +192,8 @@ public final class YsmClothSolver {
     private YsmClothSolver() {}
 
     // Scratch, so a step allocates nothing.
-    private final Vector3f axisScratch = new Vector3f();
-    private static final Quaternionf scratchChange = new Quaternionf();
-    private static final Vector3f scratchOffset = new Vector3f();
-
-    /**
-     * Mark a particle as hanging from a bone.
-     *
-     * <p>The particle is held at its bind position and moved by however much the bone moves
-     * from there - not placed at an offset from the bone's origin. The difference matters
-     * because the bind side of a converted model cannot be trusted to agree with its pose
-     * side: this mod's own test model binds every bone at (0, 0, 0) while posing them at
-     * their real heights, so an offset read from the bind side puts the pin most of a block
-     * away from the geometry it is supposed to hold, and the links then drag the piece
-     * across the model. Holding the particle where it is and adding the bone's own motion
-     * needs no bind matrix at all.
-     *
-     * @param bone the body bone this particle follows
-     */
-    public static void pin(Cloth cloth, int particle, int bone) {
-        if (particle < 0 || particle >= cloth.pinned.length) {
-            return;
-        }
-        if (!cloth.pinned[particle]) {
-            cloth.pinnedCount++;
-        }
-        cloth.pinned[particle] = true;
-        cloth.pinBone[particle] = bone;
-        cloth.pinBindX[particle] = cloth.x[particle];
-        cloth.pinBindY[particle] = cloth.y[particle];
-        cloth.pinBindZ[particle] = cloth.z[particle];
-        cloth.pinX[particle] = cloth.x[particle];
-        cloth.pinY[particle] = cloth.y[particle];
-        cloth.pinZ[particle] = cloth.z[particle];
-    }
-
-    /**
-     * Record where a bone the pinned particles follow was on the previous step.
-     *
-     * <p>Only the bone's change from one step to the next is used, never the difference from
-     * its bind position. The two frames of a converted model do not agree - this mod's test
-     * model binds every bone at (0, 0, 0) while posing them at their real heights - so a
-     * particle placed from a bind origin inherits that disagreement as a jump of a whole
-     * block on the first frame.
-     */
-    static void recordPreviousOrigin(Cloth cloth, int bone, float x, float y, float z) {
-        if (cloth == null || bone < 0 || bone >= cloth.lastOriginX.length) {
-            return;
-        }
-        cloth.lastOriginX[bone] = x;
-        cloth.lastOriginY[bone] = y;
-        cloth.lastOriginZ[bone] = z;
-        cloth.lastOriginValid[bone] = true;
-    }
-
-    /** Whether a bone's previous position is known, so its motion can be measured. */
-    static boolean hasPreviousOrigin(Cloth cloth, int bone) {
-        return cloth != null && bone >= 0 && bone < cloth.lastOriginValid.length
-                && cloth.lastOriginValid[bone];
-    }
-
-    /**
-     * Take the bone's current position as the reference its next motion is measured from,
-     * without moving anything.
-     *
-     * <p>Called once when the piece is built. Without it the solver's first step would
-     * measure the bone's motion against the zero it was initialised with, and read the
-     * bone's entire height as a step - which is a jump of 1.09 blocks on this mod's test
-     * model, dragging the pinned particles clear off their geometry before the cloth has
-     * moved at all.
-     */
-    public static void seedPreviousOrigin(Cloth cloth, int bone, Vector3f origin) {
-        if (origin == null || cloth == null || bone < 0 || bone >= cloth.lastOriginX.length) {
-            return;
-        }
-        recordPreviousOrigin(cloth, bone, origin.x, origin.y, origin.z);
-    }
-
-    /**
-     * Carry the pinned particles of one bone to where that bone has just moved.
-     *
-     * <p>Three things move a hanging piece, and all three are needed: the bone's translation,
-     * its rotation, and - for the first frame - the particle itself being at the right place
-     * to begin with. The translation and rotation are both taken as changes between
-     * consecutive steps, which is what lets this work on a model whose bind and pose frames
-     * disagree; the particle's own starting point is its bind vertex, so the attachment never
-     * leaves the geometry it belongs to.
-     *
-     * @param rotation the bone's rotation in the current pose
-     */
-    static void advancePins(Cloth cloth, int bone, float x, float y, float z, Quaternionf rotation) {
-        if (cloth == null || bone < 0 || bone >= cloth.lastOriginX.length) {
-            return;
-        }
-        float dx = x - cloth.lastOriginX[bone];
-        float dy = y - cloth.lastOriginY[bone];
-        float dz = z - cloth.lastOriginZ[bone];
-
-        // A body bone cannot move further than this in one frame. A larger change is not
-        // motion: it is the pose being read differently - a model swap, a respawn, the first
-        // frame after the entity was replaced - and treating it as motion drags the whole
-        // piece across the model at the velocity ceiling, every frame, for as long as the
-        // difference persists.
-        float step = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
-        if (step > MAX_BONE_STEP) {
-            cloth.rejectedSteps++;
-            recordPreviousOrigin(cloth, bone, x, y, z);
-            return;
-        }
-        if (step > cloth.largestBoneStep) {
-            cloth.largestBoneStep = step;
-        }
-        // The bone's accumulated displacement from where the piece was built, advanced before
-        // the pins are placed from it.
-        cloth.totalDx += dx;
-        cloth.totalDy += dy;
-        cloth.totalDz += dz;
-
-        // The change in the bone's rotation, applied about the pin's anchor so the piece
-        // swings with the bone rather than only following its origin.
-        Quaternionf change = null;
-        if (rotation != null && cloth.lastRotationValid[bone]) {
-            change = scratchChange.set(cloth.lastRotation[bone]).conjugate().mul(rotation);
-        }
-        for (int i = 0; i < cloth.pinned.length; i++) {
-            if (!cloth.pinned[i] || cloth.pinBone[i] != bone) {
-                continue;
-            }
-            float ox = cloth.pinBindX[i] - cloth.anchorX[bone];
-            float oy = cloth.pinBindY[i] - cloth.anchorY[bone];
-            float oz = cloth.pinBindZ[i] - cloth.anchorZ[bone];
-            if (change != null) {
-                scratchOffset.set(ox, oy, oz);
-                change.transform(scratchOffset);
-                ox = scratchOffset.x;
-                oy = scratchOffset.y;
-                oz = scratchOffset.z;
-            }
-            // Where the bone has carried this particle: its bind point moved by how far the
-            // bone has moved <i>from where it was bound</i>. The anchor does not advance with
-            // the bone - a moving anchor is what made the bone's step get applied twice per
-            // frame, which is a piece that creeps at the velocity ceiling forever.
-            cloth.px[i] = cloth.x[i];
-            cloth.py[i] = cloth.y[i];
-            cloth.pz[i] = cloth.z[i];
-            cloth.x[i] = cloth.anchorX[bone] + ox + cloth.totalDx;
-            cloth.y[i] = cloth.anchorY[bone] + oy + cloth.totalDy;
-            cloth.z[i] = cloth.anchorZ[bone] + oz + cloth.totalDz;
-        }
-
-        recordPreviousOrigin(cloth, bone, x, y, z);
-        if (rotation != null) {
-            cloth.lastRotation[bone].set(rotation);
-            cloth.lastRotationValid[bone] = true;
-        }
-    }
-
-    /**
-     * Anchor the pinned particles of a bone at their bind attachment, about which the bone's
-     * rotation change is applied.
-     *
-     * <p>Called once while building, with the bone's pose for the frame the model was first
-     * seen: from then on the piece follows that bone exactly.
-     */
-    public static void anchorPins(Cloth cloth, int bone, float x, float y, float z, Quaternionf rotation) {
-        if (cloth == null || bone < 0 || bone >= cloth.anchorX.length) {
-            return;
-        }
-        cloth.anchorX[bone] = x;
-        cloth.anchorY[bone] = y;
-        cloth.anchorZ[bone] = z;
-        if (rotation != null) {
-            cloth.lastRotation[bone].set(rotation);
-            cloth.lastRotationValid[bone] = true;
-        }
-    }
-
-    /**
-     * The rotation part of a bind matrix, as a quaternion.
-     *
-     * <p>A matrix that is not a rotation - a degenerate bind pose, a zero scale - yields
-     * identity rather than a NaN that would propagate into every pinned particle.
-     */
-    public static void rotationOf(org.joml.Matrix4f matrix, Quaternionf out) {
-        if (matrix == null) {
-            out.identity();
-            return;
-        }
-        out.setFromUnnormalized(matrix);
-        if (!Float.isFinite(out.w()) || out.lengthSquared() < 1.0E-6F) {
-            out.identity();
-        } else {
-            out.normalize();
-        }
-    }
+    private final Vector3f jointSpace = new Vector3f();
+    private final yesman.epicfight.api.utils.math.Vec4f posed4 = new yesman.epicfight.api.utils.math.Vec4f();
 
     /** Set a particle's bind position, which is also where it starts. */
     public static void initParticle(Cloth cloth, int particle, float bx, float by, float bz) {
@@ -502,7 +208,7 @@ public final class YsmClothSolver {
         cloth.bindZ[particle] = bz;
     }
 
-    /** Add a distance link between two particles. */
+    /** Add a distance link between two particles, held at the length the bind pose gives it. */
     public static void addLink(Cloth cloth, int link, int a, int b, float stiffness) {
         if (link < 0 || link >= cloth.linkA.length || a < 0 || b < 0
                 || a >= cloth.x.length || b >= cloth.x.length) {
@@ -527,17 +233,35 @@ public final class YsmClothSolver {
     }
 
     /**
-     * @param cloth      the piece to advance
-     * @param jointPos   for each body bone, its origin in the current pose
-     * @param poseOfBone for each body bone, its rotation in the current pose, or null
-     * @param boneCount  how many entries of those arrays are filled
-     * @param dt         seconds since the last step (clamped internally)
-     * @param tuning     the solve's shape, or null for the tuned defaults
-     * @param maxVelocityPerStep per-particle displacement ceiling, blocks
+     * Mark a particle as hanging from a joint.
+     *
+     * <p>The particle is not held at a position derived from the bone: it is placed from that
+     * joint's own matrices on every step - see {@link #step}.
      */
-    public void step(Cloth cloth, Vector3f[] jointPos, Quaternionf[] poseOfBone, int boneCount,
+    public static void pin(Cloth cloth, int particle, int joint) {
+        if (particle < 0 || particle >= cloth.pinned.length) {
+            return;
+        }
+        if (!cloth.pinned[particle]) {
+            cloth.pinnedCount++;
+        }
+        cloth.pinned[particle] = true;
+        cloth.pinJoint[particle] = joint;
+    }
+
+    /**
+     * Advance one piece by one step.
+     *
+     * @param cloth     the piece to advance
+     * @param poses     the live pose matrix of each joint
+     * @param toOrigin  the inverse bind matrix of each joint
+     * @param boneCount how many entries of those arrays are filled
+     * @param dt        seconds since the last step (clamped internally)
+     * @param tuning    the solve's shape, or null for the tuned defaults
+     */
+    public void step(Cloth cloth, OpenMatrix4f[] poses, OpenMatrix4f[] toOrigin, int boneCount,
                      float dt, YsmClothTuning tuning) {
-        if (cloth == null || jointPos == null
+        if (cloth == null || poses == null || toOrigin == null
                 || boneCount <= 0 || !(dt > 0.0F) || !Float.isFinite(dt)) {
             return;
         }
@@ -548,21 +272,34 @@ public final class YsmClothSolver {
         float h = Math.min(dt, MAX_DT);
         float hh = h * h;
 
-        // Pinned particles are not simulated: they are moved by however far their bone has
-        // moved since the previous step, and the links carry that motion into the rest of the
-        // piece. Measuring the bone's change rather than its offset from a bind position is
-        // what keeps the pin on its own geometry - see recordPreviousOrigin.
-        for (int bone = 0; bone < boneCount; bone++) {
-            Vector3f origin = jointPos[bone];
-            if (origin == null) {
+        // Pinned particles are placed exactly where the skinning path places their vertex:
+        // pose x toOrigin x bindVertex. This is the whole attachment - no reconstruction, and
+        // therefore nothing that can disagree with the geometry it is holding.
+        for (int i = 0; i < cloth.pinned.length; i++) {
+            if (!cloth.pinned[i]) {
                 continue;
             }
-            advancePins(cloth, bone, origin.x, origin.y, origin.z,
-                    poseOfBone == null ? null : poseOfBone[bone]);
+            int joint = cloth.pinJoint[i];
+            if (joint < 0 || joint >= boneCount || joint >= poses.length || joint >= toOrigin.length
+                    || poses[joint] == null || toOrigin[joint] == null) {
+                continue;
+            }
+            jointSpace.set(cloth.bindX[i], cloth.bindY[i], cloth.bindZ[i]);
+            // pose x toOrigin is the joint's skinning matrix, so this is exactly what the
+            // renderer does to the vertex the particle stands for.
+            OpenMatrix4f skin = OpenMatrix4f.mul(poses[joint], toOrigin[joint], null);
+            posed4.set(jointSpace.x, jointSpace.y, jointSpace.z, 1.0F);
+            OpenMatrix4f.transform(skin, posed4, posed4);
+            cloth.px[i] = cloth.x[i];
+            cloth.py[i] = cloth.y[i];
+            cloth.pz[i] = cloth.z[i];
+            cloth.x[i] = posed4.x;
+            cloth.y[i] = posed4.y;
+            cloth.z[i] = posed4.z;
         }
 
-        // Verlet: the previous position is the velocity, so a particle keeps moving unless
-        // a constraint or the damping takes it away.
+        // Verlet: the previous position is the velocity, so a particle keeps moving unless a
+        // constraint or the damping takes it away.
         for (int i = 0; i < cloth.x.length; i++) {
             if (cloth.pinned[i]) {
                 continue;
@@ -578,13 +315,6 @@ public final class YsmClothSolver {
                 vy = 0.0F;
                 vz = 0.0F;
             }
-            // Deliberately no per-particle speed clamp. One was here, at a quarter of a block
-            // per step, and it is what left the cloth permanently behind: a body bone on this
-            // model moves up to 0.9 blocks in a step, which is more than twice that, so the
-            // free particles could never catch up and the piece grew a stretch that only got
-            // larger with time. The distance constraints are the real limit and they do not
-            // need help - a projection places particles on a legal configuration whatever
-            // speed they arrived at, which is the whole reason this is position-based.
             cloth.px[i] = oldX;
             cloth.py[i] = oldY;
             cloth.pz[i] = oldZ;
@@ -595,18 +325,9 @@ public final class YsmClothSolver {
 
         for (int iteration = 0; iteration < iterations; iteration++) {
             solveLinks(cloth);
-            solveCollisions(cloth, jointPos, boneCount);
+            solveCollisions(cloth, poses, boneCount);
         }
-    }
-
-    private static float clamp(float value, float limit) {
-        if (!(limit > 0.0F)) {
-            return value;
-        }
-        if (value > limit) {
-            return limit;
-        }
-        return value < -limit ? -limit : value;
+        measureStretch(cloth);
     }
 
     /**
@@ -655,27 +376,26 @@ public final class YsmClothSolver {
     }
 
     /**
-     * Push particles out of the body bones they are tied to.
+     * Push particles out of the body they are next to.
      *
-     * <p>One sphere per particle, centred on the bone it was assigned and sized by the
-     * caller from the model's own extent. This is what stops a skirt passing through a
-     * thigh - something a spring on a bone can never do, because it has no idea where the
-     * body is.
+     * <p>One sphere per particle, centred on the body joint it was assigned and sized by the
+     * caller. The centre comes from that joint's pose translation - the same matrices the pins
+     * use - so the cloth is pushed out of where the body actually is. This is what stops a
+     * skirt passing through a thigh, which a spring on a bone can never do because it has no
+     * idea where the body is.
      */
-    private void solveCollisions(Cloth cloth, Vector3f[] jointPos, int boneCount) {
+    private void solveCollisions(Cloth cloth, OpenMatrix4f[] poses, int boneCount) {
         for (int i = 0; i < cloth.x.length; i++) {
-            int bone = cloth.avoidBone[i];
+            int joint = cloth.avoidJoint[i];
             float radius = cloth.avoidRadius[i];
-            if (bone < 0 || bone >= boneCount || !(radius > 0.0F)) {
+            if (joint < 0 || joint >= boneCount || joint >= poses.length || !(radius > 0.0F)
+                    || poses[joint] == null) {
                 continue;
             }
-            Vector3f centre = jointPos[bone];
-            if (centre == null) {
-                continue;
-            }
-            float dx = cloth.x[i] - centre.x;
-            float dy = cloth.y[i] - centre.y;
-            float dz = cloth.z[i] - centre.z;
+            OpenMatrix4f pose = poses[joint];
+            float dx = cloth.x[i] - pose.m30;
+            float dy = cloth.y[i] - pose.m31;
+            float dz = cloth.z[i] - pose.m32;
             float distanceSq = dx * dx + dy * dy + dz * dz;
             if (distanceSq >= radius * radius) {
                 continue;
@@ -683,13 +403,99 @@ public final class YsmClothSolver {
             float distance = (float) Math.sqrt(distanceSq);
             if (distance < 1.0E-5F) {
                 // Dead centre: no shortest path exists. Push up rather than divide by zero.
-                cloth.y[i] = centre.y + radius;
+                cloth.y[i] = pose.m31 + radius;
                 continue;
             }
             float scale = radius / distance;
-            cloth.x[i] = centre.x + dx * scale;
-            cloth.y[i] = centre.y + dy * scale;
-            cloth.z[i] = centre.z + dz * scale;
+            cloth.x[i] = pose.m30 + dx * scale;
+            cloth.y[i] = pose.m31 + dy * scale;
+            cloth.z[i] = pose.m32 + dz * scale;
+        }
+    }
+
+    /**
+     * How far the free particles have been pulled from where they were bound, in blocks.
+     *
+     * <p>Measured against the pinned particles rather than against the bind pose, so it is
+     * independent of where the body has moved to and reports only the cloth's own deformation.
+     * Near zero means the solve is holding the piece together; a value that grows with time
+     * means something is pulling it apart.
+     */
+    private static void measureStretch(Cloth cloth) {
+        float pinX = 0.0F, pinY = 0.0F, pinZ = 0.0F;
+        float bindPinX = 0.0F, bindPinY = 0.0F, bindPinZ = 0.0F;
+        int pins = 0;
+        for (int i = 0; i < cloth.pinned.length; i++) {
+            if (cloth.pinned[i]) {
+                pinX += cloth.x[i];
+                pinY += cloth.y[i];
+                pinZ += cloth.z[i];
+                bindPinX += cloth.bindX[i];
+                bindPinY += cloth.bindY[i];
+                bindPinZ += cloth.bindZ[i];
+                pins++;
+            }
+        }
+        if (pins == 0) {
+            cloth.largestStretch = 0.0F;
+            return;
+        }
+        pinX /= pins;
+        pinY /= pins;
+        pinZ /= pins;
+        bindPinX /= pins;
+        bindPinY /= pins;
+        bindPinZ /= pins;
+        float largest = 0.0F;
+        for (int i = 0; i < cloth.x.length; i++) {
+            if (cloth.pinned[i]) {
+                continue;
+            }
+            float now = distance(cloth.x[i] - pinX, cloth.y[i] - pinY, cloth.z[i] - pinZ);
+            float atBind = distance(cloth.bindX[i] - bindPinX, cloth.bindY[i] - bindPinY,
+                    cloth.bindZ[i] - bindPinZ);
+            largest = Math.max(largest, Math.abs(now - atBind));
+        }
+        cloth.largestStretch = largest;
+    }
+
+    private static float distance(float dx, float dy, float dz) {
+        return (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+    }
+
+    /**
+     * The worst a single link has been stretched past its rest length, as a fraction.
+     *
+     * <p>The direct check on whether the constraints are doing their job, and the one that
+     * separates a solve that is falling apart from a measurement that is misreading it: if the
+     * links are holding, the piece is holding together whatever the aggregate numbers say.
+     */
+    public static float worstLinkStretch(Cloth cloth) {
+        float worst = 0.0F;
+        for (int l = 0; l < cloth.linkA.length; l++) {
+            if (cloth.linkRest[l] < 1.0E-5F) {
+                continue;
+            }
+            float dx = cloth.x[cloth.linkB[l]] - cloth.x[cloth.linkA[l]];
+            float dy = cloth.y[cloth.linkB[l]] - cloth.y[cloth.linkA[l]];
+            float dz = cloth.z[cloth.linkB[l]] - cloth.z[cloth.linkA[l]];
+            float ratio = distance(dx, dy, dz) / cloth.linkRest[l];
+            worst = Math.max(worst, Math.abs(ratio - 1.0F));
+        }
+        return worst;
+    }
+
+    /** The rotation part of a matrix, as a quaternion; identity when it is not a rotation. */
+    public static void rotationOf(org.joml.Matrix4f matrix, Quaternionf out) {
+        if (matrix == null) {
+            out.identity();
+            return;
+        }
+        out.setFromUnnormalized(matrix);
+        if (!Float.isFinite(out.w()) || out.lengthSquared() < 1.0E-6F) {
+            out.identity();
+        } else {
+            out.normalize();
         }
     }
 }

@@ -70,10 +70,10 @@ public final class YSMRuntimeBridge {
                     model.applyDefaultVisibility(mesh);
                 }
                 // Cloth for the mesh that is actually on screen: this is the only path that
-                // draws the converted mesh, so it is the only path where swinging its hair
-                // and cloth can be seen. Written after the visibility pass because it
-                // writes the same per-part transforms.
-                YsmMeshCloth.apply(mesh, model, poses);
+                // draws the converted mesh, so it is the only path where swinging its hair and
+                // cloth can be seen. Written after the visibility pass because it writes the
+                // same per-part transforms.
+                YsmMeshCloth.apply(mesh, model, armature, poses);
             } else {
                 unhideAllBoneParts(mesh);
             }

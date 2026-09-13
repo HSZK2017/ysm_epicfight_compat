@@ -1,8 +1,8 @@
 package com.ysmef.compat.model.runtime;
 
-import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
+import yesman.epicfight.api.utils.math.OpenMatrix4f;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -22,29 +22,32 @@ class YsmClothSolverTest {
     /** A step long enough to be a real frame, short enough to be a plausible one. */
     private static final float FRAME = 0.02F;
 
-    /** One bone, at the origin, unrotated unless a test moves it. */
+    /** One joint, at the origin, unrotated unless a test moves it. */
     private static final class Rig {
-        final Quaternionf[] pose = {new Quaternionf()};
-        final Vector3f[] origin = {new Vector3f()};
+        /**
+         * The joint's pose and the inverse bind matrix that goes with it.
+         *
+         * <p>The pin is placed from {@code pose x toOrigin x bindVertex}. The inverse bind is
+         * the identity here because the strand's pinned particle sits at the origin: whatever
+         * the pair does to that vertex is the joint's translation, which is what the tests
+         * assert against.
+         */
+        final OpenMatrix4f[] pose = {new OpenMatrix4f()};
+        final OpenMatrix4f[] toOrigin = {new OpenMatrix4f()};
 
         void moveTo(float x, float y, float z) {
-            origin[0].set(x, y, z);
-        }
-
-        void spin(float degrees) {
-            pose[0].identity().rotateY((float) Math.toRadians(degrees));
+            pose[0] = new OpenMatrix4f();
+            pose[0].m30 = x;
+            pose[0].m31 = y;
+            pose[0].m32 = z;
+            toOrigin[0] = new OpenMatrix4f();
         }
 
         void step(YsmClothSolver.Cloth cloth) {
-            YsmClothSolver.INSTANCE.step(cloth, origin, pose, 1, FRAME, YsmClothTuning.DEFAULTS);
+            YsmClothSolver.INSTANCE.step(cloth, pose, toOrigin, 1, FRAME, YsmClothTuning.DEFAULTS);
         }
 
-        /**
-         * Bring the rig to rest at its current position.
-         *
-         * <p>A piece is carried by how far its bone moves, so the first step at a position
-         * only records it; motion shows from the next step on.
-         */
+        /** Bring the rig to rest at its current position. */
         void settle(YsmClothSolver.Cloth cloth) {
             step(cloth);
             step(cloth);
@@ -56,11 +59,10 @@ class YsmClothSolverTest {
      * whether the solve holds together.
      */
     private static YsmClothSolver.Cloth strand() {
-        YsmClothSolver.Cloth cloth = YsmClothSolver.allocate(2, 1, 1);
+        YsmClothSolver.Cloth cloth = YsmClothSolver.allocate(2, 1);
         YsmClothSolver.initParticle(cloth, 0, 0.0F, 0.0F, 0.0F);
         YsmClothSolver.initParticle(cloth, 1, 0.0F, -0.5F, 0.0F);
         YsmClothSolver.pin(cloth, 0, 0);
-        YsmClothSolver.anchorPins(cloth, 0, 0.0F, 0.0F, 0.0F, new Quaternionf());
         YsmClothSolver.addLink(cloth, 0, 0, 1, YsmClothSolver.structuralStiffness());
         return cloth;
     }
@@ -94,32 +96,28 @@ class YsmClothSolverTest {
     }
 
     /**
-     * A bone step no body could make is not motion, and following it drags the piece across
-     * the model at the velocity ceiling for as long as the difference lasts - which is how a
-     * piece ends up stretched a dozen blocks with the body standing still.
+     * The attachment is a transform, not a motion.
+     *
+     * <p>Wherever the joint is, the pin is at {@code pose x toOrigin x bindVertex} - so even a
+     * frame that moves the body far further than a body can move puts the pin exactly where the
+     * renderer would put its vertex. The attempts that reconstructed this from the bone's motion
+     * instead had to guess at a step size that was plausible, and a piece whose bone moved
+     * further than the guess was dragged across the model.
      */
     @Test
-    void aBoneStepTooLargeToBeMotionIsRefused() {
+    void theAttachmentIsExactWhateverTheJointDoes() {
         Rig rig = new Rig();
         YsmClothSolver.Cloth cloth = strand();
         rig.settle(cloth);
 
-        Vector3f before = new Vector3f();
-        cloth.position(0, before);
-
-        rig.moveTo(40.0F, 0.0F, 0.0F);
+        rig.moveTo(40.0F, -3.0F, 2.0F);
         rig.step(cloth);
 
-        Vector3f after = new Vector3f();
-        cloth.position(0, after);
-        assertEquals(0.0F, after.x, 1.0E-4F, "an impossible step must not be followed");
-        assertEquals(1L, cloth.rejectedSteps, "and it is reported rather than silently dropped");
-
-        // The bone is now believed to be there, so ordinary motion from it is followed again.
-        rig.moveTo(40.3F, 0.0F, 0.0F);
-        rig.step(cloth);
-        cloth.position(0, after);
-        assertEquals(0.3F, after.x, 1.0E-4F, "the next real step is followed normally");
+        Vector3f pinned = new Vector3f();
+        cloth.position(0, pinned);
+        assertEquals(40.0F, pinned.x, 1.0E-4F, "the pin follows the joint's own transform");
+        assertEquals(-3.0F, pinned.y, 1.0E-4F);
+        assertEquals(2.0F, pinned.z, 1.0E-4F);
     }
 
     /**
@@ -233,13 +231,13 @@ class YsmClothSolverTest {
     @Test
     void aParticleInsideACollisionSphereIsPushedOut() {
         Rig rig = new Rig();
-        YsmClothSolver.Cloth cloth = YsmClothSolver.allocate(2, 1, 1);
+        YsmClothSolver.Cloth cloth = YsmClothSolver.allocate(2, 1);
         YsmClothSolver.initParticle(cloth, 0, 0.0F, 2.0F, 0.0F);
         YsmClothSolver.initParticle(cloth, 1, 0.02F, 0.01F, 0.0F);
         YsmClothSolver.pin(cloth, 0, 0);
         YsmClothSolver.addLink(cloth, 0, 0, 1, YsmClothSolver.structuralStiffness());
-        // The free particle is assigned to the same bone, with a sphere around the origin.
-        cloth.avoidBone[1] = 0;
+        // The free particle is assigned to the same joint, with a sphere around the origin.
+        cloth.avoidJoint[1] = 0;
         cloth.avoidRadius[1] = 0.3F;
 
         for (int i = 0; i < 20; i++) {
@@ -255,7 +253,7 @@ class YsmClothSolverTest {
     /** Building a cloth must not leave stale bookkeeping behind. */
     @Test
     void pinningIsCountedAndReported() {
-        YsmClothSolver.Cloth cloth = YsmClothSolver.allocate(3, 2, 1);
+        YsmClothSolver.Cloth cloth = YsmClothSolver.allocate(3, 2);
         YsmClothSolver.initParticle(cloth, 0, 0, 0, 0);
         YsmClothSolver.initParticle(cloth, 1, 0, -1, 0);
         YsmClothSolver.initParticle(cloth, 2, 0, -2, 0);
@@ -278,9 +276,9 @@ class YsmClothSolverTest {
         Vector3f before = new Vector3f();
         cloth.position(1, before);
 
-        YsmClothSolver.INSTANCE.step(cloth, rig.origin, rig.pose, 1, 0.0F, YsmClothTuning.DEFAULTS);
-        YsmClothSolver.INSTANCE.step(cloth, rig.origin, rig.pose, 1, -1.0F, YsmClothTuning.DEFAULTS);
-        YsmClothSolver.INSTANCE.step(cloth, rig.origin, rig.pose, 1, Float.NaN, YsmClothTuning.DEFAULTS);
+        YsmClothSolver.INSTANCE.step(cloth, rig.pose, rig.toOrigin, 1, 0.0F, YsmClothTuning.DEFAULTS);
+        YsmClothSolver.INSTANCE.step(cloth, rig.pose, rig.toOrigin, 1, -1.0F, YsmClothTuning.DEFAULTS);
+        YsmClothSolver.INSTANCE.step(cloth, rig.pose, rig.toOrigin, 1, Float.NaN, YsmClothTuning.DEFAULTS);
 
         Vector3f after = new Vector3f();
         cloth.position(1, after);
