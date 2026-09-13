@@ -32,3 +32,4 @@ Thumbs.db
 
 # Test-run output at the project root (ForgeGradle test task)
 logs/
+*.spring-bak
