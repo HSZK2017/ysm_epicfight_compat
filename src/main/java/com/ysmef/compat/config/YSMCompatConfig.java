@@ -82,21 +82,22 @@ public class YSMCompatConfig {
     public static final ForgeConfigSpec.BooleanValue ENABLE_SECONDARY_MOTION;
 
     /**
-     * How strongly a swinging piece is pulled back to the animated pose, 1/s^2.
+     * How much of one model's hanging geometry may be simulated at once, in particles.
      *
-     * <p>Read on every simulation step rather than captured once, so the four shape
-     * settings below can be tuned in the config file and felt without restarting.
+     * <p>The cloth is per-vertex work on a phone, so this is the knob to turn down if a
+     * busy model costs too much. Pieces are taken in the classification's order until the
+     * budget runs out, and what was dropped is reported under the '[cloth]' tag.
      */
-    public static final ForgeConfigSpec.DoubleValue SECONDARY_MOTION_STIFFNESS;
-    /** How fast a swinging piece loses its own velocity, 1/s. */
-    public static final ForgeConfigSpec.DoubleValue SECONDARY_MOTION_DAMPING;
-    /** Extra droop while the body moves, blocks/s^2. */
+    public static final ForgeConfigSpec.IntValue SECONDARY_MOTION_MAX_PARTICLES;
+    /** How strongly the cloth resists stretching: constraint iterations per step. */
+    public static final ForgeConfigSpec.IntValue SECONDARY_MOTION_ITERATIONS;
+    /** Gravity on the cloth, blocks/s^2. */
     public static final ForgeConfigSpec.DoubleValue SECONDARY_MOTION_GRAVITY;
-    /** Ceiling on how far a segment may bend from its animated pose, degrees. */
-    public static final ForgeConfigSpec.DoubleValue SECONDARY_MOTION_MAX_ANGLE_DEGREES;
-    /** The same ceiling for the top of a hanging piece, degrees. */
-    public static final ForgeConfigSpec.DoubleValue SECONDARY_MOTION_MAX_ANGLE_ROOT_DEGREES;
-    /** How many bones of one model may swing at once. */
+    /** Velocity kept between frames. Lower settles sooner, higher flows further. */
+    public static final ForgeConfigSpec.DoubleValue SECONDARY_MOTION_DAMPING;
+    /** Radius of the body spheres the cloth is kept out of, blocks. */
+    public static final ForgeConfigSpec.DoubleValue SECONDARY_MOTION_BODY_RADIUS;
+    /** How many pieces one model may simulate. */
     public static final ForgeConfigSpec.IntValue SECONDARY_MOTION_MAX_CHAINS;
 
     static {
@@ -145,50 +146,48 @@ public class YSMCompatConfig {
                 .defineInRange("animationEvaluationRateLimitHz", 0, 0, 240);
 
         ENABLE_SECONDARY_MOTION = builder
-                .comment("Let the hanging parts of a converted model - hair, tails, skirts, capes - swing after the body",
-                        "instead of being glued to it (spring-damper secondary motion, ported from EpicYSM).",
-                        "Off by default: which bones swing is inferred from the model's bone names, so a model that names",
-                        "its hair unconventionally may get no motion or motion on the wrong bone - judge it by looking.",
+                .comment("Simulate the hanging parts of a converted model - hair, tails, skirts, capes - as cloth, so they",
+                        "swing, bend and settle after the body instead of being glued to it.",
+                        "Off by default: which pieces are cloth is inferred from the model's bone names, so a model that",
+                        "names its hair unconventionally may get no motion or motion on the wrong piece - judge it by looking.",
                         "The converted mesh is what Epic Fight draws in battle mode, so that is where this is visible; each",
-                        "model reports its chains once at startup under the '[physics]' log tag, to tell 'no motion' from",
-                        "'nothing classified'. The four settings below shape the swing and are read live.")
+                        "model reports what it simulated once under the '[cloth]' log tag, to tell 'no motion' from",
+                        "'nothing classified'. The settings below shape it and are read live.")
                 .define("enableSecondaryMotion", false);
 
-        // The shape of the swing is a matter of taste, and taste is not something a
-        // default can settle: these four are the whole of it, separated so a model that
-        // looks wrong can be corrected without a rebuild.
-        SECONDARY_MOTION_STIFFNESS = builder
-                .comment("How hard a swinging piece is pulled back to the pose the animation asks for, in 1/s^2.",
-                        "Higher snaps hair back to the animated shape; lower lets it drift and trail further behind.")
-                .defineInRange("secondaryMotionStiffness", 220.0, 10.0, 2000.0);
+        SECONDARY_MOTION_MAX_PARTICLES = builder
+                .comment("How many cloth particles one model may simulate at once, or 0 for none.",
+                        "This is the cost knob: the solve is per-vertex, and a model whose hair is a few thousand",
+                        "vertices will spend the frame on it at high values. Pieces are taken in order until the",
+                        "budget runs out, and the ones dropped are reported under the '[cloth]' tag.")
+                .defineInRange("secondaryMotionMaxParticles", 4000, 0, 40000);
 
-        SECONDARY_MOTION_DAMPING = builder
-                .comment("How fast a swinging piece loses its own velocity, in 1/s.",
-                        "Higher settles the swing sooner; too low and the piece keeps oscillating after the body stops.")
-                .defineInRange("secondaryMotionDamping", 24.0, 0.0, 200.0);
+        SECONDARY_MOTION_ITERATIONS = builder
+                .comment("Constraint iterations per step: how strongly the cloth resists stretching.",
+                        "More is stiffer and costs linearly. Below about 4 a strand stretches visibly; above about 16",
+                        "it stops looking any different.")
+                .defineInRange("secondaryMotionIterations", 8, 1, 32);
 
         SECONDARY_MOTION_GRAVITY = builder
-                .comment("Extra droop while the body moves, in blocks/s^2.",
-                        "Zero makes the pieces weightless; higher makes them hang and lag more heavily.")
-                .defineInRange("secondaryMotionGravity", 8.0, 0.0, 64.0);
+                .comment("Gravity on the cloth, blocks/s^2. Zero makes it float; higher makes it hang and trail heavily.")
+                .defineInRange("secondaryMotionGravity", 14.0, 0.0, 64.0);
 
-        SECONDARY_MOTION_MAX_ANGLE_DEGREES = builder
-                .comment("How far a swinging piece may bend from its animated pose, in degrees.",
-                        "This is the ceiling on how wild the swing can look; lower it first if a piece swings",
-                        "through the body. Real models put the useful range at 30-70.")
-                .defineInRange("secondaryMotionMaxAngleDegrees", 60.0, 0.0, 150.0);
+        SECONDARY_MOTION_DAMPING = builder
+                .comment("Velocity kept from one frame to the next, as a fraction.",
+                        "1.0 never loses energy and rings forever; lower settles sooner. Around 0.86 reads as cloth;",
+                        "below about 0.5 it looks like it is moving through syrup.")
+                .defineInRange("secondaryMotionDamping", 0.86, 0.0, 1.0);
 
-        SECONDARY_MOTION_MAX_ANGLE_ROOT_DEGREES = builder
-                .comment("The same ceiling for the top of a hanging piece, in degrees.",
-                        "A root carries the whole hairdo or skirt, so its own swing is what the rest multiply",
-                        "against; this is deliberately much smaller than the per-piece limit above.")
-                .defineInRange("secondaryMotionMaxAngleRootDegrees", 20.0, 0.0, 90.0);
+        SECONDARY_MOTION_BODY_RADIUS = builder
+                .comment("Radius of the body spheres the cloth is pushed out of, in blocks.",
+                        "This is what keeps a skirt out of a thigh and hair out of a shoulder. Too large and the cloth",
+                        "is held visibly away from the body; too small and it passes through.")
+                .defineInRange("secondaryMotionBodyRadius", 0.22, 0.0, 0.6);
 
         SECONDARY_MOTION_MAX_CHAINS = builder
-                .comment("How many bones of one model may swing at once, or 0 for none.",
-                        "The classifier keeps only the top of each hanging piece, so real models land at 4-24;",
-                        "this is the backstop for a model whose bones are named pathologically. Lower it if a",
-                        "busy model costs too much on a phone.")
+                .comment("How many hanging pieces of one model may be simulated, or 0 for none.",
+                        "The classifier keeps only the top of each piece, so real models land at 4-24; this is the",
+                        "backstop for a model whose bones are named pathologically.")
                 .defineInRange("secondaryMotionMaxChains", 24, 0, 128);
 
         builder.pop();

@@ -59,9 +59,9 @@ public class YSMReloadTrigger {
         // that is ending; a stale "someone else owns this look" would silently
         // suppress this mod for that player in the next world.
         com.ysmef.compat.compat.LookOwners.resetAll();
-        // The chain states carry velocities from the old world; keeping them would make
-        // every piece of hair start the next world mid-swing.
-        com.ysmef.compat.model.runtime.YsmMeshSecondaryMotion.clear();
+        // The cloth carries velocities from the old world; keeping them would make every
+        // piece of hair start the next world mid-swing.
+        com.ysmef.compat.model.runtime.YsmMeshCloth.clear();
         com.ysmef.compat.ysm.YsmClasses.invalidate();
     }
 

@@ -113,6 +113,21 @@ public final class YsmPhysicsChains {
     public static final int DEFAULT_MAX_CHAINS = 24;
 
     /**
+     * How many pieces to clasify for one model, from the config when it can be read.
+     *
+     * <p>A client config is absent in a dedicated-server process and in any test that never
+     * loads Forge, so an unreadable config falls back to the default rather than to zero -
+     * a feature that silently does nothing is worse than one running on its defaults.
+     */
+    public static int maxChains() {
+        try {
+            return com.ysmef.compat.config.YSMCompatConfig.SECONDARY_MOTION_MAX_CHAINS.get();
+        } catch (Throwable t) {
+            return DEFAULT_MAX_CHAINS;
+        }
+    }
+
+    /**
      * One chain: the bone to swing, the chain it hangs from, and how far the piece
      * reaches from its pivot so the simulation has a lever to rotate.
      *
@@ -192,7 +207,7 @@ public final class YsmPhysicsChains {
         if (bones == null) {
             return chains;
         }
-        int limit = YsmPhysicsTuning.maxChains();
+        int limit = maxChains();
         if (limit <= 0) {
             return chains;
         }
