@@ -104,6 +104,8 @@ public final class YsmClothSolver {
         int pinnedCount;
         /** How far the free particles have stretched from their attachment, blocks. */
         float largestStretch;
+        /** How far the attachment itself moved on the last step, blocks. */
+        float pinJump;
 
         Cloth(int particleCount, int linkCount) {
             this.x = new float[particleCount];
@@ -266,15 +268,39 @@ public final class YsmClothSolver {
             return;
         }
         YsmClothTuning shape = tuning == null ? YsmClothTuning.DEFAULTS : tuning;
+        int substeps = Math.max(1, shape.substeps);
+        float frame = Math.min(dt, MAX_DT);
+        // The lattice is advanced in substeps because the drag it has to follow is not the
+        // frame's motion but the substep's: a body moving 0.1 blocks in a frame against links
+        // 0.05 long hands each constraint sweep about one link of propagation to work with, and
+        // the piece is left permanently behind by however much the sweep cannot carry. Dividing
+        // the same motion into four keeps every sweep's job inside the lattice's own scale.
+        //
+        // Gravity and damping are per <i>frame</i> quantities, so they are applied on the last
+        // substep at the full frame's step rather than a fraction of it. Applying them per
+        // substep would set gravity to four times its configured value - which is exactly what
+        // the first version of this did, and it left the cloth creeping after the body stopped
+        // instead of settling.
+        for (int sub = 0; sub < substeps - 1; sub++) {
+            substep(cloth, poses, toOrigin, boneCount, frame / substeps, shape, false);
+        }
+        substep(cloth, poses, toOrigin, boneCount, frame / substeps, shape, true);
+        measureStretch(cloth);
+    }
+
+    /** One substep: carry the pins, integrate the free particles, then project. */
+    private void substep(Cloth cloth, OpenMatrix4f[] poses, OpenMatrix4f[] toOrigin, int boneCount,
+                         float dt, YsmClothTuning shape, boolean applyForces) {
         int iterations = Math.max(1, shape.iterations);
-        float gravity = shape.gravity;
-        float damping = shape.damping;
+        float gravity = applyForces ? shape.gravity : 0.0F;
+        float damping = applyForces ? shape.damping : 1.0F;
         float h = Math.min(dt, MAX_DT);
         float hh = h * h;
 
         // Pinned particles are placed exactly where the skinning path places their vertex:
         // pose x toOrigin x bindVertex. This is the whole attachment - no reconstruction, and
         // therefore nothing that can disagree with the geometry it is holding.
+        float jump = 0.0F;
         for (int i = 0; i < cloth.pinned.length; i++) {
             if (!cloth.pinned[i]) {
                 continue;
@@ -290,6 +316,10 @@ public final class YsmClothSolver {
             OpenMatrix4f skin = OpenMatrix4f.mul(poses[joint], toOrigin[joint], null);
             posed4.set(jointSpace.x, jointSpace.y, jointSpace.z, 1.0F);
             OpenMatrix4f.transform(skin, posed4, posed4);
+            float dx = posed4.x - cloth.x[i];
+            float dy = posed4.y - cloth.y[i];
+            float dz = posed4.z - cloth.z[i];
+            jump = Math.max(jump, distance(dx, dy, dz));
             cloth.px[i] = cloth.x[i];
             cloth.py[i] = cloth.y[i];
             cloth.pz[i] = cloth.z[i];
@@ -297,6 +327,7 @@ public final class YsmClothSolver {
             cloth.y[i] = posed4.y;
             cloth.z[i] = posed4.z;
         }
+        cloth.pinJump = jump;
 
         // Verlet: the previous position is the velocity, so a particle keeps moving unless a
         // constraint or the damping takes it away.
@@ -327,7 +358,20 @@ public final class YsmClothSolver {
             solveLinks(cloth);
             solveCollisions(cloth, poses, boneCount);
         }
-        measureStretch(cloth);
+    }
+
+    /**
+     * The largest distance any pinned particle moved on the last step, blocks.
+     *
+     * <p>The pins are placed from the joint matrices, so this is how far the body moved its
+     * attachment in one frame - and it is the number that decides whether the solve can keep
+     * up. A piece whose attachment jumps further than its own links are long leaves the free
+     * particles behind by construction: the constraint pass can only move them a fraction of
+     * that distance per iteration, so a large enough jump is a stretch no iteration count can
+     * remove, and the fix belongs upstream of the solver rather than in it.
+     */
+    public static float pinJump(Cloth cloth) {
+        return cloth.pinJump;
     }
 
     /**

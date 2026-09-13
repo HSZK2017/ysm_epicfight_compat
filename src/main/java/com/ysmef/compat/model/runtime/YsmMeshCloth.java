@@ -107,6 +107,10 @@ public final class YsmMeshCloth {
         float lastSpread;
         /** The worst single link stretch on the last frame, as a fraction. */
         float lastLinkStretch;
+        /** How far the cloth's parts swung about their attachment, blocks. */
+        float lastSwing;
+        /** How far the attachment itself moved on the last frame, blocks. */
+        float lastPinJump;
         boolean reported;
 
         State(YSMRuntimeModel model, YSMMesh mesh, Armature armature) {
@@ -405,19 +409,25 @@ public final class YsmMeshCloth {
         float[] positions = mesh.positions();
         YsmClothTuning tuning = YsmClothTuning.current();
         int written = 0;
-        float largestStretch = 0.0F;
-        float worstLink = 0.0F;
+        float swing = 0.0F;
+        float stretch = 0.0F;
+        float pinJump = 0.0F;
+        float linkStretch = 0.0F;
         for (Piece piece : state.pieces) {
             YsmClothSolver.INSTANCE.step(piece.cloth, poses, state.toOrigin, piece.pinJoint, dt, tuning);
             float[] result = writeBack(mesh, piece, positions);
             written += (int) result[0];
             state.lastTurnDegrees = Math.max(state.lastTurnDegrees, result[1]);
-            largestStretch = Math.max(largestStretch, result[2]);
-            worstLink = Math.max(worstLink, YsmClothSolver.worstLinkStretch(piece.cloth));
+            swing = Math.max(swing, result[2]);
+            stretch = Math.max(stretch, result[3]);
+            pinJump = Math.max(pinJump, result[4]);
+            linkStretch = Math.max(linkStretch, result[5]);
         }
         state.lastWrites = written;
-        state.lastSpread = largestStretch;
-        state.lastLinkStretch = worstLink;
+        state.lastSwing = swing;
+        state.lastSpread = stretch;
+        state.lastPinJump = pinJump;
+        state.lastLinkStretch = linkStretch;
 
         state.frames++;
         if (!state.reported) {
@@ -436,9 +446,15 @@ public final class YsmMeshCloth {
                     model.modelId, state.pieces.size(), particles, pinned, names);
         }
         if (state.frames % 300 == 0) {
+            // Every quantity this feature has ever been misdiagnosed by, side by side: how far
+            // the attachment moved, how far the cloth stretched from it, how far a single link
+            // was pulled past its rest length, how much of the swing reached the mesh, and how
+            // many parts it was written to. Reading one of these without the others is how a
+            // report of "the cloth moved seven blocks" turned out to be the body walking.
             YSMEpicFightCompat.LOGGER.info(
-                    "YSM-EF Compat: [cloth] frame {}: dt={}ms, {} piece(s) solved, cloth moved {} blocks, worst link stretch {}%, {} part transform(s) written, largest turn {}deg",
+                    "YSM-EF Compat: [cloth] frame {}: dt={}ms, {} piece(s), pin step {} blocks, cloth moved {} blocks, worst link {}%, {} part(s) written, largest turn {}deg",
                     state.frames, Math.round(dt * 1000.0F), state.pieces.size(),
+                    Math.round(state.lastPinJump * 1000.0F) / 1000.0F,
                     Math.round(state.lastSpread * 1000.0F) / 1000.0F,
                     Math.round(state.lastLinkStretch * 1000.0F) / 10.0F, written,
                     Math.round(state.lastTurnDegrees * 10.0F) / 10.0F);
@@ -455,7 +471,7 @@ public final class YsmMeshCloth {
     private static final Quaternionf scratchRotation = new Quaternionf();
     private static final Matrix4f scratchDelta = new Matrix4f();
     private static final OpenMatrix4f scratchOpen = new OpenMatrix4f();
-    private static final float[] scratchResult = new float[3];
+    private static final float[] scratchResult = new float[6];
 
     /** Below this a piece counts as settled and no transform is written. */
     private static final float MIN_TURN_RADIANS = 0.003F;
@@ -522,6 +538,9 @@ public final class YsmMeshCloth {
         scratchResult[0] = written;
         scratchResult[1] = largestTurn;
         scratchResult[2] = largestMove;
+        scratchResult[3] = piece.cloth.largestStretch();
+        scratchResult[4] = YsmClothSolver.pinJump(piece.cloth);
+        scratchResult[5] = YsmClothSolver.worstLinkStretch(piece.cloth);
         return scratchResult;
     }
 

@@ -15,12 +15,22 @@ import com.ysmef.compat.config.YSMCompatConfig;
  */
 public final class YsmClothTuning {
 
+    /**
+     * How many substeps a frame is divided into by default.
+     *
+     * <p>The number that decides whether the lattice can follow the body at all: a frame's
+     * motion against links a fraction of its size leaves each constraint sweep too little
+     * propagation to work with. See YsmClothSolver#step.
+     */
+    public static final int DEFAULT_SUBSTEPS = 4;
+
     /** What the solver was tuned to, used whenever the config cannot be read. */
     public static final YsmClothTuning DEFAULTS = new YsmClothTuning(
             YsmClothSolver.DEFAULT_GRAVITY,
             YsmClothSolver.DEFAULT_DAMPING,
             YsmClothSolver.DEFAULT_ITERATIONS,
-            YsmClothSolver.DEFAULT_BODY_RADIUS);
+            YsmClothSolver.DEFAULT_BODY_RADIUS,
+            DEFAULT_SUBSTEPS);
 
     /** Gravity, blocks/s^2. */
     public final float gravity;
@@ -30,12 +40,19 @@ public final class YsmClothTuning {
     public final int iterations;
     /** Radius of the body spheres the cloth is kept out of, blocks. */
     public final float bodyRadius;
+    /** How many substeps each frame's motion is divided into. */
+    public final int substeps;
 
     public YsmClothTuning(float gravity, float damping, int iterations, float bodyRadius) {
+        this(gravity, damping, iterations, bodyRadius, DEFAULT_SUBSTEPS);
+    }
+
+    public YsmClothTuning(float gravity, float damping, int iterations, float bodyRadius, int substeps) {
         this.gravity = gravity;
         this.damping = damping;
         this.iterations = iterations;
         this.bodyRadius = bodyRadius;
+        this.substeps = substeps;
     }
 
     /** How many particles one model may simulate, from the config or the default. */
@@ -73,6 +90,7 @@ public final class YsmClothTuning {
     @Override
     public String toString() {
         return "gravity=" + gravity + " damping=" + damping
-                + " iterations=" + iterations + " bodyRadius=" + bodyRadius;
+                + " iterations=" + iterations + " bodyRadius=" + bodyRadius
+                + " substeps=" + substeps;
     }
 }

@@ -225,6 +225,102 @@ class YsmClothSolverTest {
     }
 
     /**
+     * A lattice with the shape real hair has, pulled as hard as a body can pull it, must not
+     * visibly stretch.
+     *
+     * <p>Sixteen strands of sixteen particles on one attachment, dragged a tenth of a block per
+     * frame - the load the in-game runs failed under, which measured 54 to 57%.
+     *
+     * <p>The assertion is on the change in <b>blocks</b>, not on the percentage, because the
+     * percentage is scale-dependent and the eye is not: 57% of a 0.05-block link is two and a
+     * half centimetres and invisible, while 57% of a half-block link is a quarter of a block and
+     * the piece is obviously pulled apart. Five per cent of a 0.05-block link is 2.5 mm, a
+     * twentieth of a pixel at a normal camera distance, so 0.05 blocks absolute is a bar with
+     * room in it for the lattices real models actually have.
+     */
+    @Test
+    void aLatticeHoldsItsLengthUnderSustainedDrag() {
+        float worst = worstLinkStretchUnderDrag(4, 8);
+        assertTrue(worst < 0.05F,
+                "the links must hold under sustained drag, worst was " + blocks(worst));
+    }
+
+    /**
+     * How the solve's cost buys accuracy, measured rather than assumed. Each row is
+     * (substeps, iterations):
+     *
+     * <pre>    (1,  8)  47.5%     the shape this shipped with: the piece visibly stretched
+     *    (1, 32)   9.7%     four times the constraint work, still not held
+     *    (4,  8)   7.5%     dividing the frame instead: nearly as good for an eighth of it
+     *    (4, 12)   5.3%     and it keeps improving from there</pre>
+     *
+     * <p>Substeps are the lever rather than iterations because the drag a sweep has to carry is
+     * the substep's, not the frame's: a body moving a tenth of a block against links a twentieth
+     * of a block long gives one sweep about one link of propagation, and no iteration count
+     * turns that into four. What is left is ordinary convergence, and this pins that it is
+     * still improving rather than stalled.
+     */
+    @Test
+    void theLatticeKeepsImprovingWithIterations() {
+        float atEight = worstLinkStretchUnderDrag(4, 8);
+        float atTwelve = worstLinkStretchUnderDrag(4, 12);
+        assertTrue(atTwelve < atEight,
+                "more iterations must converge further: " + blocks(atEight) + " -> " + blocks(atTwelve));
+        assertTrue(atTwelve < 0.004F,
+                "and must stay under a millimetre: " + blocks(atTwelve));
+    }
+
+    /** Drag a strand fan sideways and report the worst link stretch it settles at. */
+    private static float worstLinkStretchUnderDrag(int substeps, int iterations) {
+        final int strands = 16;
+        final int perStrand = 16;
+        final int particles = strands * perStrand;
+        final int links = strands * (perStrand - 1);
+
+        YsmClothSolver.Cloth cloth = YsmClothSolver.allocate(particles, links);
+        int link = 0;
+        for (int s = 0; s < strands; s++) {
+            for (int p = 0; p < perStrand; p++) {
+                int i = s * perStrand + p;
+                // A fan of strands hanging 0.08 blocks apart, each segment 0.05 long.
+                YsmClothSolver.initParticle(cloth, i, s * 0.08F, -p * 0.05F, 0.0F);
+                if (p > 0) {
+                    YsmClothSolver.addLink(cloth, link++, i - 1, i, YsmClothSolver.structuralStiffness());
+                } else {
+                    YsmClothSolver.pin(cloth, i, 0);
+                }
+            }
+        }
+
+        YsmClothTuning tuning = new YsmClothTuning(
+                YsmClothTuning.DEFAULTS.gravity, YsmClothTuning.DEFAULTS.damping, iterations,
+                YsmClothTuning.DEFAULTS.bodyRadius, substeps);
+        Rig rig = new Rig();
+        for (int frame = 0; frame < 120; frame++) {
+            rig.moveTo(frame * 0.1F, 0.0F, 0.0F);
+            YsmClothSolver.INSTANCE.step(cloth, rig.pose, rig.toOrigin, 1, FRAME, tuning);
+        }
+        return absoluteLinkStretch(cloth);
+    }
+
+    /**
+     * The worst a single link differs from its rest length, in blocks.
+     *
+     * <p>Absolute rather than relative, because that is the quantity the eye judges: the same
+     * percentage is invisible on a short link and obvious on a long one.
+     */
+    private static float absoluteLinkStretch(YsmClothSolver.Cloth cloth) {
+        return YsmClothSolver.worstLinkStretch(cloth) * LINK_REST;
+    }
+
+    /** The segment length the drag lattice is built with, blocks. */
+    private static final float LINK_REST = 0.05F;
+
+    private static String blocks(float value) {
+        return Math.round(value * 10000.0F) / 10.0F + " mm";
+    }
+
+    /**
      * A collision sphere is the only thing keeping a skirt out of a thigh, so it has to
      * actually push: a particle started inside one must end up outside it.
      */
