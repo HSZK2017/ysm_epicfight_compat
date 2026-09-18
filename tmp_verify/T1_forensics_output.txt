@@ -1,0 +1,38 @@
+built-in package: builtin\misc\4_default_controllers  controllers/anims: 59/121
+
+### builtin\wine_fox\01_taisho_maid
+  geometry bones      : 195  (simulatable 175)
+  own animations      : 103   own controllers play: 5
+  candidates walked   : 65
+    - Hair_Physics: drives 58, present 0
+  SELECTED            : (none) -> name-based fallback
+  refused             : Hair_Physics (drives 58 bone(s), none of which this model has geometry for)
+
+### builtin\wine_fox\22_elf
+  geometry bones      : 226  (simulatable 208)
+  own animations      : 181   own controllers play: 5
+  candidates walked   : 65
+    - parallel7: drives 1, present 0
+    - pre_parallel7: drives 4, present 0
+    - Hair_Physics: drives 58, present 0
+  SELECTED            : (none) -> name-based fallback
+  refused             : parallel7 (drives 1 bone(s), none of which this model has geometry for)
+
+### builtin\wine_fox\03_astronaut
+  geometry bones      : 149  (simulatable 132)
+  own animations      : 145   own controllers play: 19
+  candidates walked   : 72
+    - pre_parallel0: drives 23, present 6
+    - parallel0: drives 1, present 1
+    - Hair_Physics: drives 58, present 0
+  SELECTED            : pre_parallel0   declared=24 matched=7
+  parts               : Breast, FLongHair, FLongLeftHair, FLongRightHair, MLongHair, MLongLeftHair, MLongRightHair
+
+### builtin\misc\3_default_boy
+  geometry bones      : 58  (simulatable 48)
+  own animations      : 57   own controllers play: 0
+  candidates walked   : 59
+    - Hair_Physics: drives 58, present 0
+  SELECTED            : (none) -> name-based fallback
+  refused             : Hair_Physics (drives 58 bone(s), none of which this model has geometry for)
+

@@ -48,6 +48,56 @@ public final class Molang {
         /** ctrl.hold('mainhand', ':sword') style calls with string arguments. */
         double callStringFunction(String name, String[] args);
 
+        /**
+         * Whether this environment needs the numeric arguments of a call that also has string
+         * arguments. False by default, and that default is what keeps every existing environment
+         * behaving exactly as it did: a call with a string in it has always delivered only its
+         * strings, and the numbers beside them were parsed and thrown away.
+         *
+         * <p>An environment that answers {@code true} gets {@link #callMixedFunction} instead, and
+         * must read {@code numbers} during that call - the array is a reused per-thread scratch, so
+         * it is valid only for the duration of the call.
+         */
+        default boolean wantsMixedArguments() {
+            return false;
+        }
+
+        /**
+         * A call whose arguments are a mix of string literals and numbers.
+         *
+         * @param name    the function path, e.g. {@code ysm.second_order}
+         * @param strings one entry per argument, the literal text where the argument was a string
+         *                literal and null where it was an expression
+         * @param numbers one entry per argument, the evaluated value where the argument was an
+         *                expression and zero where it was a string literal
+         * @param count   the number of arguments, i.e. the length of both arrays
+         */
+        default double callMixedFunction(String name, String[] strings, double[] numbers, int count) {
+            return callStringFunction(name, strings);
+        }
+
+        /**
+         * A call whose result is read one component at a time: {@code ysm.bone_rot('Name').x}.
+         *
+         * <p>This evaluator is scalar throughout - a function answers with one number - so a
+         * function that stands for a vector has to be asked for the component the expression wants
+         * rather than returning three numbers. The default keeps environments that know nothing
+         * about vectors working: a call with no member goes to {@link #callMixedFunction} as before,
+         * and a member read answers zero, which is what an environment that has no vectors can
+         * honestly say. Nothing that parsed before this existed is affected, because a {@code .}
+         * after a call used to be a parse error.
+         *
+         * @param name      the function path, e.g. {@code ysm.bone_rot}
+         * @param strings   one entry per argument, null where the argument was an expression
+         * @param numbers   one entry per argument, zero where the argument was a string literal
+         * @param count     the number of arguments
+         * @param component 0 for x, 1 for y, 2 for z, or -1 when there was no member at all
+         */
+        default double callVectorFunction(String name, String[] strings, double[] numbers,
+                                          int count, int component) {
+            return component < 0 ? callMixedFunction(name, strings, numbers, count) : 0.0;
+        }
+
         // String-based convenience entry points (interning on the fly).
         default double getVar(String path) {
             return getVarById(idOf(path));
@@ -267,7 +317,7 @@ public final class Molang {
                 default -> {
                 }
             }
-            if ("+-*/%(),?:!<>=;".indexOf(c) >= 0) {
+            if ("+-*/%(),?:!<>=;.".indexOf(c) >= 0) {
                 pos++;
                 return new Token(T_OP, String.valueOf(c), 0);
             }
@@ -600,9 +650,45 @@ public final class Molang {
                         } while (consumeOp(","));
                     }
                     expectOp(")");
+                    // A call may be followed by a member, and one member matters: an author's
+                    // physics expression reads a bone's rotation one component at a time -
+                    // `ysm.bone_rot('BackHairB1').x` - because a molang function here answers with
+                    // a single number. A `.` used to be an unsupported character, so nothing that
+                    // parsed before can change meaning: this branch only ever sees text that used
+                    // to fail to compile.
+                    int component = memberComponent();
                     if (anyString) {
+                        // A call that carries a name *and* numbers - `ysm.second_order('头发垂直',
+                        // math.clamp(...), 1.5, 0.6, 0)` is the one that matters, and it is how YSM's
+                        // model authors address their own physics filters. The string arguments
+                        // identify the filter and the numbers are its input and tuning, so an
+                        // environment that wants one has to be given both; until this existed the
+                        // numbers of any string-bearing call were parsed and then dropped.
+                        //
+                        // An environment that does not ask for them keeps the old answer exactly,
+                        // numbers unevaluated: an expression's arguments can assign variables, so
+                        // evaluating them for an environment that ignores them would be a change in
+                        // behaviour rather than an addition.
                         String[] sargs = stringArgs.toArray(new String[0]);
-                        return env -> env.callStringFunction(path, sargs);
+                        Expr[] slotArgs = args.toArray(new Expr[0]);
+                        return env -> {
+                            if (!env.wantsMixedArguments()) {
+                                return env.callStringFunction(path, sargs);
+                            }
+                            double[] values = MIXED_SLOTS.get();
+                            if (values.length < slotArgs.length) {
+                                values = new double[slotArgs.length];
+                                MIXED_SLOTS.set(values);
+                            }
+                            for (int i = 0; i < slotArgs.length; i++) {
+                                // A null slot was a string literal, and its number is meaningless:
+                                // the argument at that position is in `strings` instead.
+                                values[i] = slotArgs[i] == null ? 0.0 : slotArgs[i].eval(env);
+                            }
+                            return component < 0
+                                    ? env.callMixedFunction(path, sargs, values, slotArgs.length)
+                                    : env.callVectorFunction(path, sargs, values, slotArgs.length, component);
+                        };
                     }
                     Expr[] exprArgs = args.toArray(new Expr[0]);
                     return env -> {
@@ -615,12 +701,47 @@ public final class Molang {
                         for (int i = 0; i < exprArgs.length; i++) {
                             values[i] = exprArgs[i].eval(env);
                         }
-                        return env.callFunction(path, values, exprArgs.length);
+                        return component < 0
+                                ? env.callFunction(path, values, exprArgs.length)
+                                : env.callVectorFunction(path, NO_STRINGS, values, exprArgs.length, component);
                     };
                 }
                 return new VarExpr(path);
             }
             throw new IllegalStateException("unexpected token: " + current.text());
+        }
+
+        /**
+         * A {@code .x} / {@code .y} / {@code .z} immediately after a call, as a component index, or
+         * -1 when there is none.
+         *
+         * <p>Only the three component names are recognised. A member of any other name is left
+         * alone: the call is answered as a whole, which is what every expression that parsed before
+         * this existed expected, and an author who writes something else is writing a name no
+         * engine has.
+         */
+        private int memberComponent() {
+            if (!isOp(".")) {
+                return -1;
+            }
+            advance();
+            if (current.type() != T_IDENT) {
+                return -1;
+            }
+            String member = advance().text();
+            switch (member) {
+                case "x":
+                    return 0;
+                case "y":
+                    return 1;
+                case "z":
+                    return 2;
+                default:
+                    // The name is consumed rather than put back, because this parser reads a token
+                    // stream and has nothing to put it back into. Harmless: the member is only ever
+                    // one identifier, and the expression carries on after it either way.
+                    return -1;
+            }
         }
 
         private boolean consumeOp(String op) {
@@ -653,6 +774,12 @@ public final class Molang {
 
     /** Per-thread scratch for function arguments (the eval threads are stable). */
     private static final ThreadLocal<double[]> ARG_SLOTS = ThreadLocal.withInitial(() -> new double[4]);
+
+    /** The same scratch idea for calls that mix string literals with numbers. */
+    private static final ThreadLocal<double[]> MIXED_SLOTS = ThreadLocal.withInitial(() -> new double[8]);
+
+    /** No string arguments at all, for a vector call written with numbers only. */
+    private static final String[] NO_STRINGS = new String[0];
 
     /**
      * Variable reference: v./variable./temp./t. paths read and write vars; everything

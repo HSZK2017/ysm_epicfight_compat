@@ -69,11 +69,13 @@ public final class YSMRuntimeBridge {
                 } else {
                     model.applyDefaultVisibility(mesh);
                 }
-                // Cloth for the mesh that is actually on screen: this is the only path that
-                // draws the converted mesh, so it is the only path where swinging its hair and
-                // cloth can be seen. Written after the visibility pass because it writes the
-                // same per-part transforms.
-                YsmMeshCloth.apply(mesh, model, armature, poses);
+                // Secondary motion for the mesh that is actually on screen: this is the
+                // only path that draws the converted mesh, so it is the only path where
+                // swinging its hair and cloth can be seen. Written after the visibility
+                // pass because it writes the same per-part transforms. The armature comes
+                // along because the physics places pivots and collision volumes in the
+                // mesh's bind space through each joint's toOrigin.
+                YsmMeshSecondaryMotion.apply(mesh, model, entity, armature, poses);
             } else {
                 unhideAllBoneParts(mesh);
             }
@@ -84,18 +86,6 @@ public final class YSMRuntimeBridge {
         }
         float partialTick = Minecraft.getInstance().getFrameTime();
         model.animatorFor(entity).apply(mesh, entity, poses, partialTick);
-    }
-
-    /**
-     * The entity whose mesh is being drawn right now, or null outside a draw.
-     *
-     * <p>Exposed for the cloth, which has to express the skeleton's joints in the same frame
-     * as the mesh's own vertices: {@code poses} carries where the joints are in the world,
-     * and the vertices are in the model's bind space, so the entity's position is the
-     * translation between them.
-     */
-    public static LivingEntity currentEntity() {
-        return CURRENT_ENTITY.get();
     }
 
     /**

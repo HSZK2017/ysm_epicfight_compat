@@ -28,8 +28,45 @@ import java.util.Locale;
  *       one place so it can be extended from evidence rather than scattered.</li>
  * </ol>
  *
- * <p>and then one way to be disqualified, described on {@link #isWrapper}: carrying a
- * mapped body joint underneath.
+ * <p>and then two ways to be disqualified: carrying a mapped body joint underneath
+ * ({@link #isWrapper}), and holding no geometry of its own. The second one is the rule the
+ * fallback classifier cannot state anywhere else, and it has two shapes with one consequence.
+ *
+ * <h2>Why a chain must hold geometry of its own</h2>
+ *
+ * <p>A swing is a rotation about the bone's <i>own</i> pivot, and the only thing it can move is
+ * the geometry drawn at that bone's part ({@code y/<bone>} in the converted mesh). So the only
+ * lever the swing can have is measured from that bone's own geometry, and a bone that draws
+ * nothing has none - not a short one, none. {@code YsmPhysicsParts.buildSegment} drops such a
+ * bone for exactly that reason, but by then the selection has already happened: the bone is in
+ * {@code selectBones}' list, it is counted, and on a model at the cap it displaces a piece that
+ * would have moved. Nothing in the log says so - a bone that produced no segment does not appear
+ * in the segment list, and the count it spent is not printed at all. The two shapes are:
+ *
+ * <ul>
+ *   <li><b>The container.</b> No geometry of its own, geometry under it ({@code LongHair} over
+ *       the strands that are drawn). Swinging it would rotate a subtree whose geometry lives
+ *       somewhere else, and the strands - the only thing anybody sees - would then have no lever
+ *       of their own; so it is skipped and the geometric child becomes the chain instead. This
+ *       was the first reason the rule existed.</li>
+ *   <li><b>The empty bone.</b> No geometry of its own and none under it: nothing to swing, in any
+ *       sense. The shape is the one {@code HangingPieceSelectionAcceptanceTest} pins under the
+ *       name {@code HairTip} - a bone under a container that is <i>mapped</i>, so the container is
+ *       skipped for being Epic Fight's and the bone underneath inherits the hint from an ancestor
+ *       that was never a chain itself. On the shipped maid all 59 selected bones carry their own
+ *       geometry, so this half of the rule changes nothing there; it is other models' shape.</li>
+ * </ul>
+ *
+ * <p>Both shapes are <i>disqualifying</i> rather than merely unhelpful, so the test is the same
+ * for both and is stated once: <b>a chain holds geometry of its own.</b> Note what this rule is
+ * <i>not</i>: it is not the lever test. The lever is computed in
+ * {@code YsmPhysicsParts.buildSegment} from vertex positions, which this classifier never sees,
+ * and the shapes the lever would reject are therefore <b>not</b> reachable from here. On the
+ * shipped maid the four tail bones that never move ({@code Tail4}..{@code Tail7}, logged with
+ * {@code own=0.0deg} and levers of 0.021 to 0.098 blocks) each draw a cube of their own that
+ * sits on their own pivot, so they pass this rule legitimately; see
+ * {@code tmp_verify/T4_selection_report.md} for the measurement and for where the lever test
+ * has to live.
  *
  * <h2>Why the wrapper test matters more here than upstream</h2>
  *
@@ -113,21 +150,6 @@ public final class YsmPhysicsChains {
     public static final int DEFAULT_MAX_CHAINS = 24;
 
     /**
-     * How many pieces to clasify for one model, from the config when it can be read.
-     *
-     * <p>A client config is absent in a dedicated-server process and in any test that never
-     * loads Forge, so an unreadable config falls back to the default rather than to zero -
-     * a feature that silently does nothing is worse than one running on its defaults.
-     */
-    public static int maxChains() {
-        try {
-            return com.ysmef.compat.config.YSMCompatConfig.SECONDARY_MOTION_MAX_CHAINS.get();
-        } catch (Throwable t) {
-            return DEFAULT_MAX_CHAINS;
-        }
-    }
-
-    /**
      * One chain: the bone to swing, the chain it hangs from, and how far the piece
      * reaches from its pivot so the simulation has a lever to rotate.
      *
@@ -197,6 +219,13 @@ public final class YsmPhysicsChains {
      * test model were leaves like this. Preferring bones with geometry swings the piece
      * where it is drawn.
      *
+     * <p>The predicate is therefore not a preference but a <b>requirement</b>: a bone that
+     * draws nothing of its own is not a chain, whether the geometry is under it (the child
+     * swings instead) or absent altogether (nothing swings, and the bone would otherwise
+     * spend a slot of the model's bone budget on a segment that is dropped again a few
+     * lines later). See the class comment for both shapes and for why the lever itself -
+     * the other half of "this piece cannot move" - is out of this method's reach.
+     *
      * @param bones            the bone table
      * @param carriesGeometry  which bones carry mesh, or null to accept every bone - the
      *                         animator's path has no mesh at classification time and
@@ -207,8 +236,17 @@ public final class YsmPhysicsChains {
         if (bones == null) {
             return chains;
         }
-        int limit = maxChains();
-        if (limit <= 0) {
+        // The list is not truncated here. It used to be cut at the same number that caps the
+        // simulation, which quietly turned "the first N candidates in bone order" into the set of
+        // pieces that exist: on a model with two dozen hanging bones the cut falls inside the
+        // garment, so some panels swing and the rest are bolted down - and which ones is decided by
+        // bone order, which no author chose and no reader of the log can see. What bounds the work
+        // is the cap on simulated bones, applied to whole pieces in YsmPhysicsParts#selectBones and
+        // reported when it bites. The backstop here is only against a pathological table.
+        int limit = YsmPhysicsTuning.maxChains() == YsmPhysicsTuning.AUTO
+                ? Integer.MAX_VALUE
+                : Math.max(64, YsmPhysicsTuning.maxChains() * 4);
+        if (YsmPhysicsTuning.maxChains() <= 0) {
             return chains;
         }
 
@@ -227,9 +265,11 @@ public final class YsmPhysicsChains {
             if (!hangs(bones, i)) {
                 continue;
             }
-            if (carriesGeometry != null && !carriesGeometry.test(i) && hasGeometricDescendant(bones, i, carriesGeometry)) {
-                // Something under this bone holds the geometry, so that is the bone to
-                // swing; this one is a container by another name. See the method comment.
+            if (carriesGeometry != null && !carriesGeometry.test(i)) {
+                // Nothing of this bone's own is drawn, so there is no geometry for the swing to
+                // carry and no lever to measure. Whether the geometry is under it (the child
+                // becomes the chain) or nowhere at all (nothing does), this bone is not a chain.
+                // See "Why a chain must hold geometry of its own" in the class comment.
                 continue;
             }
             if (continuesAnAcceptedChain(chains, bones, i)) {
@@ -250,17 +290,6 @@ public final class YsmPhysicsChains {
                     hangsAroundLegs(parentJoint)));
         }
         return chains;
-    }
-
-    /** Whether any bone under this one carries mesh. */
-    private static boolean hasGeometricDescendant(YSMRuntimeModel.BoneRt[] bones, int index,
-                                                  java.util.function.IntPredicate carriesGeometry) {
-        for (int i = 0; i < bones.length; i++) {
-            if (i != index && bones[i] != null && descendsFrom(bones, i, index) && carriesGeometry.test(i)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     /**
@@ -338,8 +367,51 @@ public final class YsmPhysicsChains {
                 return true;
             }
         }
+        return isPlaceholderName(lower);
+    }
+
+    /**
+     * Whether a bone's name is a placeholder rather than a name - {@code bone5}, {@code bone_12}.
+     *
+     * <p>These matter because a candidate is accepted when it - <i>or an ancestor</i> - reads as
+     * cloth, so a bone with no meaning of its own still gets swept in: the shipped maid has a
+     * {@code bone5} hanging under a garment container, and the log lists it among the skirt's
+     * pieces. Its lever is a full block, the longest in the model, so it is not a small mistake -
+     * swinging it moves whatever it carries the way a one-block arm would.
+     *
+     * <p>The test is narrow on purpose: a name is a placeholder only when it is <i>entirely</i> a
+     * generic stem plus a number. Real bones are named after what they are ({@code LM2},
+     * {@code FFM3_1}, {@code BackHairLeftD3}) and every one of those has to survive.
+     */
+    private static boolean isPlaceholderName(String lowerCaseName) {
+        for (String stem : PLACEHOLDER_STEMS) {
+            int start = lowerCaseName.indexOf(stem);
+            if (start < 0 || (start > 0 && Character.isLetterOrDigit(lowerCaseName.charAt(start - 1)))) {
+                continue;
+            }
+            int index = start + stem.length();
+            if (index < lowerCaseName.length() && lowerCaseName.charAt(index) == '_') {
+                index++;
+            }
+            if (index >= lowerCaseName.length()) {
+                continue;
+            }
+            boolean digitsOnly = true;
+            for (int i = index; i < lowerCaseName.length(); i++) {
+                if (!Character.isDigit(lowerCaseName.charAt(i))) {
+                    digitsOnly = false;
+                    break;
+                }
+            }
+            if (digitsOnly) {
+                return true;
+            }
+        }
         return false;
     }
+
+    /** Stems that name "some bone" rather than a thing. */
+    private static final String[] PLACEHOLDER_STEMS = {"bone", "cube", "box"};
 
     /**
      * Whether this candidate is a body part rather than a piece hanging off one.
@@ -460,5 +532,80 @@ public final class YsmPhysicsChains {
      */
     private static boolean hangsAroundLegs(int parentJoint) {
         return parentJoint == JOINT_TORSO;
+    }
+
+    // ------------------------------------------------------------------
+    // Which pieces are sewn to which
+    // ------------------------------------------------------------------
+
+    /**
+     * How near two panels' pivots must be, in bind space blocks, to count as sewn together.
+     *
+     * <p>A few centimetres: the panels of a skirt are modelled side by side around the waist, so
+     * their tops are close together while their hems spread apart. Coupling on the pivot rather
+     * than on the geometry is deliberate - what has to move together is where the fabric is
+     * <i>attached</i>, not where it happens to hang.
+     */
+    static final float KNIT_RADIUS = 0.18F;
+
+    /**
+     * How alike two pieces' rest directions must be to count as sewn together.
+     *
+     * <p>Roughly forty degrees. A skirt's panels fan out around the waist, so neighbours differ by
+     * a modest angle; the front and back panels differ by much more and should not be coupled, or
+     * the whole skirt would average itself into a single rigid cone.
+     */
+    static final float KNIT_MAX_ANGLE = 0.7F;
+
+    /** At most this many knit partners each, so the relaxation stays a short fixed loop. */
+    static final int KNIT_COUNT = 4;
+
+    /**
+     * Whether two segments are sewn to each other, and so must be pulled toward each other.
+     *
+     * <h2>Why the parent/child pairs belong here, which is the correction</h2>
+     *
+     * <p>{@code YsmPhysicsParts#wireNeighbours} left the parent/child pairs out on the argument that
+     * a chain's composition already ties them: the child's delta is composed under the parent's, so
+     * the child is carried rigidly and the two cannot come apart. That is true of the
+     * <i>attachment</i> and false of the <i>cloth</i>, and the difference is exactly the reported
+     * defect. Composition holds the child's vertices that sit on its own pivot - the top of the
+     * panel, at the waistband - and does nothing at all for the hem, which is where a panel is
+     * seen. The hem's world angle is the parent's swing <b>plus the child's own</b>, and the child's
+     * own is measured against the animation with no reference to its parent. So the pair that is
+     * physically the same piece of cloth is the one pair with no coupling at all, and the front
+     * panel of the shipped maid skirt logs 14.6 degrees beside the left one's 5.0: the pieces did
+     * not merely come apart, they were never held together in the first place.
+     *
+     * <p>The skirt's panels are a {@code FR -> FR1 -> FR2} chain, so on the maid <i>every</i>
+     * same-panel pair is a parent/child pair - which is why excluding them left the garment with
+     * no same-piece coupling whatsoever and only the waistband's neighbours to average against.
+     *
+     * <h2>The two thresholds</h2>
+     *
+     * <p>Pieces sewn at different places are coupled by geometry: pivots within
+     * {@link #KNIT_RADIUS} of each other and rest directions within {@link #KNIT_MAX_ANGLE}. The
+     * two thresholds are not applied to a parent and child, and that is deliberate rather than
+     * convenient: the relation is already a fact of the model, not an inference from geometry, so
+     * there is nothing to infer. It also covers the shape the radius would reject - a long panel
+     * hanging well below a short one and swinging as its child - which is a normal rig, and on
+     * which a distance test would silently drop the coupling it most needs.
+     */
+    static boolean sewnTogether(YsmPhysicsParts.Segment a, YsmPhysicsParts.Segment b,
+                                int parentOfA, int parentOfB) {
+        if (a == null || b == null) {
+            return false;
+        }
+        if (parentOfA == parentOfB) {
+            return true;
+        }
+        if (a.bindPivot() == null || b.bindPivot() == null
+                || a.bindRest() == null || b.bindRest() == null) {
+            return false;
+        }
+        if (a.bindPivot().distance(b.bindPivot()) > KNIT_RADIUS) {
+            return false;
+        }
+        return YsmDynamicBoneSolver.angleBetween(a.bindRest(), b.bindRest()) <= KNIT_MAX_ANGLE;
     }
 }

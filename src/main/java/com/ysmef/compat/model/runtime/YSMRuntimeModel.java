@@ -66,6 +66,17 @@ public final class YSMRuntimeModel {
     final List<CompiledAnim> parallels;
     final Map<String, CompiledAnim> states;
     final Map<String, CompiledAnim> conditionAnims;
+    /**
+     * Every animation as it was written, by name - the expressions, not the compiled channels.
+     *
+     * <p>Kept beside the compiled forms because the two answer different questions. A compiled
+     * animation is for running: channels, cursor ids, keyframe times. An authored physics animation
+     * has to be read as the author wrote it, expression by expression, because its whole content is
+     * the expressions - compiling them would leave nothing to evaluate (see
+     * {@code YsmPhysicsLayer}). Models are small, this is one reference per animation, and the
+     * alternative is re-parsing the model's JSON on the render thread.
+     */
+    final Map<String, ScriptAnim> authoredAnims;
     /** All v.roaming.<name> variable names referenced by this model's scripts. */
     final Set<String> roamingNames;
     /** Number of compiled keyframe channels; used to size per-animator cursor arrays. */
@@ -77,6 +88,31 @@ public final class YSMRuntimeModel {
      * no usable eyes/head geometry.
      */
     public final CameraTarget cameraTarget;
+    /**
+     * The bones this model's author wired to physics, recovered from the model's
+     * animation controllers and the animations they play (see
+     * {@link YsmPhysicsBinding}). Empty when the model carries no such evidence, in
+     * which case the runtime falls back to classifying bone names.
+     */
+    public final List<YsmPhysicsBinding.Part> physicsParts;
+    /**
+     * The name of the animation the model's physics is written in, or null when it declares none.
+     *
+     * <p>The parts above say which bones move and how they are tuned; this says what moves them.
+     * With it the runtime can evaluate the author's own expressions; without it there is a physics
+     * rig and nothing driving it, which is why a model converted before this field existed simply
+     * reports null and keeps whatever physics the runtime invents for it.
+     */
+    public final String physicsAnimation;
+    /**
+     * The scales the mesh's vertices were baked with ({@code width_scale} on x and z,
+     * {@code height_scale} on y; see EFMeshJsonWriter). Every bind-space quantity read
+     * from the mesh is already scaled, while the bone table's pivots are the raw authored
+     * ones, so the physics has to bring the two into the same units to find a bone's
+     * pivot. Defaults to YSM's own 0.7 for runtime JSONs written before the field existed.
+     */
+    public final float widthScale;
+    public final float heightScale;
 
     /** RealCamera bind-target UVs (texture space) + roll offset + bind-space head data, from the runtime JSON. */
     public static final class CameraTarget {
@@ -141,16 +177,47 @@ public final class YSMRuntimeModel {
     private YSMRuntimeModel(String modelId, BoneRt[] bones, Map<String, Integer> boneIndex,
                             List<CompiledAnim> parallels, Map<String, CompiledAnim> states,
                             Map<String, CompiledAnim> conditionAnims, Set<String> roamingNames, int channelCount,
-                            CameraTarget cameraTarget) {
+                            CameraTarget cameraTarget, List<YsmPhysicsBinding.Part> physicsParts) {
+        this(modelId, bones, boneIndex, parallels, states, conditionAnims, Map.of(), roamingNames, channelCount,
+                cameraTarget, physicsParts, null, DEFAULT_MODEL_SCALE, DEFAULT_MODEL_SCALE);
+    }
+
+    private YSMRuntimeModel(String modelId, BoneRt[] bones, Map<String, Integer> boneIndex,
+                            List<CompiledAnim> parallels, Map<String, CompiledAnim> states,
+                            Map<String, CompiledAnim> conditionAnims, Map<String, ScriptAnim> authoredAnims,
+                            Set<String> roamingNames, int channelCount,
+                            CameraTarget cameraTarget, List<YsmPhysicsBinding.Part> physicsParts,
+                            com.google.gson.JsonElement physicsJson, float widthScale, float heightScale) {
         this.modelId = modelId;
         this.bones = bones;
         this.boneIndex = boneIndex;
         this.parallels = parallels;
         this.states = states;
         this.conditionAnims = conditionAnims;
+        this.authoredAnims = authoredAnims == null ? Map.of() : authoredAnims;
         this.roamingNames = roamingNames;
         this.channelCount = channelCount;
         this.cameraTarget = cameraTarget;
+        this.physicsParts = physicsParts;
+        this.physicsAnimation = physicsJson == null ? null
+                : YsmPhysicsBinding.animationNameOf(physicsJson);
+        this.widthScale = widthScale;
+        this.heightScale = heightScale;
+    }
+
+    /** YSM's own default for {@code width_scale}/{@code height_scale}. */
+    public static final float DEFAULT_MODEL_SCALE = 0.7F;
+
+    /**
+     * An animation as its author wrote it, or null when this model has no animation by that name.
+     *
+     * <p>The compiled form is what runs an animation; this is what an authored <i>physics</i>
+     * animation has to be read from, because its content is the expressions themselves and
+     * compiling them leaves nothing to evaluate. A caller that only wants to play an animation
+     * wants the compiled forms instead.
+     */
+    public ScriptAnim authoredAnimation(String name) {
+        return name == null ? null : this.authoredAnims.get(name);
     }
 
     public YSMPlayerAnimator animatorFor(LivingEntity entity) {
@@ -807,6 +874,7 @@ public final class YSMRuntimeModel {
         // animations
         List<CompiledAnim> parallels = new ArrayList<>();
         Map<String, CompiledAnim> states = new HashMap<>();
+        Map<String, ScriptAnim> authoredAnims = new HashMap<>();
         Map<String, CompiledAnim> conditions = new HashMap<>();
         Set<String> brokenAnims = new HashSet<>();
         JsonObject anims = root.has("animations") ? root.getAsJsonObject("animations") : null;
@@ -815,7 +883,11 @@ public final class YSMRuntimeModel {
             for (Map.Entry<String, JsonElement> entry : anims.entrySet()) {
                 String name = entry.getKey();
                 try {
-                    CompiledAnim anim = compileAnim(ScriptJson.animationsFromJson(name, entry.getValue().getAsJsonObject()), boneIndex);
+                    ScriptAnim authored = ScriptJson.animationsFromJson(name, entry.getValue().getAsJsonObject());
+                    CompiledAnim anim = compileAnim(authored, boneIndex);
+                    // The source is kept as well as the compiled form: an authored physics animation
+                    // is its expressions, and they are gone once it is compiled.
+                    authoredAnims.put(name, authored);
                     if (name.startsWith("pre_parallel") || name.startsWith("parallel")) {
                         parallels.add(anim);
                     } else if (isConditionAnim(name)) {
@@ -837,17 +909,46 @@ public final class YSMRuntimeModel {
         parallels.sort(Comparator.comparing((CompiledAnim a) -> a.name.startsWith("pre_parallel") ? 0 : 1)
                 .thenComparing(a -> a.name));
         CameraTarget cameraTarget = parseCameraTarget(root);
-        YSMRuntimeModel model = new YSMRuntimeModel(modelId, bones, boneIndex, parallels, states, conditions,
-                collectRoamingNames(root), nextChannelId, cameraTarget);
+        float[] scale = parseModelScale(root);
+        YSMRuntimeModel model = new YSMRuntimeModel(modelId, bones, boneIndex, parallels, states, conditions, authoredAnims,
+                collectRoamingNames(root), nextChannelId, cameraTarget,
+                YsmPhysicsBinding.fromJson(root.get("physics")), root.get("physics"), scale[0], scale[1]);
         if (cameraTarget != null) {
             com.ysmef.compat.realcamera.YsmRealCameraBridge.onRuntimeModelLoaded(modelId, cameraTarget);
         }
         return model;
     }
 
+    /**
+     * The optional {@code "scale": [width, height]} section written by EFMeshJsonWriter.
+     *
+     * <p>Falls back to YSM's own 0.7 when absent, which is the value every runtime JSON
+     * written before this field existed was produced with - so an older cache file keeps
+     * working instead of silently giving the physics pivots that are 1/0.7 too large.
+     */
+    private static float[] parseModelScale(JsonObject root) {
+        float[] fallback = {DEFAULT_MODEL_SCALE, DEFAULT_MODEL_SCALE};
+        if (!root.has("scale") || !root.get("scale").isJsonArray()) {
+            return fallback;
+        }
+        try {
+            JsonArray array = root.getAsJsonArray("scale");
+            if (array.size() < 2) {
+                return fallback;
+            }
+            float width = array.get(0).getAsFloat();
+            float height = array.get(1).getAsFloat();
+            if (!Float.isFinite(width) || width <= 0.0F || !Float.isFinite(height) || height <= 0.0F) {
+                return fallback;
+            }
+            return new float[]{width, height};
+        } catch (RuntimeException e) {
+            return fallback;
+        }
+    }
+
     /** The optional "camera" section written by EFMeshJsonWriter (RealCamera bind target). */
-    private static CameraTarget parseCameraTarget(JsonObject root) {
-        if (!root.has("camera") || !root.get("camera").isJsonObject()) {
+    private static CameraTarget parseCameraTarget(JsonObject root) {        if (!root.has("camera") || !root.get("camera").isJsonObject()) {
             return null;
         }
         try {
@@ -1038,3 +1139,5 @@ public final class YSMRuntimeModel {
         return axes;
     }
 }
+
+

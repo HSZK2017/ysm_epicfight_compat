@@ -34,6 +34,17 @@ public class YsmBinaryReader {
         /** Every parsed animation, including the wheel-selectable "extra" animations. */
         public final Map<String, com.ysmef.compat.ysm.script.ScriptAnim> allAnimations = new LinkedHashMap<>();
         /**
+         * Animation controllers: controller name -&gt; every animation name its states
+         * play, in read order.
+         *
+         * <p>Kept because the controller is where a YSM author states which animation is
+         * the model's physics animation (the bundled default controller plays
+         * {@code Hair_Physics} from {@code player.pre_parallel_0}), and that binding is
+         * the only naming-independent way to find the physics-driven bones - see
+         * {@link com.ysmef.compat.model.runtime.YsmPhysicsBinding}.
+         */
+        public final Map<String, List<String>> animationControllers = new LinkedHashMap<>();
+        /**
          * Wheel-selectable extra animations parsed from model properties
          * (animation name -> description / empty string).
          */
@@ -161,7 +172,7 @@ public class YsmBinaryReader {
         }
 
         if (format > 9) {
-            skipAnimationControllers(r, format, false);
+            readAnimationControllers(r, format, false, model.animationControllers);
             int animationControllerTableSize = r.readVarInt();
             for (int i = 0; i < animationControllerTableSize; ++i) {
                 r.readString();
@@ -272,7 +283,7 @@ public class YsmBinaryReader {
             readAnimations(r, format, model.allAnimations);
         }
 
-        skipAnimationControllers(r, format, true);
+        readAnimationControllers(r, format, true, model.animationControllers);
 
         int textureCount = r.readVarInt();
         if (textureCount < 0 || textureCount > 1_000_000) {
@@ -818,31 +829,58 @@ public class YsmBinaryReader {
         }
     }
 
+    /** Parse a controller section whose contents are of no interest (sub-entities). */
     private static void skipAnimationControllers(Reader r, int format, boolean readName) {
+        readAnimationControllers(r, format, readName, new LinkedHashMap<>());
+    }
+
+    /**
+     * Parses the animation-controller section, recording which animations each
+     * controller's states play. The read order is byte-for-byte the one the previous
+     * skipping version used (see YSMBinarySerializer#writeAnimationControllers), so this
+     * cannot desynchronize the stream: only the discarding changed.
+     *
+     * <p>The state's {@code animations} entries are {@code (animationName, molangCondition)}
+     * pairs, so the key is the animation. {@code on_entry}/{@code on_exit} are molang
+     * scripts, not animation names, and are still discarded.
+     *
+     * @param out controller name -&gt; the animations its states play; for the legacy
+     *            formats, which carry only a numeric controller id, the id becomes the key
+     */
+    private static void readAnimationControllers(Reader r, int format, boolean readName,
+                                                 Map<String, List<String>> out) {
         int controllerCount = r.readVarInt();
         for (int i = 0; i < controllerCount; i++) {
+            String controllerName;
             if (format <= 15) {
-                r.readVarInt();
+                controllerName = "legacy#" + r.readVarInt();
             } else {
                 // The main entity's controllers carry a name + hash pair, the
                 // sub-entity ones only the hash (see the serializer's
                 // writeAnimationControllers with writeName=false).
-                if (readName) {
-                    r.readString();
-                }
+                controllerName = readName ? r.readString() : "";
                 r.readString();
             }
             int animationCount = r.readVarInt();
             for (int animIndex = 0; animIndex < animationCount; ++animIndex) {
-                r.readString();
+                // (animationName, initialState) of this controller entry.
+                String entryName = r.readString();
                 r.readString();
                 int statesCount = r.readVarInt();
                 for (int s = 0; s < statesCount; s++) {
                     r.readString();
                     int animationsSize = r.readVarInt();
                     for (int j = 0; j < animationsSize; j++) {
+                        String animation = r.readString();
                         r.readString();
-                        r.readString();
+                        if (animation != null && !animation.isEmpty()) {
+                            List<String> list = out.computeIfAbsent(
+                                    controllerName.isEmpty() ? entryName : controllerName,
+                                    key -> new ArrayList<>());
+                            if (!list.contains(animation)) {
+                                list.add(animation);
+                            }
+                        }
                     }
                     int transitionsSize = r.readVarInt();
                     for (int j = 0; j < transitionsSize; j++) {

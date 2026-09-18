@@ -1,0 +1,266 @@
+built-in package: builtin\misc\4_default_controllers  controllers/anims: 59/121
+
+### builtin\default
+  geometry bones      : 64  (simulatable 49)
+  own animations      : 341   own controllers play: 0
+  candidates walked   : 60
+    - parallel0 [own]: drives 1, exists 1, present 1
+    - pre_parallel0 [own]: drives 3, exists 3, present 2
+    - Hair_Physics [builtin]: drives 58, exists 1, present 0
+  SELECTED            : parallel0   declared=4 matched=3
+  parts               : Breast, FLongHair, MLongHair
+
+### builtin\misc\1_alex
+  geometry bones      : 61  (simulatable 45)
+  own animations      : 45   own controllers play: 0
+  candidates walked   : 59
+    - Hair_Physics [builtin]: drives 58, exists 1, present 0
+    - parallel0 [builtin]: drives 1, exists 0, present 0
+  SELECTED            : (none) -> name-based fallback
+  refused             : Hair_Physics (drives 58 bone(s), none of which this model has geometry for)
+
+### builtin\misc\2_steve
+  geometry bones      : 61  (simulatable 45)
+  own animations      : 46   own controllers play: 0
+  candidates walked   : 59
+    - Hair_Physics [builtin]: drives 58, exists 1, present 0
+    - parallel0 [builtin]: drives 1, exists 0, present 0
+  SELECTED            : (none) -> name-based fallback
+  refused             : Hair_Physics (drives 58 bone(s), none of which this model has geometry for)
+
+### builtin\misc\3_default_boy
+  geometry bones      : 58  (simulatable 48)
+  own animations      : 57   own controllers play: 0
+  candidates walked   : 59
+    - Hair_Physics [builtin]: drives 58, exists 1, present 0
+  SELECTED            : (none) -> name-based fallback
+  refused             : Hair_Physics (drives 58 bone(s), none of which this model has geometry for)
+
+### builtin\misc\4_default_controllers
+  geometry bones      : 141  (simulatable 125)
+  own animations      : 121   own controllers play: 59
+  candidates walked   : 59
+    - Hair_Physics [own]: drives 58, exists 58, present 57
+    - parallel0 [own]: drives 1, exists 1, present 1
+  SELECTED            : Hair_Physics   declared=59 matched=58
+  parts               : BackHairA1, BackHairA2, BackHairA3, BackHairB1, BackHairB2, BackHairB3, BackHairC1, BackHairC2, BackHairC3, BackHairD1, BackHairD2, BackHairD3, BackHairE1, BackHairE2, BackHairE3, BackHairLeftA1, BackHairLeftA2, BackHairLeftA3, BackHairLeftB1, BackHairLeftB2, BackHairLeftB3, BackHairLeftC1, BackHairLeftC2, BackHairLeftC3, BackHairLeftD1, BackHairLeftD2, BackHairLeftD3, BackHairRightA1, BackHairRightA2, BackHairRightA3, BackHairRightB1, BackHairRightB2, BackHairRightB3, BackHairRightC1, BackHairRightC2, BackHairRightC3, BackHairRightD1, BackHairRightD2, BackHairRightD3, Breast, F_BackHairB1, F_BackHairB2, F_BackHairB3, F_BackHairLeftB1, F_BackHairLeftB2, F_BackHairLeftB3, F_BackHairRightB1, F_BackHairRightB2, F_BackHairRightB3, MaWei_LeftA1, MaWei_LeftA2, MaWei_LeftA3, MaWei_RightA1, MaWei_RightA2, MaWei_RightA3, Right_SideDownHairM1, Right_SideDownHairM2, Right_SideDownHairM3
+
+### builtin\wine_fox\01_taisho_maid
+  geometry bones      : 195  (simulatable 175)
+  own animations      : 103   own controllers play: 5
+  candidates walked   : 65
+    - Hair_Physics [builtin]: drives 58, exists 1, present 0
+  SELECTED            : (none) -> name-based fallback
+  refused             : Hair_Physics (drives 58 bone(s), none of which this model has geometry for)
+
+### builtin\wine_fox\02_new_year
+  geometry bones      : 138  (simulatable 115)
+  own animations      : 86   own controllers play: 0
+  candidates walked   : 60
+    - Hair_Physics [builtin]: drives 58, exists 1, present 0
+  SELECTED            : (none) -> name-based fallback
+  refused             : Hair_Physics (drives 58 bone(s), none of which this model has geometry for)
+
+### builtin\wine_fox\03_astronaut
+  geometry bones      : 149  (simulatable 132)
+  own animations      : 145   own controllers play: 19
+  candidates walked   : 72
+    - parallel0 [own]: drives 1, exists 1, present 1
+    - pre_parallel0 [own]: drives 23, exists 7, present 6
+    - Hair_Physics [builtin]: drives 58, exists 1, present 0
+  SELECTED            : parallel0   declared=24 matched=7
+  parts               : Breast, FLongHair, FLongLeftHair, FLongRightHair, MLongHair, MLongLeftHair, MLongRightHair
+
+### builtin\wine_fox\04_kongfu
+  geometry bones      : 154  (simulatable 134)
+  own animations      : 94   own controllers play: 0
+  candidates walked   : 60
+    - Hair_Physics [builtin]: drives 58, exists 1, present 0
+  SELECTED            : (none) -> name-based fallback
+  refused             : Hair_Physics (drives 58 bone(s), none of which this model has geometry for)
+
+### builtin\wine_fox\05_magical
+  geometry bones      : 344  (simulatable 316)
+  own animations      : 163   own controllers play: 5
+  candidates walked   : 65
+    - Hair_Physics [builtin]: drives 58, exists 0, present 0
+  SELECTED            : (none) -> name-based fallback
+  refused             : Hair_Physics (drives 58 bone(s), none of which this model has geometry for)
+
+### builtin\wine_fox\06_hanfu
+  geometry bones      : 117  (simulatable 96)
+  own animations      : 93   own controllers play: 0
+  candidates walked   : 60
+    - parallel0 [own]: drives 24, exists 0, present 0
+    - Hair_Physics [builtin]: drives 58, exists 0, present 0
+  SELECTED            : (none) -> name-based fallback
+  refused             : parallel0 (drives 24 bone(s), none of which this model has geometry for)
+
+### builtin\wine_fox\07_jk
+  geometry bones      : 113  (simulatable 97)
+  own animations      : 97   own controllers play: 0
+  candidates walked   : 60
+    - Hair_Physics [builtin]: drives 58, exists 1, present 0
+  SELECTED            : (none) -> name-based fallback
+  refused             : Hair_Physics (drives 58 bone(s), none of which this model has geometry for)
+
+### builtin\wine_fox\08_sta
+  geometry bones      : 526  (simulatable 512)
+  own animations      : 288   own controllers play: 28
+  candidates walked   : 88
+    - pre_parallel0 [own]: drives 3, exists 2, present 2
+    - Hair_Physics [builtin]: drives 58, exists 0, present 0
+  SELECTED            : pre_parallel0   declared=3 matched=2
+  parts               : FLongHair, MLongHair
+
+### builtin\wine_fox\09_hailuo
+  geometry bones      : 153  (simulatable 133)
+  own animations      : 49   own controllers play: 0
+  candidates walked   : 60
+    - parallel0 [own]: drives 2, exists 2, present 2
+    - pre_parallel0 [own]: drives 3, exists 3, present 3
+    - Hair_Physics [builtin]: drives 58, exists 0, present 0
+  SELECTED            : parallel0   declared=5 matched=5
+  parts               : Breast, FLongHair, HUDIEJIE, MLongHair, Y2
+
+### builtin\wine_fox\10_zhiban
+  geometry bones      : 227  (simulatable 190)
+  own animations      : 63   own controllers play: 0
+  candidates walked   : 60
+    - parallel0 [own]: drives 23, exists 22, present 14
+    - Hair_Physics [builtin]: drives 58, exists 0, present 0
+  SELECTED            : parallel0   declared=23 matched=14
+  parts               : LeftMWfasi2, LeftMWfasi3, LeftMWQ2, LeftMWQ3, LeftMWQ4, LeftMWX2, LeftMWX3, RightMWfasi2, RightMWfasi3, RightMWQ2, RightMWQ3, RightMWQ4, RightMWX2, RightMWX3
+
+### builtin\wine_fox\11_salesperson
+  geometry bones      : 101  (simulatable 85)
+  own animations      : 89   own controllers play: 0
+  candidates walked   : 60
+    - Hair_Physics [builtin]: drives 58, exists 1, present 0
+  SELECTED            : (none) -> name-based fallback
+  refused             : Hair_Physics (drives 58 bone(s), none of which this model has geometry for)
+
+### builtin\wine_fox\12_little
+  geometry bones      : 153  (simulatable 132)
+  own animations      : 98   own controllers play: 0
+  candidates walked   : 60
+    - Hair_Physics [builtin]: drives 58, exists 1, present 0
+  SELECTED            : (none) -> name-based fallback
+  refused             : Hair_Physics (drives 58 bone(s), none of which this model has geometry for)
+
+### builtin\wine_fox\13_matured
+  geometry bones      : 260  (simulatable 235)
+  own animations      : 160   own controllers play: 0
+  candidates walked   : 60
+    - Hair_Physics [builtin]: drives 58, exists 1, present 0
+    - parallel0 [builtin]: drives 1, exists 0, present 0
+  SELECTED            : (none) -> name-based fallback
+  refused             : Hair_Physics (drives 58 bone(s), none of which this model has geometry for)
+
+### builtin\wine_fox\14_momo
+  geometry bones      : 300  (simulatable 252)
+  own animations      : 125   own controllers play: 33
+  candidates walked   : 77
+    - Hair_Physics [builtin]: drives 58, exists 1, present 0
+  SELECTED            : (none) -> name-based fallback
+  refused             : Hair_Physics (drives 58 bone(s), none of which this model has geometry for)
+
+### builtin\wine_fox\15_kluonoa
+  geometry bones      : 262  (simulatable 246)
+  own animations      : 271   own controllers play: 27
+  candidates walked   : 80
+    - 光环开机 [own]: drives 1, exists 1, present 1
+    - 光环常态 [own]: drives 1, exists 1, present 1
+    - pre_parallel0 [own]: drives 36, exists 36, present 36
+    - parallel1 [own]: drives 0, exists 0, present 0
+    - parallel4 [own]: drives 3, exists 3, present 3
+    - Hair_Physics [builtin]: drives 58, exists 1, present 0
+  SELECTED            : 光环开机   declared=41 matched=40
+  parts               : HairA1, HairA2, HairA3, HairA4, HairA5, HairA6, HairA7, HairB1, HairB2, HairB3, HairB4, HairB5, HairB6, HairB7, HairB8, HairB9, HairC1, HairC2, HairC3, HairC4, HairC5, HairC6, HairC7, HairC8, HairC9, HairD1, HairD2, HairD3, HairD4, HairD5, HairD6, HairD7, HairD8, HairD9, HaloRoot, LeftSideHair2, PointerArmor, PointerFuel, PointerSpeed, RightSideHair2
+
+### builtin\wine_fox\16_tactics
+  geometry bones      : 101  (simulatable 85)
+  own animations      : 109   own controllers play: 9
+  candidates walked   : 69
+    - Hair_Physics [builtin]: drives 58, exists 1, present 0
+  SELECTED            : (none) -> name-based fallback
+  refused             : Hair_Physics (drives 58 bone(s), none of which this model has geometry for)
+
+### builtin\wine_fox\17_mini
+  geometry bones      : 194  (simulatable 156)
+  own animations      : 120   own controllers play: 0
+  candidates walked   : 60
+    - parallel0 [own]: drives 1, exists 1, present 0
+    - pre_parallel0 [own]: drives 3, exists 2, present 2
+    - pre_parallel4 [own]: drives 4, exists 4, present 4
+    - pre_parallel5 [own]: drives 3, exists 3, present 3
+    - Hair_Physics [builtin]: drives 58, exists 0, present 0
+  SELECTED            : pre_parallel0   declared=11 matched=6
+  parts               : Bangs, bow, FLongHair, LeftSideHair, MLongHair, RightSideHair
+
+### builtin\wine_fox\18_wedding
+  geometry bones      : 317  (simulatable 300)
+  own animations      : 167   own controllers play: 0
+  candidates walked   : 60
+    - pre_parallel1 [own]: drives 1, exists 1, present 1
+    - Hair_Physics [builtin]: drives 58, exists 1, present 0
+  SELECTED            : pre_parallel1   declared=1 matched=1
+  parts               : HaloDress
+
+### builtin\wine_fox\19_nine_tailed
+  geometry bones      : 347  (simulatable 327)
+  own animations      : 121   own controllers play: 5
+  candidates walked   : 65
+    - Hair_Physics [builtin]: drives 58, exists 1, present 0
+  SELECTED            : (none) -> name-based fallback
+  refused             : Hair_Physics (drives 58 bone(s), none of which this model has geometry for)
+
+### builtin\wine_fox\20_survivor
+  geometry bones      : 204  (simulatable 167)
+  own animations      : 100   own controllers play: 0
+  candidates walked   : 60
+    - parallel2 [own]: drives 4, exists 4, present 4
+    - Hair_Physics [builtin]: drives 58, exists 1, present 0
+  SELECTED            : parallel2   declared=4 matched=4
+  parts               : bowL1, bowR1, tfA, tfB
+
+### builtin\wine_fox\21_saint
+  geometry bones      : 185  (simulatable 168)
+  own animations      : 189   own controllers play: 12
+  candidates walked   : 71
+    - pre_parallel2 [own]: drives 4, exists 4, present 4
+    - parallel0 [own]: drives 0, exists 0, present 0
+    - Hair_Physics [builtin]: drives 58, exists 0, present 0
+  SELECTED            : pre_parallel2   declared=4 matched=4
+  parts               : FLongHair, FLongLeftHair, FLongRightHair, MHatLong
+
+### builtin\wine_fox\22_elf
+  geometry bones      : 226  (simulatable 208)
+  own animations      : 181   own controllers play: 5
+  candidates walked   : 65
+    - pre_parallel7 [own]: drives 4, exists 0, present 0
+    - parallel7 [own]: drives 1, exists 0, present 0
+    - Hair_Physics [builtin]: drives 58, exists 0, present 0
+  SELECTED            : (none) -> name-based fallback
+  refused             : pre_parallel7 (drives 4 bone(s), none of which this model has geometry for)
+
+### custom\valencinaV1.20.11\valencinaV1.20.11
+  geometry bones      : 110  (simulatable 95)
+  own animations      : 319   own controllers play: 11
+  candidates walked   : 70
+    - parallel0 [own]: drives 1, exists 1, present 1
+    - pre_parallel0 [own]: drives 4, exists 4, present 3
+    - Hair_Physics [builtin]: drives 58, exists 1, present 0
+  SELECTED            : parallel0   declared=5 matched=4
+  parts               : Breast, FLongHair, MLongHair, Skirt
+
+### custom\valencinaV1.20.11\valencinaV2
+  geometry bones      : 111  (simulatable 96)
+  own animations      : 320   own controllers play: 11
+  candidates walked   : 70
+    - parallel0 [own]: drives 1, exists 1, present 1
+    - pre_parallel0 [own]: drives 4, exists 4, present 3
+    - Hair_Physics [builtin]: drives 58, exists 1, present 0
+  SELECTED            : parallel0   declared=5 matched=4
+  parts               : Breast, FLongHair, MLongHair, Skirt
+

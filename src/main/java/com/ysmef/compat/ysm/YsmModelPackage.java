@@ -30,8 +30,32 @@ import java.util.stream.Stream;
  */
 public final class YsmModelPackage {
 
-    private static final Path YSM_CONFIG = Paths.get("config", "yes_steve_model");
+    private static final Path YSM_CONFIG = configRoot();
     private static final String[] ROOTS = {"builtin", "built", "custom", "auth"};
+
+    /**
+     * YSM's config root - where the game reads its model packages from.
+     *
+     * <p>The override exists for the offline forensics runs, which read and convert a real
+     * install's packages without launching the game; nothing in the mod sets it, and with it unset
+     * this is the path YSM itself uses. Two spellings, because the path to a Minecraft instance
+     * usually contains spaces: {@code -Dysmef.golden.ysm_config_root=<path>} and, for the Gradle
+     * test runs that cannot pass a system property with spaces through, the
+     * {@code YSMEF_YSM_CONFIG_ROOT} environment variable.
+     */
+    private static Path configRoot() {
+        String override = System.getProperty(CONFIG_ROOT_PROPERTY, "");
+        if (override.isEmpty()) {
+            String fromEnvironment = System.getenv(CONFIG_ROOT_ENV);
+            override = fromEnvironment == null ? "" : fromEnvironment;
+        }
+        return override.isEmpty() ? Paths.get("config", "yes_steve_model") : Paths.get(override);
+    }
+
+    /** System property naming the config root; see {@link #configRoot()}. */
+    public static final String CONFIG_ROOT_PROPERTY = "ysmef.golden.ysm_config_root";
+    /** Environment variable naming the config root; see {@link #configRoot()}. */
+    public static final String CONFIG_ROOT_ENV = "YSMEF_YSM_CONFIG_ROOT";
 
     /**
      * Upper bound for a single source file (encrypted package, JSON or texture).
@@ -173,6 +197,15 @@ public final class YsmModelPackage {
     /** Every parsed animation of the package, including the wheel-selectable extra animations. */
     public final Map<String, com.ysmef.compat.ysm.script.ScriptAnim> allScriptAnims;
     /**
+     * Animation controllers of the package: controller name -&gt; the animations its
+     * states play. This is where a YSM author binds the model's physics animation
+     * (the bundled default controller plays {@code Hair_Physics} from
+     * {@code player.pre_parallel_0}), which is how the physics-driven bones are found
+     * without guessing from their names - see
+     * {@link com.ysmef.compat.model.runtime.YsmPhysicsBinding}.
+     */
+    public final Map<String, List<String>> animationControllers;
+    /**
      * Wheel-selectable extra animations declared by the model properties:
      * animation name -> description (often empty). Entries whose key starts
      * with '#' are wheel sub-menus, not animations.
@@ -187,20 +220,22 @@ public final class YsmModelPackage {
     private YsmModelPackage(String modelId, YSMGeoModel geometry, Map<String, byte[]> textures,
                             Map<String, int[]> textureInfo, float widthScale, float heightScale, String defaultTexture) {
         this(modelId, geometry, textures, textureInfo, java.util.Collections.emptyMap(), java.util.Collections.emptyMap(),
-                java.util.Collections.emptyMap(), widthScale, heightScale, defaultTexture, -1L);
+                java.util.Collections.emptyMap(), java.util.Collections.emptyMap(),
+                widthScale, heightScale, defaultTexture, -1L);
     }
 
     private YsmModelPackage(String modelId, YSMGeoModel geometry, Map<String, byte[]> textures,
                             Map<String, int[]> textureInfo, Map<String, com.ysmef.compat.ysm.script.ScriptAnim> scriptAnims,
                             float widthScale, float heightScale, String defaultTexture) {
         this(modelId, geometry, textures, textureInfo, scriptAnims, scriptAnims, java.util.Collections.emptyMap(),
-                widthScale, heightScale, defaultTexture, -1L);
+                java.util.Collections.emptyMap(), widthScale, heightScale, defaultTexture, -1L);
     }
 
     private YsmModelPackage(String modelId, YSMGeoModel geometry, Map<String, byte[]> textures,
                             Map<String, int[]> textureInfo, Map<String, com.ysmef.compat.ysm.script.ScriptAnim> scriptAnims,
                             Map<String, com.ysmef.compat.ysm.script.ScriptAnim> allScriptAnims,
                             Map<String, String> extraAnimations,
+                            Map<String, List<String>> animationControllers,
                             float widthScale, float heightScale, String defaultTexture, long contentFingerprint) {
         this.modelId = modelId;
         this.geometry = geometry;
@@ -209,6 +244,7 @@ public final class YsmModelPackage {
         this.scriptAnims = scriptAnims;
         this.allScriptAnims = allScriptAnims;
         this.extraAnimations = extraAnimations;
+        this.animationControllers = animationControllers;
         this.widthScale = widthScale;
         this.heightScale = heightScale;
         this.defaultTexture = defaultTexture;
@@ -300,6 +336,7 @@ public final class YsmModelPackage {
             YSMGeoModel geometry = null;
             Map<String, byte[]> textures = new LinkedHashMap<>();
             Map<String, com.ysmef.compat.ysm.script.ScriptAnim> allScriptAnims = new LinkedHashMap<>();
+            Map<String, List<String>> animationControllers = new LinkedHashMap<>();
             if (json.has("files")) {
                 JsonObject files = json.getAsJsonObject("files");
                 if (files.has("player")) {
@@ -345,18 +382,64 @@ public final class YsmModelPackage {
                             }
                         }
                     }
+                    if (player.has("animation_controllers")) {
+                        JsonElement controllers = player.get("animation_controllers");
+                        Iterable<JsonElement> controllerFiles = controllers.isJsonArray()
+                                ? controllers.getAsJsonArray()
+                                : java.util.Collections.singletonList(controllers);
+                        for (JsonElement elem : controllerFiles) {
+                            if (!elem.isJsonPrimitive()) {
+                                continue;
+                            }
+                            Path controllerPath = resolveInside(modelDir, elem.getAsString());
+                            if (controllerPath != null && isRegularFileInside(controllerPath, modelDir)) {
+                                loadAnimationControllers(controllerPath, animationControllers);
+                            }
+                        }
+                    }
                 }
             }
 
             if (geometry != null) {
                 Map<String, com.ysmef.compat.ysm.script.ScriptAnim> scriptAnims = new LinkedHashMap<>();
+                // The physics animation is the one exception to the runtime-relevant filter, and it
+                // has to be named here: it is the animation the model's controllers bind as its
+                // physics, and the runtime needs it *as written* - its whole content is the author's
+                // expressions, which a compiled animation no longer has. Without this the converter
+                // kept a bone list and threw away the physics that moves it.
+                //
+                // The candidate set spans the model's own controllers *and* YSM's built-in default
+                // set, because a model that inherits the default controllers never names its physics
+                // animation in a file of its own - which is the common case, not the exception. The
+                // animation is then cross-checked against the bones this model can actually move: a
+                // candidate that drives none of them is not this model's physics, and accepting it
+                // would replace the name-based classification with a list of bones the mesh cannot
+                // move, taking a model that simulated fifty-nine bones down to none.
+                BuiltinControllers builtin = builtinControllers();
+                com.ysmef.compat.model.runtime.YsmPhysicsBinding.Selection physics =
+                        com.ysmef.compat.model.runtime.YsmPhysicsBinding.select(
+                                com.ysmef.compat.model.runtime.YsmPhysicsBinding.Sources.of(
+                                        animationControllers, allScriptAnims,
+                                        builtin.controllers(), builtin.animations(),
+                                        com.ysmef.compat.model.EFMeshJsonWriter.simulatableBoneNames(geometry)));
+                String physicsAnimation = physics.animation();
+                // A physics animation inherited from the built-in set is not among this package's
+                // own files, and the runtime still has to evaluate it: carry the definition along.
+                if (physicsAnimation != null && !allScriptAnims.containsKey(physicsAnimation)) {
+                    com.ysmef.compat.ysm.script.ScriptAnim inherited = builtin.animations().get(physicsAnimation);
+                    if (inherited != null) {
+                        allScriptAnims.put(physicsAnimation, inherited);
+                    }
+                }
                 for (Map.Entry<String, com.ysmef.compat.ysm.script.ScriptAnim> entry : allScriptAnims.entrySet()) {
-                    if (com.ysmef.compat.ysm.script.ScriptJson.isRuntimeRelevant(entry.getKey())) {
+                    if (com.ysmef.compat.ysm.script.ScriptJson.isRuntimeRelevant(entry.getKey())
+                            || entry.getKey().equals(physicsAnimation)) {
                         scriptAnims.put(entry.getKey(), entry.getValue());
                     }
                 }
                 return new YsmModelPackage(modelId, geometry, textures, java.util.Collections.emptyMap(), scriptAnims,
-                        allScriptAnims, extraAnimations, widthScale, heightScale, defaultTexture, -1L);
+                        allScriptAnims, extraAnimations, animationControllers,
+                        widthScale, heightScale, defaultTexture, -1L);
             }
         }
         return null;
@@ -391,6 +474,269 @@ public final class YsmModelPackage {
         }
     }
 
+    /**
+     * Reads one Bedrock animation-controller file and merges every controller's played
+     * animations into {@code out}.
+     *
+     * <p>Bedrock nests these as
+     * {@code animation_controllers -> <controller name> -> states -> <state name> -> animations},
+     * and an {@code animations} entry is either a bare name or a
+     * {@code { "name": "molang condition" }} object. Both forms are read: the bare form is
+     * what the bundled default controller uses for the physics animation
+     * ({@code "animations": ["Hair_Physics", ...]}), and the object form is what the same
+     * file uses everywhere else.
+     */
+    private static void loadAnimationControllers(Path controllerPath, Map<String, List<String>> out) {
+        try {
+            controllerAnimationsOf(JsonParser.parseString(readStringBounded(controllerPath)).getAsJsonObject(), out);
+        } catch (Exception e) {
+            // One broken controller file must not abort the package: the mesh still has to
+            // convert. The physics classification then simply falls back to bone names.
+            com.ysmef.compat.YSMEpicFightCompat.LOGGER.warn(
+                    "YSM-EF Compat: failed to parse animation controller file '{}': {}",
+                    controllerPath.getFileName(), e.toString());
+        }
+    }
+
+    /**
+     * Merges the played animations of every controller in one parsed controller file into
+     * {@code out}.
+     *
+     * <p>Separated from the file reading so the key names can be tested against a real
+     * controller file: a wrong key here does not fail loudly, it makes every model fall back
+     * to classifying its physics bones by name - which is the thing the classification exists
+     * to stop doing.
+     */
+    static void controllerAnimationsOf(JsonObject root, Map<String, List<String>> out) {
+        if (root == null || !root.has("animation_controllers")
+                || !root.get("animation_controllers").isJsonObject()) {
+            return;
+        }
+        for (Map.Entry<String, JsonElement> controller
+                : root.getAsJsonObject("animation_controllers").entrySet()) {
+            if (!controller.getValue().isJsonObject()) {
+                continue;
+            }
+            JsonElement statesElement = controller.getValue().getAsJsonObject().get("states");
+            if (statesElement == null || !statesElement.isJsonObject()) {
+                continue;
+            }
+            JsonObject states = statesElement.getAsJsonObject();
+            List<String> names = out.computeIfAbsent(controller.getKey(), key -> new ArrayList<>());
+            for (Map.Entry<String, JsonElement> state : states.entrySet()) {
+                if (!state.getValue().isJsonObject()) {
+                    continue;
+                }
+                JsonElement animations = state.getValue().getAsJsonObject().get("animations");
+                if (animations == null || !animations.isJsonArray()) {
+                    continue;
+                }
+                for (JsonElement entry : animations.getAsJsonArray()) {
+                    String name = playedAnimationName(entry);
+                    if (name != null && !name.isEmpty() && !names.contains(name)) {
+                        names.add(name);
+                    }
+                }
+            }
+        }
+    }
+
+    /** The animation name of a controller state's {@code animations} entry, or null. */
+    private static String playedAnimationName(JsonElement entry) {
+        if (entry == null || entry.isJsonNull()) {
+            return null;
+        }
+        if (entry.isJsonPrimitive()) {
+            return entry.getAsString();
+        }
+        if (entry.isJsonObject()) {
+            for (Map.Entry<String, JsonElement> property : entry.getAsJsonObject().entrySet()) {
+                return property.getKey();
+            }
+        }
+        return null;
+    }
+
+    // ------------------------------------------------------------------
+    // YSM's built-in default controller set
+    // ------------------------------------------------------------------
+
+    /**
+     * The package relative id YSM ships its built-in controllers in. The name is a convention,
+     * not a contract, so a missing one is looked for under the roots as well
+     * ({@link #findDefaultControllerPackage}) and a missing set is reported rather than
+     * swallowed - see {@link #builtinControllers()}.
+     */
+    private static final String DEFAULT_CONTROLLER_PACKAGE = "misc/4_default_controllers";
+
+    /**
+     * The controllers YSM applies to a model that declares none, and the animations they play.
+     *
+     * <p>This is the half of the physics binding that lives outside the model's own package.
+     * {@code player.pre_parallel_0} plays {@code Hair_Physics}, and a model inherits that
+     * controller whether or not it writes one of its own - the shipped maid's controller file
+     * holds a single {@code player.post_main} state and nothing else. Without this table the
+     * detection can only see the model's own controllers, which for most real models means
+     * seeing no physics at all and guessing from bone names.
+     *
+     * @param source            the relative id of the package the set was read from, for the log
+     * @param controllers       controller name -&gt; the animations its states play
+     * @param animations        every animation of that package, by name; consulted only for a
+     *                          name the model does not define itself
+     * @param unavailableReason why the set is empty, or empty when it was read
+     */
+    public record BuiltinControllers(String source, Map<String, List<String>> controllers,
+                                     Map<String, com.ysmef.compat.ysm.script.ScriptAnim> animations,
+                                     String unavailableReason) {
+
+        /** Whether the built-in set was read and can be used as a second candidate source. */
+        public boolean available() {
+            return !controllers.isEmpty() && !animations.isEmpty();
+        }
+
+        private static BuiltinControllers unavailable(String reason) {
+            return new BuiltinControllers("", java.util.Collections.emptyMap(),
+                    java.util.Collections.emptyMap(), reason);
+        }
+    }
+
+    private static volatile BuiltinControllers builtinControllers;
+
+    /**
+     * YSM's built-in default controller set, read once per JVM.
+     *
+     * <p>Fail closed and observable: when the set cannot be read the caller keeps working on the
+     * model's own tables - exactly the behaviour before this source existed - and one line says
+     * so, because a feature that quietly stops finding anything looks identical to a model that
+     * declares nothing.
+     */
+    public static BuiltinControllers builtinControllers() {
+        BuiltinControllers cached = builtinControllers;
+        if (cached != null) {
+            return cached;
+        }
+        synchronized (YsmModelPackage.class) {
+            if (builtinControllers == null) {
+                BuiltinControllers loaded = loadBuiltinControllers();
+                builtinControllers = loaded;
+                if (!loaded.available()) {
+                    com.ysmef.compat.YSMEpicFightCompat.LOGGER.warn(
+                            "YSM-EF Compat: [physics] YSM's built-in default controller set is unavailable ({}); "
+                                    + "physics detection falls back to each model's own controllers",
+                            loaded.unavailableReason());
+                }
+            }
+            return builtinControllers;
+        }
+    }
+
+    private static BuiltinControllers loadBuiltinControllers() {
+        List<String> tried = new ArrayList<>();
+        Path dir = findDefaultControllerPackage(tried);
+        if (dir == null) {
+            return BuiltinControllers.unavailable("no bundled package named for default controllers under '"
+                    + YSM_CONFIG.toAbsolutePath() + "' (tried " + String.join(", ", tried) + ")");
+        }
+        String source = relativeToConfig(dir);
+        Path manifest = dir.resolve("ysm.json");
+        if (!isRegularFileInside(manifest, dir)) {
+            return BuiltinControllers.unavailable("'" + source + "' has no readable ysm.json");
+        }
+        Map<String, List<String>> controllers = new LinkedHashMap<>();
+        Map<String, com.ysmef.compat.ysm.script.ScriptAnim> animations = new LinkedHashMap<>();
+        try {
+            JsonObject json = JsonParser.parseString(readStringBounded(manifest)).getAsJsonObject();
+            JsonObject files = json.has("files") && json.get("files").isJsonObject()
+                    ? json.getAsJsonObject("files") : null;
+            JsonObject player = files != null && files.has("player") && files.get("player").isJsonObject()
+                    ? files.getAsJsonObject("player") : null;
+            if (player == null) {
+                return BuiltinControllers.unavailable("'" + source + "' declares no files.player section");
+            }
+            if (player.has("animation")) {
+                for (Map.Entry<String, JsonElement> entry : player.getAsJsonObject("animation").entrySet()) {
+                    Path animPath = resolveInside(dir, entry.getValue().getAsString());
+                    if (animPath != null && isRegularFileInside(animPath, dir)) {
+                        loadScriptAnims(animPath, animations, "extra".equals(entry.getKey()));
+                    }
+                }
+            }
+            if (player.has("animation_controllers")) {
+                JsonElement declared = player.get("animation_controllers");
+                Iterable<JsonElement> controllerFiles = declared.isJsonArray()
+                        ? declared.getAsJsonArray()
+                        : java.util.Collections.singletonList(declared);
+                for (JsonElement elem : controllerFiles) {
+                    if (!elem.isJsonPrimitive()) {
+                        continue;
+                    }
+                    Path controllerPath = resolveInside(dir, elem.getAsString());
+                    if (controllerPath != null && isRegularFileInside(controllerPath, dir)) {
+                        loadAnimationControllers(controllerPath, controllers);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            return BuiltinControllers.unavailable("'" + source + "' could not be read: " + e);
+        }
+        if (!controllers.isEmpty() && animations.isEmpty()) {
+            return BuiltinControllers.unavailable("'" + source + "' declares controllers but no readable animation file");
+        }
+        return new BuiltinControllers(source, controllers, animations, "");
+    }
+
+    /**
+     * The bundled default-controller package: the conventional id first, then any bundled
+     * package whose directory is named for default controllers, in path order so the answer
+     * does not depend on how the file system enumerates directories.
+     */
+    private static Path findDefaultControllerPackage(List<String> tried) {
+        // The id is relative to a root, exactly like every other model id, so it is looked for
+        // under each root in the order the roots are searched for a model.
+        for (String root : ROOTS) {
+            Path preferred = YSM_CONFIG.resolve(root)
+                    .resolve(DEFAULT_CONTROLLER_PACKAGE.replace('/', java.io.File.separatorChar));
+            if (Files.isDirectory(preferred)) {
+                return preferred;
+            }
+            tried.add(root + '/' + DEFAULT_CONTROLLER_PACKAGE);
+        }
+        List<Path> candidates = new ArrayList<>();
+        for (String root : ROOTS) {
+            Path rootPath = YSM_CONFIG.resolve(root);
+            if (!Files.isDirectory(rootPath)) {
+                continue;
+            }
+            try (Stream<Path> stream = Files.walk(rootPath, 3)) {
+                stream.filter(Files::isDirectory)
+                        .filter(path -> mentionsDefaultControllers(path.getFileName().toString()))
+                        .forEach(candidates::add);
+            } catch (IOException ignored) {
+                // An unreadable root simply cannot contribute a candidate.
+            }
+        }
+        candidates.sort(java.util.Comparator.comparing(Path::toString));
+        if (candidates.isEmpty()) {
+            return null;
+        }
+        tried.add(candidates.get(0).toString());
+        return candidates.get(0);
+    }
+
+    private static boolean mentionsDefaultControllers(String directoryName) {
+        String lower = directoryName.toLowerCase(java.util.Locale.ROOT);
+        return lower.contains("default_controller");
+    }
+
+    private static String relativeToConfig(Path path) {
+        try {
+            return YSM_CONFIG.toAbsolutePath().normalize().relativize(path.toAbsolutePath().normalize())
+                    .toString().replace('\\', '/');
+        } catch (RuntimeException e) {
+            return path.toString();
+        }
+    }
+
     private static YsmModelPackage loadBinary(String modelId) throws IOException {
         Path safeModel = relativeModelPath(modelId);
         if (safeModel == null) {
@@ -412,7 +758,7 @@ public final class YsmModelPackage {
             // and would otherwise decrypt the whole package a second time.
             long contentFingerprint = contentFingerprintOfBinary(root, modelId, decrypted);
             return new YsmModelPackage(modelId, geometry, binary.textures, binary.textureInfo, binary.animations,
-                    binary.allAnimations, binary.extraAnimations,
+                    binary.allAnimations, binary.extraAnimations, binary.animationControllers,
                     binary.widthScale, binary.heightScale, binary.defaultTexture, contentFingerprint);
         }
         return null;

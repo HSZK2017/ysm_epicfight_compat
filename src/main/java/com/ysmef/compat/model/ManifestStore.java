@@ -27,12 +27,37 @@ public final class ManifestStore {
 
     /**
      * Bump when the generated mesh/runtime/descriptor formats change; entries from older
-     * generations are ignored and the models are converted again on next start.
+     * generations are ignored.
      *
-     * <p>12: quads are resampled onto a grid and vertices near a joint are blended between the
-     * two joints either side of it, instead of every vertex being bound rigidly to one.
+     * <p>Read this as "bump whenever {@link EFMeshJsonWriter} (or anything else that produces a
+     * cached artefact) would now write something different". Forgetting it does not fail loudly:
+     * the already-converted models keep their old artefacts and the change silently does nothing
+     * for exactly the models a user has been testing - which cost this feature several rounds,
+     * including the {@code physics} and {@code scale} sections of the runtime JSON and the
+     * geometry-driven joint binding below.
+     *
+     * <p>13 -&gt; 14 for the physics parts rewrite. The converter now finds the bones a model
+     * author wired to physics by reading the animation controllers - the model's own, plus YSM's
+     * bundled default controller set - and accepts a candidate animation only when it drives a
+     * bone the model has geometry for, recording the result in the runtime JSON's
+     * {@code "physics"} section. Every artifact cached at generation 13 has no such section (a
+     * sweep of the 83 runtime models on the development machine found {@code "physics"} zero
+     * times) and no way to acquire one, so without this bump a user who installs the new build
+     * keeps playing the old, un-simulated classification and sees no change at all - the exact
+     * silent no-op this constant exists to prevent.
+     *
+     * <p>14 -&gt; 15 for the skin joint of cloth, hair and tails. The mesh writer baked each
+     * vertex's Epic Fight joint with the name walk alone while the runtime bone table written next
+     * to it used the name walk plus the garment rule ("cloth at or below the hips belongs to the
+     * Torso"), so on the shipped maid 56 bones - 1800 of its 11283 vertices, 49 of them simulated
+     * segments - were <i>drawn</i> on the Chest joint and <i>simulated</i> against the Torso.
+     * {@link EFMeshJsonWriter#bakedJointId} now resolves both sides through the same overload. The
+     * mesh has to be rebuilt for that to be visible: a cached mesh whose bytes still hash to the
+     * manifest entry is trusted without re-running the writer, so without this bump the fix is a
+     * no-op for exactly the models that were tested, and the report it answers is a report about
+     * one of them.
      */
-    public static final int GENERATOR_VERSION = 12;
+    public static final int GENERATOR_VERSION = 15;
 
     private static final Path MANIFEST =
             Paths.get("config", "ysm_epicfight_compat").resolve("manifest.json");

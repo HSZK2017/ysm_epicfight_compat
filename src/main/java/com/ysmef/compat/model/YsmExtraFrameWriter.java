@@ -409,12 +409,12 @@ public final class YsmExtraFrameWriter {
         List<SampleBone> bones = new ArrayList<>();
         Map<String, Integer> byName = new HashMap<>();
         for (YSMGeoModel.Bone root : geoModel.topLevelBones) {
-            collectBone(root, -1, bones, byName, 0);
+            collectBone(root, geoModel, -1, bones, byName, 0);
         }
         return bones.toArray(new SampleBone[0]);
     }
 
-    private static void collectBone(YSMGeoModel.Bone bone, int parent,
+    private static void collectBone(YSMGeoModel.Bone bone, YSMGeoModel geoModel, int parent,
                                     List<SampleBone> out, Map<String, Integer> byName, int depth) {
         if (depth > YSMGeoModel.MAX_BONE_DEPTH) {
             throw new IllegalStateException(
@@ -423,13 +423,19 @@ public final class YsmExtraFrameWriter {
         SampleBone sample = new SampleBone();
         sample.bone = bone;
         sample.parent = parent;
-        sample.joint = YSMJointMapper.resolveJointId(bone);
+        // The model-aware overload, deliberately: `joint` decides which Epic Fight joint this bone's
+        // sampled motion is attributed to (`selectRepresentatives` picks one representative per
+        // joint, and `jointLocalFor` expresses the sample in that joint's frame), and the mesh's
+        // vertices are skinned to the same joint ({@link EFMeshJsonWriter#bakedJointId}). A cloth
+        // bone the garment rule redirects therefore animates the Torso it is drawn on, instead of
+        // writing a skirt panel's motion onto the Chest joint that no longer carries it.
+        sample.joint = YSMJointMapper.resolveJointId(bone, geoModel);
         sample.direct = YSMJointMapper.isDirectlyMapped(bone);
         int index = out.size();
         out.add(sample);
         byName.put(bone.name, index);
         for (YSMGeoModel.Bone child : bone.children) {
-            collectBone(child, index, out, byName, depth + 1);
+            collectBone(child, geoModel, index, out, byName, depth + 1);
         }
     }
 
