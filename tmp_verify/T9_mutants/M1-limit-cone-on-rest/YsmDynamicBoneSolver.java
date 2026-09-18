@@ -856,7 +856,7 @@ public final class YsmDynamicBoneSolver {
         // angle a weight asks for, and rests the piece on the stop instead of on the balance.
         resolveCollisions(state, pivot, this.rest, lever, maxAngle, colliders, segmentRadius,
                 this.target);
-        applySwingLimit(state, this.target, maxAngle);
+        applySwingLimit(state, this.rest, maxAngle);
 
         state.lastAngle = angleBetween(this.rest, state.direction);
         rotationFromTo(out, this.rest, state.direction);

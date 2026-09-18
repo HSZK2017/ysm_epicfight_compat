@@ -1,0 +1,69 @@
+﻿rest = (0.8660,-0.5000,0.0000)  (60 deg from vertical)
+
+--- world down, weight 0.92 ---
+  f0    dir=(0.8660,-0.5000,0.0000) offVert=  60.00 swingRest=   0.00 swingTarget=  55.87
+  f1    dir=(0.4088,-0.9126,0.0000) offVert=  24.13 swingRest=  35.87 swingTarget=  20.00
+  f5    dir=(0.1625,-0.9867,0.0000) offVert=   9.35 swingRest=  50.65 swingTarget=   5.23
+  f10   dir=(0.0464,-0.9989,0.0000) offVert=   2.66 swingRest=  57.34 swingTarget=   1.47
+  f30   dir=(0.0510,-0.9987,0.0000) offVert=   2.92 swingRest=  57.08 swingTarget=   1.21
+  f60   dir=(0.0507,-0.9987,0.0000) offVert=   2.91 swingRest=  57.09 swingTarget=   1.22
+  f150  dir=(0.0507,-0.9987,0.0000) offVert=   2.91 swingRest=  57.09 swingTarget=   1.22
+  f300  dir=(0.0507,-0.9987,0.0000) offVert=   2.91 swingRest=  57.09 swingTarget=   1.22
+
+--- body axis as down, weight 0.92 ---
+  f0    dir=(0.8660,-0.5000,0.0000) offVert=  60.00 swingRest=   0.00 swingTarget=   0.00
+  f1    dir=(0.8547,-0.5191,0.0000) offVert=  58.73 swingRest=   1.27 swingTarget=   1.27
+  f5    dir=(0.7704,-0.6376,0.0000) offVert=  50.39 swingRest=   9.61 swingTarget=   9.61
+  f10   dir=(0.6995,-0.7146,0.0000) offVert=  44.39 swingRest=  15.61 swingTarget=  15.61
+  f30   dir=(0.6856,-0.7280,0.0000) offVert=  43.28 swingRest=  16.72 swingTarget=  16.72
+  f60   dir=(0.6856,-0.7280,0.0000) offVert=  43.28 swingRest=  16.72 swingTarget=  16.72
+  f150  dir=(0.6856,-0.7280,0.0000) offVert=  43.28 swingRest=  16.72 swingTarget=  16.72
+  f300  dir=(0.6856,-0.7280,0.0000) offVert=  43.28 swingRest=  16.72 swingTarget=  16.72
+
+--- world down, weight 0.0 ---
+  f0    dir=(0.8660,-0.5000,0.0000) offVert=  60.00 swingRest=   0.00 swingTarget=   0.00
+  f1    dir=(0.8547,-0.5191,0.0000) offVert=  58.73 swingRest=   1.27 swingTarget=   1.27
+  f5    dir=(0.7704,-0.6376,0.0000) offVert=  50.39 swingRest=   9.61 swingTarget=   9.61
+  f10   dir=(0.6995,-0.7146,0.0000) offVert=  44.39 swingRest=  15.61 swingTarget=  15.61
+  f30   dir=(0.6856,-0.7280,0.0000) offVert=  43.28 swingRest=  16.72 swingTarget=  16.72
+  f60   dir=(0.6856,-0.7280,0.0000) offVert=  43.28 swingRest=  16.72 swingTarget=  16.72
+  f150  dir=(0.6856,-0.7280,0.0000) offVert=  43.28 swingRest=  16.72 swingTarget=  16.72
+  f300  dir=(0.6856,-0.7280,0.0000) offVert=  43.28 swingRest=  16.72 swingTarget=  16.72
+
+--- world down, weight 1.0 ---
+  f0    dir=(0.8660,-0.5000,0.0000) offVert=  60.00 swingRest=   0.00 swingTarget=  60.00
+  f1    dir=(0.3420,-0.9397,0.0000) offVert=  20.00 swingRest=  40.00 swingTarget=  20.00
+  f5    dir=(0.0991,-0.9951,0.0000) offVert=   5.69 swingRest=  54.31 swingTarget=   5.69
+  f10   dir=(-0.0065,-1.0000,0.0000) offVert=   0.37 swingRest=  60.37 swingTarget=   0.37
+  f30   dir=(0.0002,-1.0000,0.0000) offVert=   0.00 swingRest=  59.99 swingTarget=   0.00
+  f60   dir=(-0.0000,-1.0000,0.0000) offVert=   0.00 swingRest=  60.00 swingTarget=   0.00
+  f150  dir=(-0.0000,-1.0000,0.0000) offVert=   0.00 swingRest=  60.00 swingTarget=   0.00
+  f300  dir=(-0.0000,-1.0000,0.0000) offVert=   0.00 swingRest=  60.00 swingTarget=   0.00
+
+
+=== the settled angle at every weight, both down targets ===
+  weight | world down: off-vert |  swing | body axis: off-vert |  swing
+   0.00  |               43.28 |  16.72 |               43.28 |  16.72
+   0.30  |               30.65 |  29.35 |               43.28 |  16.72
+   0.60  |               16.55 |  43.45 |               43.28 |  16.72
+   0.80  |                7.68 |  52.32 |               43.28 |  16.72
+   0.92  |                2.91 |  57.09 |               43.28 |  16.72
+   1.00  |                0.00 |  60.00 |               43.28 |  16.72
+
+=== the lever sweep at the cloth weight, world down (the acceptance table) ===
+  lever | off-vertical | swing from rest | swing from target | pinned
+  0.030 |         0.89 |           59.11 |              3.24 | no
+  0.050 |         1.30 |           58.70 |              2.83 | no
+  0.090 |         1.87 |           58.13 |              2.26 | no
+  0.110 |         2.07 |           57.93 |              2.06 | no
+  0.180 |         2.57 |           57.43 |              1.56 | no
+  0.260 |         2.91 |           57.09 |              1.22 | no
+
+=== the lean sweep at the cloth weight ===
+  lean | off-vertical | swing from rest | from target
+     0 |         0.00 |            0.00 |        0.00
+    15 |         0.84 |           14.16 |        0.35
+    30 |         1.63 |           28.37 |        0.68
+    45 |         2.34 |           42.66 |        0.98
+    60 |         2.91 |           57.09 |        1.22
+    75 |         3.31 |           71.69 |        1.39

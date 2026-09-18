@@ -62,6 +62,19 @@ class MaidSkirtCoherenceTest {
     private static final float AIR_DRAG = YsmDynamicBoneSolver.AIR_DRAG;
 
     /**
+     * The gravity-follow weight these runs use, and where it says they are aimed.
+     *
+     * <p>Zero and the world's vertical, which is the pair every test in this file was written
+     * against: at zero the spring's target is the pose, so a skirt panel's coupling and its
+     * neighbours' agreement are measured with the pose as the only thing holding them - which is
+     * what the shipped log's numbers came from. The gravity-follow mechanism has its own tests in
+     * {@code YsmDynamicBoneSolverTest}; changing this constant here would move this file's baseline
+     * and invalidate the measurements it exists to pin.
+     */
+    private static final float NO_FOLLOW = 0.0F;
+    private static final Vector3f DOWN = new Vector3f(0.0F, -1.0F, 0.0F);
+
+    /**
      * A hand-authored panel hanging straight down, at the lever and mass this model's panels have.
      */
     private record Panel(String name, float lever, float mass) {}
@@ -354,7 +367,7 @@ class MaidSkirtCoherenceTest {
             pivot.set(0.0F, amplitude * (float) Math.sin(cadence * time), 0.0F);
             velocity.set(pivot).sub(previous).div(FRAME);
             previous.set(pivot);
-            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, panel.lever(),
+            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, panel.lever(),
                     FREQUENCY, DAMPING, panel.mass(), limit, body,
                     YsmDynamicBoneSolver.NO_COLLIDERS, 0.05F, null, FRAME, out);
             if (i > 300) {
@@ -376,7 +389,7 @@ class MaidSkirtCoherenceTest {
         Vector3f pivot = new Vector3f();
         Vector3f rest = new Vector3f(0.0F, -1.0F, 0.0F);
         for (int i = 0; i < 1200; i++) {
-            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, panel.lever(),
+            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, panel.lever(),
                     FREQUENCY, DAMPING, panel.mass(), limit, bodyVelocity,
                     YsmDynamicBoneSolver.NO_COLLIDERS, 0.05F, null, FRAME, out);
         }

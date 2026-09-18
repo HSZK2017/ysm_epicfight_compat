@@ -26,6 +26,13 @@ class YsmDynamicBoneSolverTest {
     private static final Vector3f DOWN = new Vector3f(0.0F, HANGING_DOWN, 0.0F);
     private static final Vector3f STILL = new Vector3f();
 
+    /**
+     * No gravity following: the spring's target is the posed rest direction, which is what every
+     * test written before the weight existed asserts. Named rather than written as {@code 0.0F} at
+     * fifty call sites so that "this test is about the pre-existing behaviour" is readable.
+     */
+    private static final float NO_FOLLOW = 0.0F;
+
     /** A collider set with one sphere, for the collision tests. */
     private static final class OneSphere implements YsmDynamicBoneSolver.Colliders {
         final Vector3f centre = new Vector3f();
@@ -93,13 +100,13 @@ class YsmDynamicBoneSolverTest {
         Vector3f rest = new Vector3f(DOWN);
 
         // Settle, then yank the pivot along +X for a fixed number of frames.
-        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, lever, 1.0F, 0.6F, 1.0F,
+        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, lever, 1.0F, 0.6F, 1.0F,
                 1.2F, STILL, YsmDynamicBoneSolver.NO_COLLIDERS, 0.05F, null, 0.016F, out);
         for (int i = 1; i <= 12; i++) {
             // 0.5 blocks/s^2, which on this test's 1 Hz spring stays under the ceiling for both
             // levers; see the test comment.
             pivot.set(0.5F * 0.5F * (i * 0.016F) * (i * 0.016F), 0.0F, 0.0F);
-            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, lever, 1.0F, 0.6F, 1.0F,
+            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, lever, 1.0F, 0.6F, 1.0F,
                     1.2F, STILL, YsmDynamicBoneSolver.NO_COLLIDERS, 0.05F, null, 0.016F, out);
         }
         return YsmDynamicBoneSolver.angleBetween(rest, state.direction);
@@ -118,7 +125,7 @@ class YsmDynamicBoneSolverTest {
         Vector3f rest = new Vector3f(1.0F, 0.0F, 0.0F);
 
         for (int i = 0; i < 60; i++) {
-            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, 0.4F, 1.0F, 0.6F, 1.0F,
+            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, 0.4F, 1.0F, 0.6F, 1.0F,
                     1.2F, STILL, YsmDynamicBoneSolver.NO_COLLIDERS, 0.05F, null, 0.016F, out);
         }
 
@@ -136,7 +143,7 @@ class YsmDynamicBoneSolverTest {
         Vector3f rest = new Vector3f(DOWN);
 
         for (int i = 0; i < 40; i++) {
-            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, 0.3F, 2.0F, 1.0F, 1.0F,
+            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, 0.3F, 2.0F, 1.0F, 1.0F,
                     1.2F, STILL, YsmDynamicBoneSolver.NO_COLLIDERS, 0.05F, null, 0.016F, out);
         }
 
@@ -165,7 +172,7 @@ class YsmDynamicBoneSolverTest {
         Vector3f body = new Vector3f(0.0F, 0.0F, -5.0F);
 
         for (int i = 0; i < 60; i++) {
-            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, 0.5F, 1.0F, 0.6F, 1.0F,
+            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, 0.5F, 1.0F, 0.6F, 1.0F,
                     1.2F, body, YsmDynamicBoneSolver.NO_COLLIDERS, 0.05F, null, 0.016F, out);
         }
 
@@ -198,7 +205,7 @@ class YsmDynamicBoneSolverTest {
         Vector3f rest = new Vector3f(DOWN);
         Vector3f body = new Vector3f(0.0F, 0.0F, -1.0F);
         for (int i = 0; i < 60; i++) {
-            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, 0.5F, 1.0F, 0.6F, mass,
+            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, 0.5F, 1.0F, 0.6F, mass,
                     1.2F, body, YsmDynamicBoneSolver.NO_COLLIDERS, 0.05F, null, 0.016F, out);
         }
         return YsmDynamicBoneSolver.angleBetween(rest, state.direction);
@@ -214,7 +221,7 @@ class YsmDynamicBoneSolverTest {
         YsmDynamicBoneSolver.SegmentState state = new YsmDynamicBoneSolver.SegmentState();
         Quaternionf out = new Quaternionf();
 
-        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, new Vector3f(), new Vector3f(DOWN), 0.5F,
+        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, new Vector3f(), new Vector3f(DOWN), 0.5F,
                 1.0F, 0.6F, 1.0F, 1.0F, STILL, YsmDynamicBoneSolver.NO_COLLIDERS, 0.05F, null, 0.016F, out);
 
         assertEquals(1.0F, out.w(), 1.0E-5F, "the first frame must not rotate the piece");
@@ -237,11 +244,11 @@ class YsmDynamicBoneSolverTest {
         Vector3f rest = new Vector3f(DOWN);
         float limit = 0.35F;
 
-        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, 0.5F, 1.0F, 0.0F, 1.0F,
+        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, 0.5F, 1.0F, 0.0F, 1.0F,
                 limit, STILL, YsmDynamicBoneSolver.NO_COLLIDERS, 0.05F, null, 0.016F, out);
         for (int i = 1; i <= 200; i++) {
             pivot.set(0.0F, 0.0F, 6.0F * i * 0.016F);
-            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, 0.5F, 1.0F, 0.0F, 1.0F,
+            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, 0.5F, 1.0F, 0.0F, 1.0F,
                     limit, STILL, YsmDynamicBoneSolver.NO_COLLIDERS, 0.05F, null, 0.016F, out);
             assertTrue(YsmDynamicBoneSolver.angleBetween(rest, state.direction) <= limit + 1.0E-3F,
                     "frame " + i + " bent past the limit");
@@ -268,9 +275,9 @@ class YsmDynamicBoneSolverTest {
         Vector3f pivot = new Vector3f();
         Vector3f rest = new Vector3f(DOWN);
         Vector3f body = new Vector3f(0.0F, 0.0F, -6.0F);
-        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, 0.5F, 1.0F, 0.6F, 1.0F,
+        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, 0.5F, 1.0F, 0.6F, 1.0F,
                 1.2F, body, YsmDynamicBoneSolver.NO_COLLIDERS, 0.05F, null, 0.016F, out);
-        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, 0.5F, 1.0F, 0.6F, 1.0F,
+        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, 0.5F, 1.0F, 0.6F, 1.0F,
                 1.2F, body, YsmDynamicBoneSolver.NO_COLLIDERS, 0.05F, null, dt, out);
         return YsmDynamicBoneSolver.angleBetween(rest, state.direction);
     }
@@ -322,7 +329,7 @@ class YsmDynamicBoneSolverTest {
         for (int frameIndex = 0; frameIndex < 400; frameIndex++) {
             float time = (tickQuantised ? (frameIndex / framesPerTick) * framesPerTick : frameIndex) * frame;
             pivot.set(0.02F * (float) Math.sin(2.0 * Math.PI * 1.0 * time), 0.0F, 0.0F);
-            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, lever, 2.36F, 0.6F, 1.0F,
+            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, lever, 2.36F, 0.6F, 1.0F,
                     0.349F, STILL, YsmDynamicBoneSolver.NO_COLLIDERS, 0.03F, null, frame, out);
         }
 
@@ -347,7 +354,7 @@ class YsmDynamicBoneSolverTest {
         for (int frameIndex = 0; frameIndex < 40; frameIndex++) {
             float t = frameIndex * 0.005F;
             pivot.set(0.5F * 30.0F * t * t, 0.0F, 0.0F);
-            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, lever, 2.36F, 0.6F, 1.0F,
+            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, lever, 2.36F, 0.6F, 1.0F,
                     limit, STILL, YsmDynamicBoneSolver.NO_COLLIDERS, 0.03F, null, 0.005F, out);
         }
 
@@ -372,13 +379,13 @@ class YsmDynamicBoneSolverTest {
         Vector3f rest = new Vector3f(DOWN);
         float lever = 0.14F;
 
-        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, lever, 2.36F, 0.6F, 1.0F,
+        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, lever, 2.36F, 0.6F, 1.0F,
                 0.349F, STILL, YsmDynamicBoneSolver.NO_COLLIDERS, 0.03F, null, 0.005F, out);
         for (int frameIndex = 1; frameIndex < 120; frameIndex++) {
             float t = frameIndex * 0.005F;
             // Accelerating downwards at 400 blocks/s^2: gravity times sixteen.
             pivot.set(0.0F, -0.5F * 400.0F * t * t, 0.0F);
-            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, lever, 2.36F, 0.6F, 1.0F,
+            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, lever, 2.36F, 0.6F, 1.0F,
                     0.349F, STILL, YsmDynamicBoneSolver.NO_COLLIDERS, 0.03F, null, 0.005F, out);
             assertTrue(state.direction.y <= 0.0F,
                     "frame " + frameIndex + " left the piece pointing upwards (y="
@@ -412,7 +419,7 @@ class YsmDynamicBoneSolverTest {
                     // Every frame the longest step the solver accepts, and a pivot that keeps
                     // being yanked, so the spring is never allowed to settle.
                     pivot.set(frame % 2 == 0 ? 0.1F : -0.1F, 0.02F * frame, 0.0F);
-                    YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, 0.15F, frequency, damping,
+                    YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, 0.15F, frequency, damping,
                             1.0F, limit, STILL, YsmDynamicBoneSolver.NO_COLLIDERS, 0.05F, null,
                             YsmDynamicBoneSolver.MAX_DT, out);
 
@@ -496,7 +503,7 @@ class YsmDynamicBoneSolverTest {
         Vector3f rest = new Vector3f(DOWN);
 
         for (int frame = 0; frame < 200; frame++) {
-            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, 0.3F, 1.0F, 0.6F, 1.0F,
+            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, 0.3F, 1.0F, 0.6F, 1.0F,
                     1.2F, STILL, YsmDynamicBoneSolver.NO_COLLIDERS, 0.05F, null,
                     yawRate, yawAccel, 0.016F, out);
         }
@@ -510,7 +517,7 @@ class YsmDynamicBoneSolverTest {
         YsmDynamicBoneSolver.SegmentState state = new YsmDynamicBoneSolver.SegmentState();
         Quaternionf out = new Quaternionf();
 
-        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, new Vector3f(), new Vector3f(DOWN), 0.0F,
+        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, new Vector3f(), new Vector3f(DOWN), 0.0F,
                 1.0F, 0.6F, 1.0F, 1.0F, STILL, YsmDynamicBoneSolver.NO_COLLIDERS, 0.05F, null, 0.016F, out);
 
         assertEquals(1.0F, out.w(), 1.0E-5F);
@@ -523,20 +530,20 @@ class YsmDynamicBoneSolverTest {
         Quaternionf out = new Quaternionf();
         YsmDynamicBoneSolver.SegmentState state = new YsmDynamicBoneSolver.SegmentState();
 
-        YsmDynamicBoneSolver.INSTANCE.update(null, GRAVITY, AIR_DRAG, new Vector3f(), new Vector3f(DOWN), 0.5F,
+        YsmDynamicBoneSolver.INSTANCE.update(null, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, new Vector3f(), new Vector3f(DOWN), 0.5F,
                 1.0F, 0.6F, 1.0F, 1.0F, STILL, YsmDynamicBoneSolver.NO_COLLIDERS, 0.05F, null, 0.016F, out);
         assertEquals(1.0F, out.w(), 1.0E-5F);
 
-        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, null, new Vector3f(DOWN), 0.5F,
+        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, null, new Vector3f(DOWN), 0.5F,
                 1.0F, 0.6F, 1.0F, 1.0F, STILL, YsmDynamicBoneSolver.NO_COLLIDERS, 0.05F, null, 0.016F, out);
         assertEquals(1.0F, out.w(), 1.0E-5F);
 
-        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, new Vector3f(Float.NaN, 0.0F, 0.0F),
+        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, new Vector3f(Float.NaN, 0.0F, 0.0F),
                 new Vector3f(DOWN), 0.5F, 1.0F, 0.6F, 1.0F, 1.0F, STILL,
                 YsmDynamicBoneSolver.NO_COLLIDERS, 0.05F, null, 0.016F, out);
         assertEquals(1.0F, out.w(), 1.0E-5F, "a NaN pivot must not poison the state");
 
-        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, new Vector3f(), new Vector3f(DOWN), 0.5F,
+        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, new Vector3f(), new Vector3f(DOWN), 0.5F,
                 1.0F, 0.6F, 1.0F, 1.0F, STILL, YsmDynamicBoneSolver.NO_COLLIDERS, 0.05F, null,
                 Float.NaN, out);
         assertTrue(Float.isFinite(state.direction.x) && Float.isFinite(state.direction.y));
@@ -551,15 +558,15 @@ class YsmDynamicBoneSolverTest {
         Vector3f rest = new Vector3f(DOWN);
         Vector3f body = new Vector3f(0.0F, 0.0F, -6.0F);
 
-        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, 0.5F, 1.0F, 0.6F, 1.0F,
+        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, 0.5F, 1.0F, 0.6F, 1.0F,
                 1.2F, body, YsmDynamicBoneSolver.NO_COLLIDERS, 0.05F, null, 0.016F, out);
         for (int i = 0; i < 20; i++) {
-            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, 0.5F, 1.0F, 0.6F, 1.0F,
+            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, 0.5F, 1.0F, 0.6F, 1.0F,
                     1.2F, body, YsmDynamicBoneSolver.NO_COLLIDERS, 0.05F, null, 0.016F, out);
         }
         Vector3f before = new Vector3f(state.direction);
 
-        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, 0.5F, 1.0F, 0.6F, 1.0F,
+        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, 0.5F, 1.0F, 0.6F, 1.0F,
                 1.2F, body, YsmDynamicBoneSolver.NO_COLLIDERS, 0.05F, null, 0.0F, out);
 
         assertEquals(before.x, state.direction.x, 1.0E-6F);
@@ -590,10 +597,10 @@ class YsmDynamicBoneSolverTest {
         Vector3f pivot = new Vector3f();
         Vector3f rest = new Vector3f(DOWN);
 
-        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, 0.6F, 1.0F, 0.6F, 1.0F,
+        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, 0.6F, 1.0F, 0.6F, 1.0F,
                 1.2F, STILL, sphere, 0.1F, null, 0.016F, out);
         for (int i = 0; i < 90; i++) {
-            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, 0.6F, 1.0F, 0.6F, 1.0F,
+            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, 0.6F, 1.0F, 0.6F, 1.0F,
                     1.2F, STILL, sphere, 0.1F, null, 0.016F, out);
         }
 
@@ -628,7 +635,7 @@ class YsmDynamicBoneSolverTest {
         Vector3f rest = new Vector3f(DOWN);
 
         for (int i = 0; i < 60; i++) {
-            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, 0.6F, 1.0F, 0.6F, 1.0F,
+            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, 0.6F, 1.0F, 0.6F, 1.0F,
                     1.2F, STILL, sphere, 0.1F, null, 0.016F, out);
         }
 
@@ -650,7 +657,7 @@ class YsmDynamicBoneSolverTest {
         Vector3f rest = new Vector3f(DOWN);
 
         for (int i = 0; i < 40; i++) {
-            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, 0.3F, 1.0F, 1.0F, 1.0F,
+            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, 0.3F, 1.0F, 1.0F, 1.0F,
                     1.2F, STILL, sphere, 0.1F, null, 0.016F, out);
         }
 
@@ -680,7 +687,7 @@ class YsmDynamicBoneSolverTest {
         Vector3f rest = new Vector3f(DOWN);
 
         for (int i = 0; i < 40; i++) {
-            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, 0.4F, 1.0F, 1.0F, 1.0F,
+            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, 0.4F, 1.0F, 1.0F, 1.0F,
                     1.2F, STILL, sphere, 0.1F, null, 0.016F, out);
         }
 
@@ -714,10 +721,10 @@ class YsmDynamicBoneSolverTest {
         Vector3f rest = new Vector3f(DOWN);
         float limit = 0.5F;
 
-        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, 0.25F, 1.0F, 1.0F, 1.0F,
+        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, 0.25F, 1.0F, 1.0F, 1.0F,
                 limit, STILL, sphere, 0.2F, null, 0.016F, out);
         for (int i = 0; i < 200; i++) {
-            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, 0.25F, 1.0F, 1.0F, 1.0F,
+            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, 0.25F, 1.0F, 1.0F, 1.0F,
                     limit, STILL, sphere, 0.2F, null, 0.016F, out);
             assertTrue(YsmDynamicBoneSolver.angleBetween(rest, state.direction) <= limit + 1.0E-3F,
                     "frame " + i + " was pushed past the limit by collision");
@@ -750,9 +757,9 @@ class YsmDynamicBoneSolverTest {
         sphere.radius = 0.5F;
         float lever = 0.6F;
 
-        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, lever, 1.0F, 0.6F, 1.0F,
+        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, lever, 1.0F, 0.6F, 1.0F,
                 limit, STILL, sphere, 0.15F, null, 0.016F, out);
-        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, lever, 1.0F, 0.6F, 1.0F,
+        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, lever, 1.0F, 0.6F, 1.0F,
                 limit, STILL, sphere, 0.15F, null, 0.016F, out);
         float afterOneFrame = YsmDynamicBoneSolver.angleBetween(rest, state.direction);
 
@@ -781,7 +788,7 @@ class YsmDynamicBoneSolverTest {
         // Settle first, with no volumes at all, so that everything this call changes afterwards is
         // the collision's doing and not the spring's.
         for (int i = 0; i < 5; i++) {
-            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, lever, 1.0F, 0.6F, 1.0F,
+            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, lever, 1.0F, 0.6F, 1.0F,
                     limit, STILL, YsmDynamicBoneSolver.NO_COLLIDERS, 0.1F, null, 0.016F, out);
         }
 
@@ -792,7 +799,7 @@ class YsmDynamicBoneSolverTest {
         sphere.radius = 0.35F;
         Vector3f before = new Vector3f(state.direction);
 
-        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, lever, 1.0F, 0.6F, 1.0F,
+        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, lever, 1.0F, 0.6F, 1.0F,
                 limit, STILL, sphere, 0.1F, null, 0.016F, out);
 
         float turned = YsmDynamicBoneSolver.angleBetween(before, state.direction);
@@ -820,7 +827,7 @@ class YsmDynamicBoneSolverTest {
         float lever = 0.6F;
 
         for (int i = 0; i < 40; i++) {
-            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, lever, 1.0F, 0.6F, 1.0F,
+            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, lever, 1.0F, 0.6F, 1.0F,
                     limit, STILL, sphere, 0.15F, null, 0.016F, out);
         }
 
@@ -1075,7 +1082,7 @@ class YsmDynamicBoneSolverTest {
         Vector3f rest = new Vector3f(DOWN);
         Vector3f body = new Vector3f(0.0F, 0.0F, -speed);
         for (int i = 0; i < 1200; i++) {
-            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, airDrag, pivot, rest, lever,
+            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, airDrag, NO_FOLLOW, DOWN, pivot, rest, lever,
                     FREQUENCY, DAMPING_RATIO, mass, 1.2F, body,
                     YsmDynamicBoneSolver.NO_COLLIDERS, 0.03F, null, 0.006F, out);
         }
@@ -1140,7 +1147,7 @@ class YsmDynamicBoneSolverTest {
         float frame = 0.006F;
 
         for (int i = 0; i < 167; i++) {
-            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, lever, FREQUENCY,
+            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, lever, FREQUENCY,
                     DAMPING_RATIO, 1.69F, limit, STILL, YsmDynamicBoneSolver.NO_COLLIDERS, 0.03F,
                     null, frame, out);
         }
@@ -1158,7 +1165,7 @@ class YsmDynamicBoneSolverTest {
             x += peakSpeed * (float) Math.sin(Math.PI * (time + frame) / duration) * frame;
             time += frame;
             pivot.set(x, 0.0F, 0.0F);
-            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, lever, FREQUENCY,
+            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, lever, FREQUENCY,
                     DAMPING_RATIO, 1.69F, limit, STILL, YsmDynamicBoneSolver.NO_COLLIDERS, 0.03F,
                     null, frame, out);
             float lag = YsmDynamicBoneSolver.angleBetween(rest, state.direction);
@@ -1173,7 +1180,7 @@ class YsmDynamicBoneSolverTest {
         assertTrue(lagSide < 0.0F, "the piece must trail behind the acceleration (x=" + lagSide + ")");
 
         for (int i = 0; i < 333; i++) {
-            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, lever, FREQUENCY,
+            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, lever, FREQUENCY,
                     DAMPING_RATIO, 1.69F, limit, STILL, YsmDynamicBoneSolver.NO_COLLIDERS, 0.03F,
                     null, frame, out);
         }
@@ -1217,13 +1224,13 @@ class YsmDynamicBoneSolverTest {
         Vector3f pivot = new Vector3f();
         Vector3f rest = new Vector3f(DOWN);
         float frame = 0.005F;
-        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, lever, FREQUENCY, DAMPING_RATIO,
+        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, lever, FREQUENCY, DAMPING_RATIO,
                 1.69F, 1.2F, STILL, YsmDynamicBoneSolver.NO_COLLIDERS, 0.03F, null, frame, out);
         float peak = 0.0F;
         for (int i = 1; i <= 40; i++) {
             float t = i * frame;
             pivot.set(0.5F * 20.0F * t * t, 0.0F, 0.0F);
-            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, lever, FREQUENCY,
+            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, lever, FREQUENCY,
                     DAMPING_RATIO, 1.69F, 1.2F, STILL, YsmDynamicBoneSolver.NO_COLLIDERS, 0.03F,
                     null, frame, out);
             peak = Math.max(peak, YsmDynamicBoneSolver.angleBetween(rest, state.direction));
@@ -1323,10 +1330,10 @@ class YsmDynamicBoneSolverTest {
         Vector3f rest = new Vector3f(1.0F, -0.5F, 0.2F).normalize();
 
         for (int i = 0; i < 200; i++) {
-            YsmDynamicBoneSolver.INSTANCE.update(withNull, GRAVITY, AIR_DRAG, pivot, rest, 0.14F, FREQUENCY,
+            YsmDynamicBoneSolver.INSTANCE.update(withNull, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, 0.14F, FREQUENCY,
                     DAMPING_RATIO, 1.69F, 0.349F, null, YsmDynamicBoneSolver.NO_COLLIDERS, 0.03F,
                     null, 0.006F, out);
-            YsmDynamicBoneSolver.INSTANCE.update(withZero, GRAVITY, AIR_DRAG, pivot, rest, 0.14F, FREQUENCY,
+            YsmDynamicBoneSolver.INSTANCE.update(withZero, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, 0.14F, FREQUENCY,
                     DAMPING_RATIO, 1.69F, 0.349F, STILL, YsmDynamicBoneSolver.NO_COLLIDERS, 0.03F,
                     null, 0.006F, out);
         }
@@ -1371,7 +1378,7 @@ class YsmDynamicBoneSolverTest {
             // The longest frame the solver accepts, and a pivot that keeps being yanked, so the
             // spring is never allowed to settle into looking stable.
             pivot.set(frame % 2 == 0 ? 0.02F : -0.02F, 0.0F, 0.0F);
-            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, lever, 2.36F,
+            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, lever, 2.36F,
                     DAMPING_RATIO, 0.56F, limit, STILL, YsmDynamicBoneSolver.NO_COLLIDERS, 0.03F,
                     null, YsmDynamicBoneSolver.MAX_DT, out);
             float angle = YsmDynamicBoneSolver.angleBetween(rest, state.direction);
@@ -1435,7 +1442,7 @@ class YsmDynamicBoneSolverTest {
         }
 
         void tick() {
-            YsmDynamicBoneSolver.INSTANCE.update(state, gravity, AIR_DRAG, pivot, rest, lever, FREQUENCY,
+            YsmDynamicBoneSolver.INSTANCE.update(state, gravity, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, lever, FREQUENCY,
                     DAMPING_RATIO, mass, limit, STILL, YsmDynamicBoneSolver.NO_COLLIDERS, 0.03F,
                     null, frame, out);
         }
@@ -1516,7 +1523,7 @@ class YsmDynamicBoneSolverTest {
         Vector3f alongTheStop = new Vector3f(normal).cross(state.direction).normalize();
         state.angularVelocity.set(alongTheStop).mul(1.0F);
 
-        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, 0.3F, FREQUENCY, 0.0F, 1.69F,
+        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, 0.3F, FREQUENCY, 0.0F, 1.69F,
                 limit, STILL, YsmDynamicBoneSolver.NO_COLLIDERS, 0.03F, null, 1.0E-6F, out);
 
         assertTrue(YsmDynamicBoneSolver.angleBetween(rest, state.direction) <= limit + 1.0E-4F,
@@ -1549,7 +1556,7 @@ class YsmDynamicBoneSolverTest {
         state.angularVelocity.set(normal).mul(1.0F);
         float speedBefore = state.angularVelocity.length();
 
-        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, 0.3F, FREQUENCY, 0.0F, 1.69F,
+        YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, 0.3F, FREQUENCY, 0.0F, 1.69F,
                 limit, STILL, YsmDynamicBoneSolver.NO_COLLIDERS, 0.03F, null, 1.0E-6F, out);
 
         Vector3f normalAfter = new Vector3f(rest).cross(state.direction).normalize();
@@ -1578,7 +1585,7 @@ class YsmDynamicBoneSolverTest {
         state.direction.set(rest).rotateAxis(limit, 1.0F, 0.0F, 0.0F);
 
         for (int i = 0; i < 40; i++) {                       // a quarter of a second
-            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, pivot, rest, 0.3F, FREQUENCY, DAMPING_RATIO,
+            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, AIR_DRAG, NO_FOLLOW, DOWN, pivot, rest, 0.3F, FREQUENCY, DAMPING_RATIO,
                     1.69F, limit, STILL, YsmDynamicBoneSolver.NO_COLLIDERS, 0.03F, null, 0.006F, out);
         }
 
@@ -1586,6 +1593,419 @@ class YsmDynamicBoneSolverTest {
         assertTrue(swing < limit * 0.5F, "a piece left alone must come off its limit, not stay on it;"
                 + " it was still at " + Math.toDegrees(swing) + " of " + Math.toDegrees(limit)
                 + " degrees");
+    }
+
+    // ------------------------------------------------------------------
+    // Gravity following: the spring's target as a blend of the pose and
+    // the world's vertical, and what the weight buys
+    // ------------------------------------------------------------------
+
+    /** The maid model's root limit, {@code secondaryMotionMaxAngleRootDegrees} = 20 degrees. */
+    private static final float ROOT_LIMIT = (float) Math.toRadians(20.0);
+
+    /** The frequencies the shipped log measures on the maid model, and the config's damping. */
+    private static final float AUTHORED_FREQUENCY = 2.36F;
+    private static final float AUTHORED_DAMPING = 0.81F;
+
+    /**
+     * The weights the classification hands out. Duplicated here as literals rather than read from
+     * {@code YsmPhysicsParts}, so that changing one is a decision someone has to make twice.
+     */
+    private static final float CLOTH_FOLLOW = 0.92F;
+    private static final float HAIR_FOLLOW = 0.60F;
+    private static final float TAIL_FOLLOW = 0.80F;
+
+    /** The levers the shipped log measures on the maid model, blocks. */
+    private static final float[] MAID_LEVERS = {0.09F, 0.18F, 0.26F};
+
+    /**
+     * The regression that protects every other piece of behaviour in this class: a weight of zero
+     * must reproduce the pre-existing solver exactly.
+     *
+     * <p>"Exactly" is meant literally and the implementation is what makes it true: at zero the
+     * solver copies the rest direction into the target rather than blending toward it, so the
+     * spring's cross product is computed from the same bits it always was. This test pins the
+     * property as an identity over a sweep of levers, limits and poses - a lever arm, a swing under
+     * gravity, a piece held on its stop - rather than as a single spot check, because the failure
+     * mode is a solver that is right at rest and one part in ten thousand off under load.
+     *
+     * <p>The comparison is against a second {@link YsmDynamicBoneSolver.SegmentState} driven with
+     * the target explicitly set to the rest direction - which is what the parameter's own
+     * documentation promises the zero case means - so the two are the same statement of intent
+     * written two ways.
+     */
+    @Test
+    void aZeroWeightReproducesTheOldSolverExactly() {
+        for (float lever : MAID_LEVERS) {
+            for (float leanDegrees : new float[]{0.0F, 30.0F, 45.0F, 60.0F}) {
+                Vector3f rest = leaningDir(leanDegrees);
+                // Two pieces in identical circumstances, one through each route to "target = rest".
+                YsmDynamicBoneSolver.SegmentState byWeight =
+                        settled(rest, lever, ROOT_LIMIT, 0.0F, DOWN, 0.0F);
+                YsmDynamicBoneSolver.SegmentState byHand =
+                        settled(rest, lever, ROOT_LIMIT, 0.0F, rest, 0.0F);
+
+                assertEquals(byHand.direction.x, byWeight.direction.x, 0.0F,
+                        "x must be identical, not close: lever " + lever + " lean " + leanDegrees);
+                assertEquals(byHand.direction.y, byWeight.direction.y, 0.0F,
+                        "y must be identical, not close: lever " + lever + " lean " + leanDegrees);
+                assertEquals(byHand.direction.z, byWeight.direction.z, 0.0F,
+                        "z must be identical, not close: lever " + lever + " lean " + leanDegrees);
+                assertEquals(byHand.angularVelocity.x, byWeight.angularVelocity.x, 0.0F,
+                        "the velocity must be identical too, not just the angle");
+                assertEquals(byHand.angularVelocity.y, byWeight.angularVelocity.y, 0.0F);
+                assertEquals(byHand.angularVelocity.z, byWeight.angularVelocity.z, 0.0F);
+            }
+        }
+    }
+
+    /**
+     * A weight of zero is not merely the same as the old behaviour, it is the old behaviour's
+     * <i>signature</i>: a panel on a body leaning sixty degrees barely moves.
+     *
+     * <p>This is the test the whole task exists for, stated as the failure. At zero the spring's
+     * target is the pose, so the panel's balance is only as far from the pose as gravity can push
+     * it - and the authored root limit of twenty degrees is where it ends up, leaving the panel
+     * forty degrees off vertical. The assertion is deliberately on the WRONG side of ten degrees,
+     * so that this test fails the day someone makes the weight zero again.
+     */
+    @Test
+    void aClothPanelWithNoWeightStaysOnTheBodyAtSixtyDegrees() {
+        float offVertical = settledOffVertical(60.0F, 0.26F, ROOT_LIMIT, NO_FOLLOW, DOWN);
+
+        assertTrue(offVertical > 30.0F,
+                "without a weight the panel is meant to stay near the body's own axis - that is the "
+                        + "defect this feature removes, and this test asserts it is still measurable. "
+                        + "Got " + offVertical + " degrees off vertical, which means the weight is "
+                        + "no longer what moves it.");
+    }
+
+    /**
+     * The acceptance criterion: at a sprint's lean, a cloth panel ends up within ten degrees of the
+     * world's vertical - at every lever the maid model has.
+     *
+     * <p>The bound is ten degrees because that is the number the report asks for, and it is met at
+     * sixty degrees of lean by a weight of 0.92. What the margin is made of, exactly: the target a
+     * weight-b blend puts at {@code phi} from the pose is at {@code (1-b) * lean} from vertical, so
+     * 0.92 of the weight leaves eight per cent of sixty degrees - 4.8 - and the rest of the budget
+     * is the gravity share the spring cannot hold, which is larger for a shorter lever. Measured
+     * across 0.09 to 0.26 blocks, the worst is 4.6 degrees.
+     */
+    @Test
+    void clothHangsNearTheWorldVerticalAtASprintLean() {
+        for (float leanDegrees : new float[]{45.0F, 60.0F}) {
+            for (float lever : MAID_LEVERS) {
+                float offVertical = settledOffVertical(leanDegrees, lever, ROOT_LIMIT,
+                        CLOTH_FOLLOW, DOWN);
+                assertTrue(offVertical <= 10.0F,
+                        "a cloth panel must hang within 10 degrees of vertical at a "
+                                + leanDegrees + " degree lean; lever " + lever + " left it at "
+                                + offVertical + " degrees");
+            }
+        }
+    }
+
+    /**
+     * The "false success" guard, and the reason it is worth a test of its own: passing the wrong
+     * direction does not throw, does not log, and <i>looks like the feature working</i>.
+     *
+     * <p>If the model's own tilted axis were handed in as the world's downward direction - the
+     * mistake this test exists for, and the one an earlier revision of this task proposed - then
+     * the spring's target would be the body's axis again, the panel would sit at the same angle as
+     * before, and the log would report a healthy weight. The two runs below differ only in one
+     * argument, so the test can say which of the two the solver is actually doing: the right
+     * direction leaves the panel near vertical, the wrong one leaves it on the body.
+     */
+    @Test
+    void theWrongDownTargetKeepsThePanelOnTheBody() {
+        float leanDegrees = 60.0F;
+        float lever = 0.26F;
+        Vector3f rest = leaningDir(leanDegrees);
+
+        float withTheWorld = settledOffVertical(leanDegrees, lever, ROOT_LIMIT, CLOTH_FOLLOW, DOWN);
+        // The model's own "vertical" for this pose: the pose's rest direction, which is what the
+        // body's axis is. Renormalised, because that is what the solver does with it.
+        float withTheBody = settledOffVertical(leanDegrees, lever, ROOT_LIMIT, CLOTH_FOLLOW, rest);
+
+        assertTrue(withTheWorld <= 10.0F,
+                "the world's downward direction must bring the panel near vertical, got "
+                        + withTheWorld + " degrees");
+        // Which number the wrong direction produces is worth stating rather than bounding loosely,
+        // because it is not the lean itself. Handing in the body's axis rotates the whole problem
+        // with the body: the spring's target becomes the pose, so the piece settles at exactly the
+        // angle it settles at with no weight at all - 16.7 degrees from the pose, measured - and
+        // the angle from the world's vertical is therefore the lean MINUS that, whatever the weight
+        // is. The weight sweep in tmp_verify/T9_probe.txt shows it flat at 43.28 degrees from 0.0 to
+        // 1.0, which is what makes this a signature of the mistake rather than a loose bound.
+        assertTrue(withTheBody > 35.0F,
+                "the body's own axis must leave the panel on the body. Got " + withTheBody
+                        + " degrees off vertical at a " + leanDegrees + " degree lean; the wrong "
+                        + "direction is meant to leave it near " + (leanDegrees - 16.7F) + " and the "
+                        + "right one near 3, so a number below 35 means the two directions are not "
+                        + "being told apart");
+    }
+
+    /**
+     * The lead's fourth question, answered as a test: at a cloth weight and a sixty degree lean the
+     * panel must NOT be resting on its swing limit.
+     *
+     * <p>If the constraint were still a cone about the pose, the piece would be pinned twenty
+     * degrees from the pose and the whole mechanism would be invisible - which is exactly what the
+     * cone's axis was moved to the target to avoid. So the swing the solver reports is compared
+     * against <i>both</i> numbers it could be stuck on: the authored root limit, and the limit's
+     * allowance plus the pose-to-target gap. Being past the first and well inside the second is what
+     * "on its balance rather than on its stop" means.
+     *
+     * <p>Measured: swing 57.09 degrees from the pose, 1.22 from the spring's target, for a limit of
+     * 20 - so the stop is 19 degrees away and the piece is nowhere near it. See
+     * {@code tmp_verify/T9_probe.txt}.
+     */
+    @Test
+    void theSwingLimitDoesNotPinThePanelAtASprintLean() {
+        float leanDegrees = 60.0F;
+        float lever = 0.26F;
+        Vector3f rest = leaningDir(leanDegrees);
+        YsmDynamicBoneSolver.SegmentState state =
+                settled(rest, lever, ROOT_LIMIT, CLOTH_FOLLOW, DOWN, 4.0F);
+
+        float swing = YsmDynamicBoneSolver.angleBetween(rest, state.direction);
+        float fromTarget = YsmDynamicBoneSolver.angleBetween(
+                blendedTarget(rest, DOWN, CLOTH_FOLLOW), state.direction);
+
+        assertTrue(swing > ROOT_LIMIT * 1.5F,
+                "the panel must be swinging well past its own root limit for the limit to be "
+                        + "irrelevant; it swung " + Math.toDegrees(swing) + " of "
+                        + Math.toDegrees(ROOT_LIMIT) + " degrees, so the panel is pinned and the "
+                        + "weight is being absorbed by the constraint");
+        assertTrue(fromTarget < ROOT_LIMIT,
+                "and it must be strictly inside the cone about its target, not on it: "
+                        + Math.toDegrees(fromTarget) + " degrees from the target against a limit of "
+                        + Math.toDegrees(ROOT_LIMIT));
+        assertEquals(swing, state.lastAngle, 1.0E-6F,
+                "the reported swing is the one the constraint was measured against; a report that "
+                        + "disagreed with the state would make the log useless for this question");
+    }
+
+    /** The solver's own blend, recomputed here so a test can say where the spring is pulling. */
+    private static Vector3f blendedTarget(Vector3f rest, Vector3f downTarget, float weight) {
+        return new Vector3f(rest).mul(1.0F - weight).fma(weight, downTarget).normalize();
+    }
+
+    /**
+     * The weight has to change the physics, not just the field.
+     *
+     * <p>A parameter that is stored and never used, or one whose effect is cancelled by the swing
+     * limit, passes every test that only reads the configuration back. This one measures the two
+     * ends of the range through the solver's real path: turning the weight up must move a panel on
+     * a leaning body by tens of degrees, and the movement must be large enough that no limit could
+     * be responsible for it.
+     */
+    @Test
+    void theWeightChangesWhereThePieceComesToRest() {
+        float leanDegrees = 60.0F;
+        float lever = 0.26F;
+        float without = settledOffVertical(leanDegrees, lever, ROOT_LIMIT, NO_FOLLOW, DOWN);
+        float with = settledOffVertical(leanDegrees, lever, ROOT_LIMIT, CLOTH_FOLLOW, DOWN);
+
+        // The "with" number is already asserted against ten degrees by the acceptance test; what is
+        // asserted here is that the distance between the two ends of the range is a distance no
+        // constraint could have produced. The panel has to leave the pose by roughly the lean angle
+        // to reach vertical, and the authored root limit is twenty degrees - so a movement of tens
+        // of degrees is evidence that the weight reached the dynamics rather than being absorbed by
+        // the stop.
+        assertTrue(without - with > 25.0F,
+                "a cloth weight must move the panel tens of degrees toward vertical; it moved "
+                        + (without - with) + " (" + without + " -> " + with + ")");
+    }
+
+    /**
+     * The ordering the classification depends on, at the lean angles that matter: cloth hangs
+     * closest to vertical, a tail keeps a little more of the lean, and hair keeps the most of the
+     * three - because a lock of hair grows out of a skull and pointing every strand straight down
+     * is what wet hair looks like, not hair.
+     *
+     * <p>The numbers are asserted as ranges rather than as one value each, because a category's
+     * weight is a judgement and the test should fail when the judgement is broken, not when
+     * somebody moves a weight by a hundredth.
+     */
+    @Test
+    void hairKeepsMoreOfTheLeanThanClothDoes() {
+        float leanDegrees = 60.0F;
+        float lever = 0.26F;
+        float cloth = settledOffVertical(leanDegrees, lever, ROOT_LIMIT, CLOTH_FOLLOW, DOWN);
+        float tail = settledOffVertical(leanDegrees, lever, ROOT_LIMIT, TAIL_FOLLOW, DOWN);
+        float hair = settledOffVertical(leanDegrees, lever, ROOT_LIMIT, HAIR_FOLLOW, DOWN);
+
+        assertTrue(cloth < tail, "cloth must hang closer to vertical than a tail: " + cloth
+                + " vs " + tail);
+        assertTrue(tail < hair, "a tail must hang closer to vertical than hair: " + tail
+                + " vs " + hair);
+        assertTrue(hair > 15.0F && hair < 40.0F,
+                "hair must keep a visible share of the lean without pointing straight down; got "
+                        + hair + " degrees at a " + leanDegrees + " degree lean");
+    }
+
+    /**
+     * The short-lever regime the class comment names: below {@code L = g / omega^2} - eleven
+     * centimetres at the defaults - gravity's torque beats the spring's at every angle, so there is
+     * no balance to come to rest at and the piece is driven out to whatever stops it.
+     *
+     * <p>What must not happen, and what this pins: it must be <i>stopped</i>, by the authored limit
+     * and not by anything else, and it must stay a unit vector pointing downward. A solver that let
+     * the runaway gravity torque have its way would show a direction that grew past unit length, a
+     * piece that flipped over, or a NaN - all three of which have appeared in this class's history.
+     */
+    @Test
+    void aLeverTooShortForGravityToBalanceIsHeldByItsLimitNotLost() {
+        for (float lever : new float[]{0.03F, 0.05F, 0.09F, 0.105F}) {
+            Vector3f rest = leaningDir(60.0F);
+            YsmDynamicBoneSolver.SegmentState state =
+                    settled(rest, lever, ROOT_LIMIT, CLOTH_FOLLOW, DOWN, 6.0F);
+
+            assertTrue(YsmDynamicBoneSolver.isFinite(state.direction),
+                    "a gravity-dominated piece must not produce a non-finite direction (L=" + lever + ")");
+            assertEquals(1.0F, state.direction.length(), 1.0E-3F,
+                    "the direction must stay a unit vector (L=" + lever + ")");
+            assertTrue(state.direction.y < 0.0F,
+                    "and it must still point downward, not flip over (L=" + lever
+                            + ", y=" + state.direction.y + ")");
+            // What holds it is the cone about the spring's target, and the cone is the authored
+            // limit: at a cloth weight the target is close to vertical, so the piece is held just
+            // short of it rather than anywhere the gravity torque would take it.
+            float swing = YsmDynamicBoneSolver.angleBetween(rest, state.direction);
+            assertTrue(swing <= 55.9F * (float) Math.PI / 180.0F + ROOT_LIMIT + 1.0E-3F,
+                    "the piece must be inside the cone about its target (L=" + lever + ", swing="
+                            + Math.toDegrees(swing) + " degrees)");
+        }
+    }
+
+    /**
+     * A weight changes nothing when there is nothing for it to change: with the pose already
+     * hanging straight down, the blend of two identical directions is that direction, and the
+     * piece's rest angle is the same at every weight.
+     *
+     * <p>Worth pinning because it is the case most of a model's pieces are in most of the time, and
+     * a weight that introduced a bias there would tilt a standing character's hair for no reason.
+     */
+    @Test
+    void aPoseAlreadyVerticalIsUnaffectedByTheWeight() {
+        Vector3f rest = new Vector3f(DOWN);
+        for (float weight : new float[]{0.0F, 0.3F, 0.6F, 0.92F, 1.0F}) {
+            YsmDynamicBoneSolver.SegmentState state =
+                    settled(rest, 0.26F, ROOT_LIMIT, weight, DOWN, 4.0F);
+            float offVertical = YsmDynamicBoneSolver.angleBetween(DOWN, state.direction);
+            assertTrue(offVertical <= 2.0F,
+                    "a piece already pointing down must stay down at weight " + weight
+                            + "; it drifted " + offVertical + " degrees");
+        }
+    }
+
+    /**
+     * A non-finite weight is a broken caller, not a reason to throw on the render thread, and a
+     * weight outside 0..1 would extrapolate the target past the world's vertical - which pulls the
+     * cloth upwards. Both are refused, and the fallback is the value that keeps the old behaviour.
+     */
+    @Test
+    void aBrokenWeightFallsBackInsteadOfPullingTheClothUpwards() {
+        Vector3f rest = leaningDir(60.0F);
+        float reference = settledOffVertical(60.0F, 0.26F, ROOT_LIMIT, NO_FOLLOW, DOWN);
+        for (float weight : new float[]{Float.NaN, Float.POSITIVE_INFINITY, -1.0F}) {
+            YsmDynamicBoneSolver.SegmentState state =
+                    settled(rest, 0.26F, ROOT_LIMIT, weight, DOWN, 0.0F);
+            assertTrue(YsmDynamicBoneSolver.isFinite(state.direction), "got " + state.direction);
+            assertTrue(state.direction.y < 0.0F, "a broken weight must not lift the piece");
+        }
+        float accepted = settledOffVertical(60.0F, 0.26F, ROOT_LIMIT, 0.0F, DOWN);
+        assertEquals(reference, accepted, 1.0E-4F,
+                "a zero weight and a refused weight must agree, because both mean 'follow the pose'");
+    }
+
+    /**
+     * The downward direction is a parameter, so a caller can hand in a slope or a gust - and a null
+     * or a collapsed vector is read as the world's vertical rather than as "no direction at all",
+     * which would leave the spring pulling nowhere.
+     */
+    @Test
+    void aMissingDownTargetMeansTheWorldVertical() {
+        float leanDegrees = 60.0F;
+        float withExplicit = settledOffVertical(leanDegrees, 0.26F, ROOT_LIMIT, CLOTH_FOLLOW, DOWN);
+        float withNull = settledOffVertical(leanDegrees, 0.26F, ROOT_LIMIT, CLOTH_FOLLOW, null);
+        float withZero = settledOffVertical(leanDegrees, 0.26F, ROOT_LIMIT, CLOTH_FOLLOW,
+                new Vector3f());
+
+        assertEquals(withExplicit, withNull, 1.0E-4F,
+                "a null downward direction must be read as the world's vertical");
+        assertEquals(withExplicit, withZero, 1.0E-4F,
+                "and so must a zero vector, which is a caller with nothing to say");
+    }
+
+    /**
+     * A <i>custom</i> downward direction is honoured, not overwritten by the world's: a slope of
+     * thirty degrees leaves a cloth panel thirty degrees from the true vertical, at the same
+     * weight that would have put it within ten of the world's.
+     */
+    @Test
+    void aCustomDownTargetIsHonouredRatherThanReplaced() {
+        float leaned = settledOffVertical(60.0F, 0.26F, ROOT_LIMIT, CLOTH_FOLLOW, DOWN);
+        // A "downhill" that is thirty degrees off the world's vertical, in the same plane.
+        Vector3f slope = new Vector3f((float) Math.sin(Math.toRadians(30.0)),
+                -(float) Math.cos(Math.toRadians(30.0)), 0.0F);
+        float onTheSlope = settledOffVertical(60.0F, 0.26F, ROOT_LIMIT, CLOTH_FOLLOW, slope);
+
+        assertTrue(leaned <= 10.0F, "the world's vertical is the baseline: " + leaned);
+        assertTrue(onTheSlope > leaned + 10.0F,
+                "a slope must actually steer the pieces; the two runs differed by only "
+                        + (onTheSlope - leaned) + " degrees");
+    }
+
+    // ------------------------------------------------------------------
+    // Helpers for the gravity-follow tests
+    // ------------------------------------------------------------------
+
+    /** The direction a piece hanging along a body leaning {@code degrees} forward points. */
+    private static Vector3f leaningDir(float degrees) {
+        double radians = Math.toRadians(degrees);
+        return new Vector3f((float) Math.sin(radians), -(float) Math.cos(radians), 0.0F);
+    }
+
+    /**
+     * Drive one segment from a leaning pose with a still pivot and report where it ended up, in
+     * degrees from the world's vertical.
+     *
+     * <p>The world's vertical is {@link #DOWN} whatever {@code downTarget} is, so that a test can
+     * hand in a wrong or a sloped direction and still be measured against the truth.
+     */
+    private static float settledOffVertical(float leanDegrees, float lever, float maxAngle,
+                                            float weight, Vector3f downTarget) {
+        YsmDynamicBoneSolver.SegmentState state =
+                settled(leaningDir(leanDegrees), lever, maxAngle, weight, downTarget, 4.0F);
+        return (float) Math.toDegrees(YsmDynamicBoneSolver.angleBetween(DOWN, state.direction));
+    }
+
+    /**
+     * A segment settled on its balance: fresh state, first frame to establish it, then
+     * {@code seconds} of a still pivot with no air and no colliders.
+     *
+     * <p>No air deliberately. The drag term is the only one that carries the body's speed, and the
+     * question these tests ask is where a piece rests, which is a balance between gravity and the
+     * spring alone - the same balance the class comment derives. A wind would only blur it.
+     */
+    private static YsmDynamicBoneSolver.SegmentState settled(Vector3f rest, float lever,
+                                                             float maxAngle, float weight,
+                                                             Vector3f downTarget, float seconds) {
+        YsmDynamicBoneSolver.SegmentState state = new YsmDynamicBoneSolver.SegmentState();
+        Quaternionf out = new Quaternionf();
+        Vector3f pivot = new Vector3f();
+        // 60 Hz, which is a frame rate the render thread really sees, and a dt well inside the
+        // solver's own stability rule for a 2.36 Hz spring on a nine-centimetre lever.
+        float dt = 1.0F / 60.0F;
+        int frames = Math.round(seconds / dt);
+        for (int i = 0; i <= frames; i++) {
+            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, 0.0F, weight, downTarget,
+                    pivot, rest, lever, AUTHORED_FREQUENCY, AUTHORED_DAMPING, 1.0F, maxAngle,
+                    STILL, YsmDynamicBoneSolver.NO_COLLIDERS, 0.03F, null, dt, out);
+        }
+        return state;
     }
 
     /** Put a fresh segment exactly {@code 2%} past its limit, settled and with no history. */

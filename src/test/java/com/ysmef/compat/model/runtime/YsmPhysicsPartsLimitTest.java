@@ -565,6 +565,166 @@ class YsmPhysicsPartsLimitTest {
         assertTrue(YsmPhysicsParts.radiusFor(panel(0.5F), null, new Vector3f(0.0F, -1.0F, 0.0F)) >= MIN_RADIUS);
     }
 
+    // ------------------------------------------------------------------
+    // What a piece's spring follows: the cloth/hair/tail weights
+    // ------------------------------------------------------------------
+
+    /**
+     * The three families, on the bone names this repository's own tests and golden files use, with
+     * the numbers they were chosen for.
+     *
+     * <p>A name-driven decision with one failure direction that matters: a model whose bones are
+     * named in a language the hints do not cover must fall to "follow the pose" (0.0) rather than to
+     * a guess, because handing a body part to gravity is visible while a piece that does not droop
+     * is merely unimproved. The unknown row is therefore as load-bearing as the other three.
+     */
+    @Test
+    void theWeightsAreTheOnesTheThreeFamiliesWereChosenFor() {
+        assertEquals(0.92F, verticalFollowOf("FrontSkirt"), 1.0E-6F,
+                "a skirt panel is expected to hang toward the ground");
+        assertEquals(0.92F, verticalFollowOf("UpperBody_skirt"), 1.0E-6F,
+                "and the underscore in a real name must not stop it being recognised");
+        assertEquals(0.92F, verticalFollowOf("qun"), 1.0E-6F);
+        assertEquals(0.92F, verticalFollowOf("BackSkirt"), 1.0E-6F);
+        assertEquals(0.92F, verticalFollowOf("Clothe"), 1.0E-6F);
+
+        assertEquals(0.60F, verticalFollowOf("LongHair"), 1.0E-6F,
+                "a lock of hair grows out of a skull and has its own volume");
+        assertEquals(0.60F, verticalFollowOf("BackHairA1"), 1.0E-6F,
+                "the golden file's real back-hair chain");
+        assertEquals(0.60F, verticalFollowOf("Right_SideDownHairM2"), 1.0E-6F,
+                "the golden file's real side lock");
+        assertEquals(0.60F, verticalFollowOf("BaseHair"), 1.0E-6F);
+
+        assertEquals(0.80F, verticalFollowOf("tail"), 1.0E-6F,
+                "a tail is a heavy appendage with a shape of its own, hung from the spine");
+        assertEquals(0.80F, verticalFollowOf("Tail_01"), 1.0E-6F);
+
+        assertEquals(0.0F, verticalFollowOf("Torso"), 1.0E-6F,
+                "a body bone classified by accident would be handed to gravity; unknown must mean "
+                        + "the pose decides");
+        // A locator is a name the classifier would otherwise catch: it contains "cape". The veto
+        // that keeps such bones out of the simulation runs before this classification, so reaching
+        // this point with a locator's name means it was declared by the author instead - and a
+        // declared bone is simulated, so the honest answer here is the cloth weight it reads as.
+        assertEquals(0.92F, verticalFollowOf("CapeLocator"), 1.0E-6F,
+                "the weight is a property of the name, and a locator that reached the simulation "
+                        + "anyway reads as the cape it is named for");
+        assertEquals(0.92F, verticalFollowOf("Cape2"), 1.0E-6F,
+                "a trailing-digit variant is the same bone: the normaliser strips it");
+        // Names that carry no hint at all, which is what a model with an unfamiliar vocabulary
+        // produces - and the arm is the case that would be worst to guess on.
+        assertEquals(0.0F, verticalFollowOf("Arm_R"), 1.0E-6F);
+        assertEquals(0.0F, verticalFollowOf("RightLeg"), 1.0E-6F);
+        assertEquals(0.0F, verticalFollowOf("Strand03"), 1.0E-6F,
+                "a strand the author numbered: the family comes from the declared list or from a "
+                        + "name that says what it is, never from a guess");
+        assertEquals(0.0F, verticalFollowOf("RightArm_Default"), 1.0E-6F,
+                "a form suffix is stripped, and the stem it leaves is still unrecognised");
+        assertEquals(0.0F, verticalFollowOf(""), 1.0E-6F);
+        assertEquals(0.0F, verticalFollowOf(null), 1.0E-6F);
+    }
+
+    /**
+     * The ordering between the families, and the one name that needs it.
+     *
+     * <p>A twin tail is hair: it hangs off a skull, it is drawn as two locks, and the word contains
+     * "tail". Matching the tail family first would give it 0.80 and make a hairstyle behave like an
+     * appendage, so the hair hints are tested before the tail's - and this is the case that says so.
+     * "TwinTailHair" carries both, which is exactly how a real model spells it.
+     */
+    @Test
+    void aTwinTailIsHairNotATail() {
+        assertEquals(verticalFollowOf("Hair"), verticalFollowOf("TwinTailHair"), 1.0E-6F,
+                "a name carrying both 'hair' and 'tail' must be read as hair");
+        assertTrue(verticalFollowOf("LongHair") < verticalFollowOf("tail"),
+                "and hair follows gravity less than a tail does, which is the whole point of the "
+                        + "ordering");
+    }
+
+    /**
+     * The config's own scale, which is the one knob that moves every family together.
+     *
+     * <p>It is applied at read time rather than baked into the classification, so a user can turn the
+     * mechanism off without a rebuild - and zero has to give back the pre-existing behaviour exactly,
+     * which is what makes it a safe escape hatch rather than a second setting.
+     */
+    @Test
+    void theConfiguredScaleMultipliesEveryFamilyAndZeroRestoresTheOldBehaviour() {
+        double scale = YsmPhysicsTuning.gravityFollowScale();
+
+        assertTrue(scale >= 0.0 && scale <= 1.0, "the scale is a fraction, got " + scale);
+        assertEquals(0.92F * (float) scale, verticalFollowOf("FrontSkirt"), 1.0E-6F,
+                "cloth must be scaled by the config's own weight");
+        assertEquals(0.60F * (float) scale, verticalFollowOf("LongHair"), 1.0E-6F);
+        assertEquals(0.80F * (float) scale, verticalFollowOf("tail"), 1.0E-6F);
+
+        // The equality that matters: at a scale of zero every family lands on the value that means
+        // "follow the pose", which is what the solver reads as its own fallback.
+        assertEquals(YsmDynamicBoneSolver.FALLBACK_VERTICAL_FOLLOW,
+                YsmDynamicBoneSolver.FALLBACK_VERTICAL_FOLLOW * (float) scale, 1.0E-6F,
+                "FALLBACK_VERTICAL_FOLLOW must be the value a zero scale produces");
+    }
+
+    /**
+     * The world's downward direction is `(0,-1,0)` in the model's space, and the reason is that the
+     * model's own Y axis IS the world's.
+     *
+     * <p>Stated as the property the render pipeline has to have, so that a future change to it fails
+     * here rather than silently turning the gravity-follow mechanism into "follow the body's axis" -
+     * which is the defect the mechanism exists to remove. The chain of reasoning is in
+     * {@code YsmMeshSecondaryMotion.DOWN_IN_MODEL_SPACE}; the part a test can hold onto is that the
+     * transform between the two spaces is a rotation about Y and nothing else.
+     *
+     * <p>If the pose matrices ever carried pitch or roll - if Epic Fight's model matrix gained a
+     * non-zero `xRot`, or if the body's lean stopped being an animation and became a frame rotation -
+     * this would be false and `downTarget` would have to be derived per frame from the model
+     * matrix instead of being a constant. That is the different design the task's step 1 names, and
+     * this test is where it would announce itself.
+     */
+    @Test
+    void theWorldVerticalIsTheModelsOwnVerticalUnderAnyYaw() {
+        Vector3f down = new Vector3f(0.0F, -1.0F, 0.0F);
+
+        for (float yawDegrees : new float[]{0.0F, 45.0F, 90.0F, 180.0F, 270.0F, 359.0F}) {
+            // The only rotation the renderer applies between the two spaces: yaw about Y. See
+            // YsmMeshSecondaryMotion#bodyVelocity, which converts a world velocity into model space
+            // with exactly this rotation and no other.
+            Vector3f inWorld = new Vector3f(down).rotateY((float) Math.toRadians(yawDegrees));
+
+            assertEquals(0.0F, inWorld.x, 1.0E-6F,
+                    "a yaw about Y must leave the downward direction with no X component");
+            assertEquals(-1.0F, inWorld.y, 1.0E-6F,
+                    "and at any yaw the world's downward direction is still the model's -Y");
+            assertEquals(0.0F, inWorld.z, 1.0E-6F);
+        }
+
+        // The counter-case, written down rather than implied: a rotation that is NOT a pure yaw
+        // does move the down direction, so the constant is only valid because the pipeline has no
+        // pitch or roll in it. This is the assertion that would change first.
+        Vector3f tilted = new Vector3f(down).rotateX((float) Math.toRadians(60.0));
+        assertTrue(Math.abs(tilted.y + 1.0F) > 0.4F,
+                "a sixty degree pitch would put the world's vertical well away from -Y, so if this "
+                        + "ever becomes the pipeline's transform the constant is wrong: " + tilted);
+    }
+
+    /** The weight the classification gives one bone name, as the solver would receive it. */
+    private static float verticalFollowOf(String boneName) {
+        return segmentNamed(boneName).verticalFollow();
+    }
+
+    /**
+     * A segment carrying only a name, which is all {@code verticalFollow()} reads.
+     *
+     * <p>Built directly rather than through {@link YsmPhysicsParts#build}, because the weight is a
+     * property of the name and building a model would need a runtime model and a mesh: the point of
+     * the test is that the name alone decides, so the name is the only thing supplied.
+     */
+    private static YsmPhysicsParts.Segment segmentNamed(String boneName) {
+        return new YsmPhysicsParts.Segment(0, boneName, TORSO, new Vector3f(), new Vector3f(0.0F, -0.2F, 0.0F),
+                0.2F, 0.03F, 1.0F, 2.36F, 0.81F, MAX_ANGLE_ROOT, -1, new int[]{0}, false, new int[0]);
+    }
+
     /** The floor and the ceiling the two tests above name, as they are declared. */
     private static final float MIN_RADIUS = 0.02F;
     private static final float MAX_RADIUS = 0.22F;

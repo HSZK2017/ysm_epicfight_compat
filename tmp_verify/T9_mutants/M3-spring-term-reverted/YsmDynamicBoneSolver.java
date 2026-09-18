@@ -924,7 +924,7 @@ public final class YsmDynamicBoneSolver {
         // the target is where the piece is actually pulled, which differ by the caller's
         // verticalFollow weight (see update()). With a zero weight the two are the same vector, so
         // this line is the line it always was for every caller that has not opted in.
-        this.axis.set(direction).cross(this.target);
+        this.axis.set(direction).cross(this.rest); // M3: the pre-fix spring term
         this.alpha.fma(springStiffness, this.axis);
 
         // Damping: alpha = -2*zeta*omega_n*w, the damping ratio the author asked for, applied to

@@ -104,6 +104,17 @@ public class YSMCompatConfig {
     public static final ForgeConfigSpec.DoubleValue SECONDARY_MOTION_MAX_ANGLE_ROOT_DEGREES;
     /** How many bones of one model may swing at once. */
     public static final ForgeConfigSpec.IntValue SECONDARY_MOTION_MAX_CHAINS;
+    /**
+     * How much of the world's downward direction the spring of a hanging piece pulls toward,
+     * as a fraction of each piece's own category weight.
+     */
+    public static final ForgeConfigSpec.DoubleValue SECONDARY_MOTION_GRAVITY_FOLLOW;
+    /** How many cloth particles one model may simulate. */
+    public static final ForgeConfigSpec.IntValue SECONDARY_MOTION_MAX_PARTICLES;
+    /** Constraint-relaxation passes per cloth substep. */
+    public static final ForgeConfigSpec.IntValue SECONDARY_MOTION_ITERATIONS;
+    /** Radius of the body volume the position-based cloth keeps its particles out of, blocks. */
+    public static final ForgeConfigSpec.DoubleValue SECONDARY_MOTION_BODY_RADIUS;
 
     static {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
@@ -218,6 +229,42 @@ public class YSMCompatConfig {
                         "So 0.2 reads as cloth held close to the body and 0.9 as cloth thrown out behind a sprint, and",
                         "the honest default for 'walking should not already pin my hair' is nearer 0.2 than 0.9.")
                 .defineInRange("secondaryMotionAirDrag", 0.9, 0.0, 8.0);
+
+        SECONDARY_MOTION_GRAVITY_FOLLOW = builder
+                .comment("How strongly a hanging piece is pulled toward the world's downward direction rather than",
+                        "toward the direction the animation poses it in, as a fraction of the piece's own weight.",
+                        "The pendulum's spring has a target direction, and that target is a blend of the posed rest",
+                        "direction and the world's vertical: at 1 the spring points straight down and the piece hangs",
+                        "from its pivot with the pose deciding nothing, at 0 the spring follows the pose exactly and",
+                        "gravity can only displace the piece from it - which is what the old model did, and why a skirt",
+                        "on a body leaning sixty degrees read as part of the body rather than as cloth.",
+                        "This key scales the per-category weight: cloth and skirt panels are classified at 0.92, tails",
+                        "at 0.80 and hair at 0.60, because a lock of hair hangs from a skull and has its own volume,",
+                        "while a skirt panel is expected to hang toward the ground. Set it to 0 to switch the whole",
+                        "mechanism off and get the pre-existing behaviour back, bit for bit.")
+                .defineInRange("secondaryMotionGravityFollow", 1.0, 0.0, 1.0);
+
+        SECONDARY_MOTION_MAX_PARTICLES = builder
+                .comment("How many cloth particles one model may simulate, or 0 for none.",
+                        "Counted in particles, not pieces: a skirt panel's cloth is a grid of them, so a long coat",
+                        "spends thousands. This is the backstop for a model whose garment would otherwise cost more",
+                        "than the frame has to give, and it is deliberately generous - 4000 - because leaving part",
+                        "of a garment unsimulated is visible, while a lower number only saves time.")
+                .defineInRange("secondaryMotionMaxParticles", 4000, 0, 65536);
+
+        SECONDARY_MOTION_ITERATIONS = builder
+                .comment("Constraint-relaxation passes per cloth substep.",
+                        "Each pass re-satisfies the links' rest lengths and the body volumes after the integration",
+                        "moved the particles; more passes mean stiffer cloth and fewer passes mean stretchier. Eight",
+                        "is what a garment needs to stop visibly stretching under its own weight.")
+                .defineInRange("secondaryMotionIterations", 8, 1, 32);
+
+        SECONDARY_MOTION_BODY_RADIUS = builder
+                .comment("Radius of the body volume the cloth keeps its particles out of, in blocks.",
+                        "A single tube around the model's own vertical axis rather than the pendulum solver's shaped",
+                        "volumes: cloth is a grid of particles and needs a cheap test. Raise it if a garment passes",
+                        "through the torso, lower it if a garment stands off the body.")
+                .defineInRange("secondaryMotionBodyRadius", 0.22, 0.0, 2.0);
 
         SECONDARY_MOTION_COLLISION = builder
                 .comment("Keep swinging pieces out of the model's own body (the torso, the hips, the thighs, the",

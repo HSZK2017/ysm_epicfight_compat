@@ -1,0 +1,91 @@
+﻿T9 mutation evidence: the three 'must be red before the fix' runs.
+
+Each mutant is a one-line change to YsmDynamicBoneSolver.java applied to the finished code
+(SHA256 50D265FA699F943A6FD2FE2C4B5F6B357DC38A189DE886AF3C4EA6516E88E129), run through
+  .\gradlew.bat test --tests com.ysmef.compat.model.runtime.YsmDynamicBoneSolverTest
+and then reverted byte-for-byte from 00-baseline/. Every run is recorded below with the
+assertion text the failure produced, because the message is the measurement.
+
+Baseline after restore: 56 tests, 0 failures, BUILD SUCCESSFUL.
+
+================================================================================
+M1 - the swing limit's cone axis put back on the posed rest direction
+    applySwingLimit(state, this.target, maxAngle)  ->  applySwingLimit(state, this.rest, maxAngle)
+    This is the design decision the task left open and the pseudo-solution the Lead warned about.
+    Result: 56 tests, 6 FAILED.
+--------------------------------------------------------------------------------
+theWrongDownTargetKeepsThePanelOnTheBody()
+  the world's downward direction must bring the panel near vertical, got 39.999996 degrees
+theSwingLimitDoesNotPinThePanelAtASprintLean()
+  the panel must be swinging well past its own root limit for the limit to be irrelevant; it swung
+  19.99999088044938 of 19.99999941818584 degrees, so the panel is pinned and the weight is being
+  absorbed by the constraint
+theWeightChangesWhereThePieceComesToRest()
+  a cloth weight must move the panel tens of degrees toward vertical; it moved 3.274849
+  (43.274845 -> 39.999996)
+hairKeepsMoreOfTheLeanThanClothDoes()
+  cloth must hang closer to vertical than a tail: 39.999996 vs 39.999996
+clothHangsNearTheWorldVerticalAtASprintLean()
+  a cloth panel must hang within 10 degrees of vertical at a 45.0 degree lean; lever 0.09 left it
+  at 24.999996 degrees
+aCustomDownTargetIsHonouredRatherThanReplaced()
+  the world's vertical is the baseline: 39.999996
+
+Why this is the important one: 40.00 degrees from vertical is EXACTLY what the analytic table
+predicts for a rest-axis cone at a 60 degree lean - the panel is pinned 20 degrees from the pose
+and the weight does nothing a viewer can see. Reverting only this line reproduces the reported
+defect bit for bit, which is what makes the tests evidence rather than decoration.
+
+================================================================================
+M2 - the weight ignored
+    this.target.set(this.rest).mul(1.0F - this.verticalFollow).fma(this.verticalFollow, this.fallbackDown)
+      ->  this.target.set(this.rest)
+    The "the parameter is stored and never used" failure.
+    Result: 56 tests, 6 FAILED.
+--------------------------------------------------------------------------------
+theWrongDownTargetKeepsThePanelOnTheBody()
+  the world's downward direction must bring the panel near vertical, got 43.274845 degrees
+theSwingLimitDoesNotPinThePanelAtASprintLean()
+  the panel must be swinging well past its own root limit for the limit to be irrelevant; it swung
+  16.725138862123583 of 19.99999941818584 degrees
+theWeightChangesWhereThePieceComesToRest()
+  a cloth weight must move the panel tens of degrees toward vertical; it moved 0.0
+  (43.274845 -> 43.274845)
+hairKeepsMoreOfTheLeanThanClothDoes()
+  cloth must hang closer to vertical than a tail: 43.274845 vs 43.274845
+clothHangsNearTheWorldVerticalAtASprintLean()
+  a cloth panel must hang within 10 degrees of vertical at a 45.0 degree lean; lever 0.09 left it
+  at 24.999996 degrees
+aCustomDownTargetIsHonouredRatherThanReplaced()
+  the world's vertical is the baseline: 43.274845
+
+43.274845 degrees is the pre-fix number, and it is identical for every weight from 0 to 1.
+
+================================================================================
+M3 - the spring's target still computed, but the spring term reverted to the pose
+    this.axis.set(direction).cross(this.target)  ->  this.axis.set(direction).cross(this.rest)
+    The half-applied change: the target exists, the limit follows it, the spring ignores it.
+    Result: 56 tests, 6 FAILED.
+--------------------------------------------------------------------------------
+theWrongDownTargetKeepsThePanelOnTheBody()
+  the world's downward direction must bring the panel near vertical, got 24.127811 degrees
+theSwingLimitDoesNotPinThePanelAtASprintLean()
+  and it must be strictly inside the cone about its target, not on it: 20.00001137101689 degrees
+  from the target against a limit of 19.99999941818584
+theWeightChangesWhereThePieceComesToRest()
+  a cloth weight must move the panel tens of degrees toward vertical; it moved 19.147034
+  (43.274845 -> 24.127811)
+hairKeepsMoreOfTheLeanThanClothDoes()
+  hair must keep a visible share of the lean without pointing straight down; got 43.27486 degrees
+  at a 60.0 degree lean
+clothHangsNearTheWorldVerticalAtASprintLean()
+  a cloth panel must hang within 10 degrees of vertical at a 45.0 degree lean; lever 0.09 left it
+  at 20.218971 degrees
+aCustomDownTargetIsHonouredRatherThanReplaced()
+  the world's vertical is the baseline: 24.127811
+--------------------------------------------------------------------------------
+
+M3 is the most instructive of the three: 24.13 degrees is better than the old 43.28, so it LOOKS
+like a partial success on screen - closer to vertical, and the log would report healthy weights -
+but the piece is sitting exactly on the cone (20.00001 degrees from the target), which is the
+signature of a stop rather than of a balance. Reverting only the spring term fails six tests.

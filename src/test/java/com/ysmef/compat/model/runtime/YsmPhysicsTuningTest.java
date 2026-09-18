@@ -19,13 +19,29 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class YsmPhysicsTuningTest {
 
+    /**
+     * The fallbacks, as literals, and that they are the values the config documents.
+     *
+     * <p>These five numbers were once asserted against {@code YsmPhysicsSimulator}'s own constants,
+     * and the two are the same numbers: 220 1/s^2, 24, the retired droop's 8, and the 60 and 20
+     * degrees the config comments promise. The simulator class is gone - it was the point-spring
+     * model the pendulum solver replaced, and its constants were the only reason it was still
+     * referenced - so the values are pinned here directly. Pinned as literals rather than derived,
+     * because a test that computed them the way the code does would agree with the code by
+     * construction and catch nothing.
+     */
     @Test
-    void theDefaultsMirrorTheSimulatorConstants() {
-        assertEquals(YsmPhysicsSimulator.STIFFNESS, YsmPhysicsTuning.DEFAULTS.stiffness, 1.0E-6);
-        assertEquals(YsmPhysicsSimulator.DAMPING, YsmPhysicsTuning.DEFAULTS.damping, 1.0E-6);
-        assertEquals(YsmPhysicsSimulator.GRAVITY, YsmPhysicsTuning.DEFAULTS.gravity, 1.0E-6);
-        assertEquals(YsmPhysicsSimulator.MAX_ANGLE, YsmPhysicsTuning.DEFAULTS.maxAngle, 1.0E-6);
-        assertEquals(YsmPhysicsSimulator.MAX_ANGLE_ROOT, YsmPhysicsTuning.DEFAULTS.maxAngleRoot, 1.0E-6);
+    void theDefaultsAreTheDocumentedValues() {
+        assertEquals(220.0, YsmPhysicsTuning.DEFAULTS.stiffness, 1.0E-6,
+                "the stiffness key's default, and the authors' ysm.second_order default");
+        assertEquals(24.0, YsmPhysicsTuning.DEFAULTS.damping, 1.0E-6,
+                "the damping key's default: 0.81 of critical against 220");
+        assertEquals(8.0, YsmPhysicsTuning.DEFAULTS.gravity, 1.0E-6,
+                "the retired droop key's default, still the fallback for an old config file");
+        assertEquals(Math.toRadians(60.0), YsmPhysicsTuning.DEFAULTS.maxAngle, 1.0E-6,
+                "secondaryMotionMaxAngleDegrees");
+        assertEquals(Math.toRadians(20.0), YsmPhysicsTuning.DEFAULTS.maxAngleRoot, 1.0E-6,
+                "secondaryMotionMaxAngleRootDegrees");
     }
 
     /**

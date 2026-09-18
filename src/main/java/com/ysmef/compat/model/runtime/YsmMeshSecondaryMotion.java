@@ -668,6 +668,15 @@ public final class YsmMeshSecondaryMotion {
                             .append(" blocks, L=")
                             .append(Math.round(segments[i].lever() * 1000.0F) / 1000.0F)
                             .append(", m=").append(Math.round(segments[i].mass() * 100.0F) / 100.0F)
+                            // How much of the piece's spring points at the world's vertical rather
+                            // than at the pose. Printed because it separates two failures that the
+                            // angles above cannot: a piece whose weight is 0 because its name was
+                            // not recognised follows its pose and looks "not moving", while a piece
+                            // with a weight and a swing of zero has something else wrong with it.
+                            // A weight that is present but whose effect is invisible is then a
+                            // question about the limit or the collision, not about classification.
+                            .append(", follow=")
+                            .append(Math.round(segments[i].verticalFollow() * 100.0F) / 100.0F)
                             // The axis, in model space, of the swing this segment actually got.
                             // Cloth falls and trails, so the axis of a hanging piece is horizontal
                             // and across its own rest direction; an axis that is close to vertical
@@ -857,6 +866,49 @@ public final class YsmMeshSecondaryMotion {
     private static final Vector3f ZERO_VELOCITY = new Vector3f();
 
     /**
+     * The world's downward direction in the model's own space, blocks-free and never mutated.
+     *
+     * <p>{@code (0,-1,0)}, and that is a measured fact rather than a convention, because the whole
+     * gravity-follow mechanism is worthless if it is wrong: a target that is not really the world's
+     * vertical would pull every piece toward the <i>body's</i> own axis, which is the defect this
+     * feature exists to remove, and nothing on screen would say so.
+     *
+     * <p>The two halves of the render transform settle it:
+     *
+     * <ul>
+     *   <li>Epic Fight applies the model matrix OUTSIDE the pose: {@code PatchedEntityRenderer
+     *       #mulPoseStack} does {@code poseStack.mulPose(Y.rotationDegrees(180))} then
+     *       {@code MathUtils.mulStack(poseStack, getModelMatrix(partialTick))}, and only then is
+     *       {@code SkinnedMesh.draw(poseStack, ..., armature, armature.getPoseMatrices())} called.
+     *       The pose matrices this class reads are therefore in the model's own space, with no
+     *       entity rotation in them.</li>
+     *   <li>That model matrix is a yaw and a uniform scale, and nothing else.
+     *       {@code MathUtils.getModelMatrixIntegral} builds {@code translate * rotateDeg(-yaw, Y) *
+     *       rotateDeg(-pitch, X) * scale}, and every override that feeds it -
+     *       {@code LivingEntityPatch}, {@code PlayerPatch} and {@code CustomHumanoidMobPatch} (via
+     *       {@code HumanoidMobPatch}) - passes eight hard-coded zeroes for the pitch/roll pair
+     *       (javap: offsets 126-135 and 77-84 respectively are {@code fconst_0} eight times). A yaw
+     *       about Y leaves the Y axis alone, and a uniform scale leaves a direction alone, so the
+     *       model's vertical IS the world's vertical.</li>
+     * </ul>
+     *
+     * <p>The third part of the transform, the body's forward lean, is in the ANIMATION: it is
+     * carried by {@code poses[Root]}, so it reaches the solver as the {@code restDir} of each piece
+     * rather than as any part of the frame. That is the arrangement this feature needs - the lean
+     * tilts the pose the piece is drawn in, while the direction gravity pulls toward stays the
+     * world's - and it is why the target must NOT be derived from the root joint's own rotation.
+     * Doing that would give back a "vertical" that leans with the body, which is the defect.
+     *
+     * <p><b>One known exception.</b> {@code LivingEntityRenderer#isEntityUpsideDown} (vanilla's
+     * "Dinnerbone" name tag) makes Epic Fight translate and rotate the model by a further 180
+     * degrees about Z, which flips the model's Y against the world's and would make the true
+     * downward direction {@code (0,+1,0)}. This constant does not follow that case: a hanging piece
+     * on an upside-down entity follows the body's axis instead of gravity, which is visible only on
+     * a name-tagged mob and was not reproduced or measured.
+     */
+    private static final Vector3f DOWN_IN_MODEL_SPACE = new Vector3f(0.0F, -1.0F, 0.0F);
+
+    /**
      * Simulate one segment - and, first, whatever it hangs off - and write its delta.
      *
      * <p>Recursive rather than iterative because the parent links come from model data and
@@ -928,6 +980,7 @@ public final class YsmMeshSecondaryMotion {
         YsmDynamicBoneSolver.INSTANCE.update(state.states[index],
                 (float) YsmPhysicsTuning.gravityAcceleration(),
                 (float) YsmPhysicsTuning.airDrag(),
+                segment.verticalFollow(), DOWN_IN_MODEL_SPACE,
                 pivot, restDir,
                 segment.lever(), segment.frequency(), segment.coefficient(), segment.mass(),
                 segment.maxAngle(), bodyVelocity, colliders, segment.radius(), null,
@@ -1377,7 +1430,40 @@ public final class YsmMeshSecondaryMotion {
      */
     static void bindSwingOf(OpenMatrix4f deformation, Quaternionf modelSwing, Quaternionf out) {
         rotationOf(deformation, deformationRotation);
-        YsmPhysicsSimulator.toLocal(out, modelSwing, deformationRotation);
+        toLocal(out, modelSwing, deformationRotation);
+    }
+
+    /** Scratch for {@link #toLocal}: never read across a call, so it cannot be aliased. */
+    private static final Quaternionf toLocalScratch = new Quaternionf();
+
+    /**
+     * The same rotation expressed in another frame: {@code out = frame^-1 * rotation * frame}.
+     *
+     * <p>The conjugation, and the reason it is a conjugation rather than a multiplication: a
+     * rotation carries no frame of its own, so moving one into the frame a caller works in leaves
+     * the <i>rotation</i> alone and changes only the basis its axis is written in. Written as
+     * {@code frame^-1 Q frame}, which is the order that composes to the identity when {@code Q} is,
+     * and which is its own inverse map.
+     *
+     * @param out      receives the rotation in {@code frame}, which may alias {@code rotation}
+     * @param rotation the rotation in the model's own frame
+     * @param frame    the frame to express it in
+     */
+    static void toLocal(Quaternionf out, Quaternionf rotation, Quaternionf frame) {
+        if (rotation == null || frame == null) {
+            out.identity();
+            return;
+        }
+        // `out` is allowed to be the same object as either argument, so the conjugated rotation is
+        // built from copies: reading an argument after writing `out` would read the answer instead
+        // of the input. The inverse is built first, before `out` is touched at all.
+        toLocalScratch.set(frame).conjugate();
+        out.set(toLocalScratch).mul(rotation).mul(frame);
+        if (!Float.isFinite(out.w()) || out.lengthSquared() < 1.0E-8F) {
+            out.identity();
+        } else {
+            out.normalize();
+        }
     }
 
     /**

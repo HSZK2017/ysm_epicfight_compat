@@ -1,0 +1,76 @@
+﻿=== T9 analytic equilibrium, bisection on the balance equation ===
+g=24.0 blocks/s^2, omega^2=219.9 rad^2/s^2 (2.360 Hz)
+
+--- BEFORE  (verticalFollow = 0: the spring's target IS the posed rest direction) ---
+  lean | lever |    phi |    theta |  swing |  final off-vert | pinned?
+  (deg)|  (blk)|   (deg)|    (deg)|  (deg) |           (deg) |
+     30|   0.09|   0.00 |   16.48 |  16.48 |           13.52 | no
+     30|   0.18|   0.00 |   11.24 |  11.24 |           18.76 | no
+     30|   0.26|   0.00 |    8.75 |   8.75 |           21.25 | no
+     45|   0.09|   0.00 |   24.78 |  24.78 |           20.22 | no
+     45|   0.18|   0.00 |   16.70 |  16.70 |           28.30 | no
+     45|   0.26|   0.00 |   12.89 |  12.89 |           32.11 | no
+     60|   0.09|   0.00 |   33.18 |  33.18 |           26.82 | no
+     60|   0.18|   0.00 |   21.95 |  21.95 |           38.05 | no
+     60|   0.26|   0.00 |   16.72 |  16.72 |           43.28 | no
+
+--- AFTER   (verticalFollow = 0.70, hair) ---
+  lean | lever |    phi |    theta |  swing |  final off-vert | pinned?
+  (deg)|  (blk)|   (deg)|    (deg)|  (deg) |           (deg) |
+     30|   0.09|  21.12 |   25.99 |  25.99 |            4.01 | no
+     30|   0.18|  21.12 |   24.47 |  24.47 |            5.53 | no
+     30|   0.26|  21.12 |   23.74 |  23.74 |            6.26 | no
+     45|   0.09|  31.91 |   39.09 |  39.09 |            5.91 | no
+     45|   0.18|  31.91 |   36.84 |  36.84 |            8.16 | no
+     45|   0.26|  31.91 |   35.77 |  35.77 |            9.23 | no
+     60|   0.09|  43.00 |   52.32 |  52.32 |            7.68 | no
+     60|   0.18|  43.00 |   49.40 |  49.40 |           10.60 | no
+     60|   0.26|  43.00 |   48.01 |  48.01 |           11.99 | no
+
+--- AFTER   (verticalFollow = 0.80, tail) ---
+  lean | lever |    phi |    theta |  swing |  final off-vert | pinned?
+  (deg)|  (blk)|   (deg)|    (deg)|  (deg) |           (deg) |
+     30|   0.09|  24.13 |   27.35 |  27.35 |            2.65 | no
+     30|   0.18|  24.13 |   26.35 |  26.35 |            3.65 | no
+     30|   0.26|  24.13 |   25.87 |  25.87 |            4.13 | no
+     45|   0.09|  36.46 |   41.14 |  41.14 |            3.86 | no
+     45|   0.18|  36.46 |   39.68 |  39.68 |            5.32 | no
+     45|   0.26|  36.46 |   38.98 |  38.98 |            6.02 | no
+     60|   0.09|  49.11 |   55.08 |  55.08 |            4.92 | no
+     60|   0.18|  49.11 |   53.21 |  53.21 |            6.79 | no
+     60|   0.26|  49.11 |   52.32 |  52.32 |            7.68 | no
+
+--- AFTER   (verticalFollow = 0.92, cloth - the proposed default) ---
+  lean | lever |    phi |    theta |  swing |  final off-vert | pinned?
+  (deg)|  (blk)|   (deg)|    (deg)|  (deg) |           (deg) |
+     30|   0.09|  27.68 |   28.95 |  28.95 |            1.05 | no
+     30|   0.18|  27.68 |   28.56 |  28.56 |            1.44 | no
+     30|   0.26|  27.68 |   28.37 |  28.37 |            1.63 | no
+     45|   0.09|  41.68 |   43.50 |  43.50 |            1.50 | no
+     45|   0.18|  41.68 |   42.94 |  42.94 |            2.06 | no
+     45|   0.26|  41.68 |   42.66 |  42.66 |            2.34 | no
+     60|   0.09|  55.87 |   58.13 |  58.13 |            1.87 | no
+     60|   0.18|  55.87 |   57.43 |  57.43 |            2.57 | no
+     60|   0.26|  55.87 |   57.09 |  57.09 |            2.91 | no
+
+--- AFTER   (verticalFollow = 1.00, the theoretical limit) ---
+  lean | lever |    phi |    theta |  swing |  final off-vert | pinned?
+  (deg)|  (blk)|   (deg)|    (deg)|  (deg) |           (deg) |
+     30|   0.09|  30.00 |   30.00 |  30.00 |            0.00 | no
+     30|   0.18|  30.00 |   30.00 |  30.00 |            0.00 | no
+     30|   0.26|  30.00 |   30.00 |  30.00 |            0.00 | no
+     45|   0.09|  45.00 |   45.00 |  45.00 |            0.00 | no
+     45|   0.18|  45.00 |   45.00 |  45.00 |            0.00 | no
+     45|   0.26|  45.00 |   45.00 |  45.00 |            0.00 | no
+     60|   0.09|  60.00 |   60.00 |  60.00 |            0.00 | no
+     60|   0.18|  60.00 |   60.00 |  60.00 |            0.00 | no
+     60|   0.26|  60.00 |   60.00 |  60.00 |            0.00 | no
+
+--- the short-lever regime: g/(L omega^2) > 1 below L = 0.1091 blocks (10.91 cm) ---
+  lever | g/(L w^2) | before b=0: pos of the rest-balance | after b=0.92
+  0.030 |     3.638 | rests 48.2 deg from rest, 48.2 from target | rests 59.1 deg from rest, 3.2 from target
+  0.050 |     2.183 | rests 42.1 deg from rest, 42.1 from target | rests 58.7 deg from rest, 2.8 from target
+  0.090 |     1.213 | rests 33.2 deg from rest, 33.2 from target | rests 58.1 deg from rest, 2.3 from target
+  0.110 |     0.992 | rests 29.9 deg from rest, 29.9 from target | rests 57.9 deg from rest, 2.1 from target
+  0.150 |     0.728 | rests 24.8 deg from rest, 24.8 from target | rests 57.6 deg from rest, 1.7 from target
+  0.260 |     0.420 | rests 16.7 deg from rest, 16.7 from target | rests 57.1 deg from rest, 1.2 from target

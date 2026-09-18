@@ -5,10 +5,10 @@ import com.ysmef.compat.config.YSMCompatConfig;
 /**
  * The shape of the secondary-motion swing, resolved from the config once per frame.
  *
- * <p>Separate from {@link YsmPhysicsSimulator} so that class stays free of Minecraft and
- * Forge types: the dynamics can then be tested with an explicit tuning rather than
- * whatever a config file happens to hold, and a test that pins the dynamics cannot be
- * broken by someone editing their config.
+ * <p>Free of Minecraft and Forge types, and of the dynamics themselves: the pendulum
+ * solver can then be driven with an explicit tuning rather than whatever a config file
+ * happens to hold, and a test that pins the dynamics cannot be broken by someone editing
+ * their config.
  *
  * <p>Every setting is read defensively. This is a client config, so it is absent in a
  * dedicated-server process and absent again in any test that never loads Forge, and a
@@ -16,13 +16,37 @@ import com.ysmef.compat.config.YSMCompatConfig;
  */
 public final class YsmPhysicsTuning {
 
-    /** What the simulator was tuned to, used whenever the config cannot be read. */
+    /**
+     * What every piece starts from, used whenever the config cannot be read.
+     *
+     * <p>These are the fallbacks, not a second copy of the settings: every one of them is the
+     * default of the config key the matching getter reads, which is the only arrangement in which
+     * "the config could not be read" and "the config says nothing" give the same answer. They are
+     * written out here rather than read off a simulator class because this file must stay free of
+     * the dynamics - the {@code YsmPhysicsSimulator} these five numbers were once taken from is
+     * gone, and the two constants below have been through the pendulum rewrite's own
+     * recomputation of them:
+     *
+     * <ul>
+     *   <li>{@code 220.0} 1/s^2 is the stiffness key's default, and the same number the model
+     *       authors' {@code ysm.second_order} default carries.</li>
+     *   <li>{@code 24.0} is the damping key's default; against 220 that is the ratio 0.81 the
+     *       config comment promises, so a swing settles in about a second.</li>
+     *   <li>{@code 8.0} is the <i>retired</i> droop key's default, kept only so a config that
+     *       still carries it is read into the same field. The dynamics use
+     *       {@link #gravityAcceleration()} - real gravity, 24 blocks/s^2 - and say so in
+     *       {@link #toString()}.</li>
+     *   <li>The two angles are expressed in degrees because that is the unit the config and the
+     *       comments use, the unit a person tunes in, and the unit the per-joint ceiling is
+     *       specified in. Degrees are converted here, at the one place the default enters.</li>
+     * </ul>
+     */
     public static final YsmPhysicsTuning DEFAULTS = new YsmPhysicsTuning(
-            YsmPhysicsSimulator.STIFFNESS,
-            YsmPhysicsSimulator.DAMPING,
-            YsmPhysicsSimulator.GRAVITY,
-            YsmPhysicsSimulator.MAX_ANGLE,
-            YsmPhysicsSimulator.MAX_ANGLE_ROOT);
+            220.0,
+            24.0,
+            8.0,
+            Math.toRadians(60.0),
+            Math.toRadians(20.0));
 
     /** Spring toward the animated pose, 1/s^2. */
     public final double stiffness;
@@ -133,6 +157,33 @@ public final class YsmPhysicsTuning {
             return finite(YSMCompatConfig.SECONDARY_MOTION_AIR_DRAG.get(), YsmDynamicBoneSolver.AIR_DRAG);
         } catch (Throwable t) {
             return YsmDynamicBoneSolver.AIR_DRAG;
+        }
+    }
+
+    /**
+     * The user's own scaling of every piece's gravity-follow weight, 0..1.
+     *
+     * <p>A scale on the classification's per-category weights rather than a weight of its own, and
+     * the difference matters: a single number for every piece would make the mechanism unusable on
+     * either hair or cloth, because the two want opposite things - a skirt panel is meant to leave
+     * the body's axis and hang toward the ground, while a lock of hair grows out of a skull, has its
+     * own volume, and pointing every strand straight down is what makes a hairdo look wet. The
+     * classification decides which of the two a piece is (see
+     * {@code YsmPhysicsParts.Segment#verticalFollow}); this is the one knob that moves all of them
+     * together, and 0 is the escape hatch back to the pre-existing behaviour.
+     */
+    public static double gravityFollowScale() {
+        try {
+            double configured = YSMCompatConfig.SECONDARY_MOTION_GRAVITY_FOLLOW.get();
+            // A client config is the one thing here that is not a number the caller controls, and a
+            // NaN would reach the solver's clamp as a NaN. Outside 0..1 it would extrapolate the
+            // spring's target past the world's vertical and pull the cloth upwards.
+            if (!Double.isFinite(configured)) {
+                return 1.0;
+            }
+            return Math.max(0.0, Math.min(1.0, configured));
+        } catch (Throwable t) {
+            return 1.0;
         }
     }
 

@@ -1,6 +1,7 @@
 package com.ysmef.compat.model.runtime;
 
 import com.ysmef.compat.model.EFMeshJsonWriter;
+import com.ysmef.compat.model.YSMJointMapper;
 import com.ysmef.compat.model.YSMMesh;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
@@ -147,7 +148,130 @@ public final class YsmPhysicsParts {
     public record Segment(int boneIndex, String boneName, int joint, Vector3f bindPivot,
                           Vector3f bindRest, float lever, float radius, float mass,
                           float frequency, float coefficient, float maxAngle, int parent,
-                          int[] parts, boolean authored, int[] neighbours) {}
+                          int[] parts, boolean authored, int[] neighbours) {
+
+        /**
+         * How much this piece's spring follows the world's downward direction rather than the posed
+         * rest direction, 0..1 - the solver's {@code verticalFollow}. Read live, so the config's own
+         * scaling applies without rebuilding the classification.
+         *
+         * <p>See {@link #categoryOf} for the numbers and for why a piece gets one.
+         */
+        public float verticalFollow() {
+            return categoryOf(boneName).weight * (float) YsmPhysicsTuning.gravityFollowScale();
+        }
+    }
+
+    /**
+     * How far a piece's spring leaves the pose for the world's vertical, per kind of piece.
+     *
+     * <p>These are the whole of the classification's answer to "hair should droop but a skirt
+     * should hang". The mechanism is one: the spring's target direction is a blend of the posed rest
+     * direction and the world's downward direction (see {@code YsmDynamicBoneSolver#update}), and the
+     * weight is how much of the second it contains. What the weight buys is stated exactly by the
+     * solver's balance: a piece settles at the target as the spring gets stiff, and the target is at
+     * {@code atan2(b sin a, (1-b) + b cos a)} from the rest direction for a body leaning {@code a},
+     * so the angle the piece keeps from the world's vertical settles to roughly {@code (1 - b) a} -
+     * the fraction of the body's lean the piece declines to follow.
+     *
+     * <ul>
+     *   <li><b>{@link Category#CLOTH} (0.92).</b> Cloth is expected to hang toward the ground: at
+     *       sixty degrees of lean the piece then sits 8 per cent of that - 4.8 degrees - off
+     *       vertical, inside the ten degrees the report asks for, with margin for the per-lever
+     *       gravity share (the measurement is in {@code tmp_verify/T9_findings.md}). Raising it to 1
+     *       would be 0 degrees with no margin at all and would make the pieces indifferent to the
+     *       pose, so the last 8 per cent is kept deliberately: a garment that answers the animation
+     *       slightly is what makes it read as worn rather than as a second, independent object.</li>
+     *   <li><b>{@link Category#HAIR} (0.60).</b> A lock of hair grows out of a skull and has its own
+     *       volume, so every strand pointing at the world's vertical is <i>wrong</i> - that is what
+     *       wet hair looks like, not hair. At 0.60 a piece keeps about 40 per cent of the body's
+     *       lean: on a sixty degree sprint the strands sit some 24 degrees off vertical, which is
+     *       what a ponytail actually does behind a runner, while a standing pose is untouched
+     *       because a blend of two directions that already agree is the same direction.</li>
+     *   <li><b>{@link Category#TAIL} (0.80).</b> A tail is neither: it is a heavy appendage with a
+     *       shape of its own, hung from the base of the spine. It reads as gravity-driven - more
+     *       than hair, whose root has to follow the head, and less than a skirt panel, which is
+     *       attached along a whole waistband and has no shape to keep. At 0.80 it holds about a
+     *       fifth of the lean.</li>
+     * </ul>
+     *
+     * <p><b>Hair is matched before cloth and cloth before tail</b>, because the families' names
+     * overlap: "ponytail" and "twintail" contain "tail", and a "hairband" contains no hint that
+     * would not also catch the hair around it. Ordering is what keeps a ponytail from being treated
+     * as a tail.
+     */
+    private enum Category {
+        /** Skirts, dresses, capes and anything else worn: hangs toward the ground. */
+        CLOTH(0.92F),
+        /** Tails, braids and tufts that are part of the body. */
+        TAIL(0.80F),
+        /** Hair, which grows out of the skull and keeps its volume. */
+        HAIR(0.60F),
+        /** Nothing recognisable: fall back to the piece following its own pose. */
+        UNKNOWN(0.0F);
+
+        final float weight;
+
+        Category(float weight) {
+            this.weight = weight;
+        }
+    }
+
+    /**
+     * The name fragments of each family, matched against the same normalized name the rest of the
+     * classifier uses, in the order {@link Category}'s own comment explains.
+     */
+    private static final String[] HAIR_HINTS = {
+            "hair", "bangs", "fringe", "ahoge", "mop"
+    };
+
+    private static final String[] CLOTH_HINTS = {
+            "skirt", "dress", "qun", "cloth", "hem", "coat", "robe", "kimono",
+            "cape", "cloak", "mantle", "scarf", "sash", "belt", "apron", "sleeve", "ribbon"
+    };
+
+    private static final String[] TAIL_HINTS = {
+            "tail", "braid", "tassel", "pendant", "plume", "feather"
+    };
+
+    /**
+     * Which family a bone's name reads as, and therefore what it is pulled toward.
+     *
+     * <p>Name-driven, with everything that implies: a model whose bones are named in a language the
+     * hints do not cover falls to {@link Category#UNKNOWN} and behaves exactly as it did before the
+     * weight existed - the pose is its whole target. That is the deliberate failure direction. A
+     * wrong guess the other way, "this is cloth" for something that is not, would hand a body part
+     * to gravity, and the accepted-cost comparison is between a piece that does not droop and a
+     * piece that leaves the body.
+     */
+    static Category categoryOf(String boneName) {
+        if (boneName == null || boneName.isEmpty()) {
+            return Category.UNKNOWN;
+        }
+        String normalized = YSMJointMapper.normalize(boneName);
+        if (normalized.isEmpty()) {
+            return Category.UNKNOWN;
+        }
+        if (containsAny(normalized, HAIR_HINTS)) {
+            return Category.HAIR;
+        }
+        if (containsAny(normalized, CLOTH_HINTS)) {
+            return Category.CLOTH;
+        }
+        if (containsAny(normalized, TAIL_HINTS)) {
+            return Category.TAIL;
+        }
+        return Category.UNKNOWN;
+    }
+
+    private static boolean containsAny(String normalized, String[] hints) {
+        for (String hint : hints) {
+            if (normalized.contains(hint)) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     /** The segment list of one model. */
     public record Model(Segment[] segments, Source source, int droppedPieces) {

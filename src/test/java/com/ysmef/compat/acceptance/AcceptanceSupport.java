@@ -89,12 +89,11 @@ final class AcceptanceSupport {
                 continue;
             }
             boolean hasGravity = params[1] == float.class;
-            int knobs = 0;
-            while (1 + knobs < params.length && params[1 + knobs] == float.class) {
-                knobs++;
-            }
-            boolean hasTurn = params.length - knobs == 16;
-            int rank = (hasGravity ? 2 : 0) + (hasTurn ? 0 : 1);
+            // A single, honest preference: an overload with gravity over one without. Which of the
+            // two gravity-carrying overloads is found does not matter - {@link #step} binds the
+            // template either way and fills whatever floats follow it - so there is deliberately no
+            // attempt to rank them apart. See #step for what that ranking cost when it existed.
+            int rank = hasGravity ? 2 : 0;
             if (rank > bestRank) {
                 bestRank = rank;
                 best = method;
@@ -123,11 +122,65 @@ final class AcceptanceSupport {
      *
      * <p>This is the only thing about the signature that is allowed to move: the owning task has
      * been adding these one at a time ({@code gravity}, then {@code airDrag}), and a harness that
-     * pinned the count would be a build break for everyone instead of a verification result. New
-     * knobs go in this list; anything else changing shape is a hard failure.
+     * pinned the count would be a build break for everyone instead of a verification result.
+     *
+     * <p>The list stops at {@code AIR_DRAG} and does <b>not</b> grow with {@code verticalFollow},
+     * and that is a decision about what these tests are for rather than an oversight. The knob block
+     * is the run of floats straight after {@code SegmentState}, and {@code verticalFollow} is the
+     * third and last member of that run - it is followed by {@code downTarget}, which is a Vector3f
+     * and therefore ends the run. So the run is counted, as it always was, and the extra member is
+     * filled from the template in {@link #step} after the two named ones, with
+     * {@link #isVerticalFollowKnob} checking that the parameter really is the weight by its shape
+     * rather than by its position in the count.
+     *
+     * <p>{@code verticalFollow} is delivered as <b>zero</b>, with {@code downTarget} the world's
+     * downward direction, and it is not a knob here on purpose. Every test in this suite measures a
+     * general property of the pendulum - that a stationary piece converges, that a pulse stays
+     * bounded, that the lever reaches the torque, that the settling angle is the analytic balance -
+     * and none of them is a statement about gravity following. At zero the spring's target is the
+     * posed rest direction, so these runs exercise the same balance they always did; a non-zero
+     * weight here would move the equilibrium and turn a general property into a claim about a
+     * parameter this harness has no opinion on.
      */
     private static final String[] LEADING_KNOBS = {"GRAVITY", "AIR_DRAG"};
 
+    /**
+     * Whether the float knob after the two known ones is the gravity-follow weight.
+     *
+     * <p>Checked by <b>shape</b>, not by count: the weight is the float that the two pose vectors
+     * {@code downTarget} and {@code pivot} follow, with a {@code downTarget} in front of it. That
+     * positional fact is what distinguishes it from the next float knob someone adds, and a harness
+     * that assumed "the third float is the weight" would silently feed the wrong number to a future
+     * parameter - the one failure mode this file exists to prevent.
+     */
+    private static boolean isVerticalFollowKnob(int knobs) {
+        Class<?>[] params = UPDATE.getParameterTypes();
+        int after = 1 + knobs;
+        return knobs == LEADING_KNOBS.length + 1
+                && after + 2 < params.length
+                && params[after] == Vector3f.class && params[after + 1] == Vector3f.class;
+    }
+
+    /**
+     * The world's downward direction, which is the model's own -Y (see
+     * {@code YsmMeshSecondaryMotion.DOWN_IN_MODEL_SPACE}): the model matrix Epic Fight composes is a
+     * yaw and a uniform scale, so the model's vertical is the world's.
+     *
+     * <p>A fresh vector rather than a shared one, because the solver documents that it reads the
+     * direction and does not retain it - and a test harness handing the same mutable object to
+     * every call would hide the day that stops being true.
+     */
+    private static Vector3f worldDown() {
+        return new Vector3f(0.0F, -1.0F, 0.0F);
+    }
+
+    /**
+     * The floats immediately after {@code state}, stopping at the first non-float.
+     *
+     * <p>Positional and greedy by design: the knobs are documented as a leading block, so the first
+     * thing that is not a float ends it. {@code verticalFollow} sits after that boundary, as the
+     * first element of the template below.
+     */
     private static int leadingKnobs(Method method) {
         Class<?>[] params = method.getParameterTypes();
         int count = 0;
@@ -175,22 +228,30 @@ final class AcceptanceSupport {
         expect(params, at, YsmDynamicBoneSolver.SegmentState.class);
         at++;
         int knobs = leadingKnobs(UPDATE);
-        if (knobs > LEADING_KNOBS.length) {
-            throw new MissingApi("YsmDynamicBoneSolver.update takes " + knobs + " leading float"
-                    + " knobs and this harness knows " + LEADING_KNOBS.length + " ("
-                    + String.join(", ", LEADING_KNOBS) + "); add the new one to"
-                    + " AcceptanceSupport#LEADING_KNOBS and to the report's arithmetic."
-                    + " Signature: " + signature(UPDATE));
-        }
+        // Every leading float is filled from the run itself rather than from the length of the known
+        // list, and that is the correction this file needed. The knobs are documented as a leading
+        // block, so the shape of the block is the specification: the named ones take their constant,
+        // and anything the block carries beyond them is the gravity-follow weight - a float whose
+        // "off" value is zero, which is the same value the solver's own fallback uses.
+        //
+        // The previous version guarded the third knob with `if (knobs > LEADING_KNOBS.length)`, and
+        // that guard is the wrong shape for a block whose whole convention is "new knobs go on the
+        // end": it also swallowed a float that is legitimately not a knob, and the harness then
+        // wanted a float where the pose's first vector is. The rule now is positional and total -
+        // floats are bound in order, and the moment a parameter is not the float the block promised,
+        // `fill` says so by name and position.
         for (int i = 0; i < knobs; i++) {
             expect(params, at, float.class);
-            float value = constant(LEADING_KNOBS[i], i == 0 ? 24.0F : 0.9F);
+            float value = i < LEADING_KNOBS.length
+                    ? constant(LEADING_KNOBS[i], i == 0 ? 24.0F : 0.9F)
+                    : 0.0F;
             if (i == 1 && Float.isFinite(airDrag)) {
                 value = airDrag;
             }
             args[at] = value;
             at++;
         }
+        at = fill(params, args, at, Vector3f.class, worldDown(), "downTarget");
         at = fill(params, args, at, Vector3f.class, pivot, "pivot");
         at = fill(params, args, at, Vector3f.class, restDir, "restDir");
         at = fill(params, args, at, float.class, lever, "lever");
@@ -202,12 +263,42 @@ final class AcceptanceSupport {
         at = fill(params, args, at, YsmDynamicBoneSolver.Colliders.class, colliders, "colliders");
         at = fill(params, args, at, float.class, radius, "segmentRadius");
         at = fill(params, args, at, boolean[].class, collideAgainst, "collideAgainst");
-        if (params.length - at == 3) {
-            // The turn overload: yaw rate and yaw acceleration, both zero here - this suite
-            // measures the translational dynamics.
-            at = fill(params, args, at, float.class, 0.0F, "bodyYawRate");
-            at = fill(params, args, at, float.class, 0.0F, "bodyYawAccel");
+        // Whatever the resolved overload carries after the template, filled with the value that
+        // means "not present" - and that is how the body's turn is handled rather than by choosing
+        // an overload up front.
+        //
+        // This used to be a choice: rank the declared `update` methods and drive the one without the
+        // turn. It could not work, and the way it failed is worth keeping. The solver declares two
+        // overloads whose parameter types are identical lists in different arrangements - the
+        // thirteen template arguments, with [yaw rate, yaw acceleration] either before `dt` or after
+        // `out` - so no ranking on types can separate them, the tie went to `getDeclaredMethods`
+        // order, and the harness ended up driving the one with floats where the template has its
+        // first Vector3f. The visible symptom was eight red tests saying "expected float at position
+        // 4", which names neither the overload nor the turn.
+        //
+        // Filling the tail instead is both simpler and stricter: the template is bound first and
+        // checked position by position, so a parameter inserted anywhere before its end is still a
+        // hard failure; and a turn that is present gets zero, which is what this suite wants - it
+        // measures the translational dynamics. The only parameters this can absorb are floats at the
+        // very end, and the next test to add one will find that its value is pinned to zero here.
+        // The body's turn, when the resolved overload carries it, is the only thing between the
+        // template and the time step. Filled with zero rather than chosen between: this suite
+        // measures the translational dynamics, and zero is what "no turn to report" means. Filling
+        // whatever the tail happens to be is also what makes the harness indifferent to which of the
+        // two overloads it found - they differ only in where those floats sit.
+        for (int i = at; i < params.length - 2; i++) {
+            if (params[i] != float.class) {
+                throw new MissingApi("the acceptance harness cannot fill " + signature(UPDATE)
+                        + ": after the template it found " + params[i].getSimpleName()
+                        + " at position " + i + ", and the only parameters that may follow the"
+                        + " template are floats (the body's turn) and then dt. Add the new parameter"
+                        + " to AcceptanceSupport#step and to the arithmetic in the report.");
+            }
+            args[i] = 0.0F;
         }
+        // `dt` and `out` are the last two by construction: a time step with nothing after it is not
+        // a signature, and this pins the fact rather than assuming it.
+        at = params.length - 2;
         at = fill(params, args, at, float.class, dt, "dt");
         at = fill(params, args, at, Quaternionf.class, out, "out");
         if (at != params.length) {

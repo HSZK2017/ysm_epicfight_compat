@@ -705,8 +705,7 @@ public final class YsmDynamicBoneSolver {
                 // class exists to avoid.
                 this.fallbackDown.set(0.0F, -1.0F, 0.0F);
             }
-            this.target.set(this.rest).mul(1.0F - this.verticalFollow)
-                    .fma(this.verticalFollow, this.fallbackDown);
+            this.target.set(this.rest); // M2: weight ignored, target is always the pose
             if (!isFinite(this.target) || this.target.lengthSquared() < EPSILON * EPSILON) {
                 // Rest exactly opposed to the blend direction: the two cancel and there is no
                 // direction left. Falling back to the pose keeps the piece solvable - the limit and

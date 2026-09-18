@@ -90,28 +90,19 @@ public final class YSMPlayerAnimator implements Molang.Env {
     private final Matrix4f[] deltaModel;
 
     /**
-     * The secondary-motion rotation of each chain bone, as a model-space delta in the
-     * same form as {@link #deltaModel}. Identity for every bone that is not a chain, so
-     * the common case costs one identity check per bone.
+     * The chains of this model, classified once; empty when it has no hanging pieces.
+     *
+     * <p><b>The chains are a report here, not a simulation.</b> The engine that actually swings a
+     * model's hanging pieces is {@code YsmMeshSecondaryMotion}, driven where the mesh is drawn and
+     * integrating each bone's own pendulum against the pose Epic Fight is about to draw. What is
+     * left in this class is the classification and the one log line that names it, kept because
+     * "no motion" and "nothing classified" are different problems and only that line tells them
+     * apart. Everything that used to advance a spring here - the per-chain states, their
+     * bind-space anchors and rest tips, and the {@code advancePhysics} loop - is gone, and it is
+     * gone on purpose rather than lost: see {@link #advancePhysics}.
      */
-    private final Matrix4f[] physicsDelta;
-
-    /** The chains of this model, classified once; empty when it has no hanging pieces. */
     private final List<YsmPhysicsChains.Chain> physicsChains;
 
-    /** One simulation state per entry of {@link #physicsChains}, in the same order. */
-    private final YsmPhysicsSimulator.ChainState[] physicsStates;
-
-    /** Bind-space pivot and rest tip of each chain, resolved once; [chain][0=pivot,1=tip]. */
-    private final Vector3f[][] physicsAnchors;
-
-    /** The bone's bind rotation as a quaternion, per chain, for the local-frame conversion. */
-    private final Quaternionf[] physicsBindRot;
-
-    // Scratch for the chain update, so a composed frame allocates nothing.
-    private final Quaternionf physicsScratch = new Quaternionf();
-    private final Quaternionf physicsLocal = new Quaternionf();
-    private final Matrix4f physicsScratchMat = new Matrix4f();
     /** Double-buffered composed chain deltas: the worker evaluates into one buffer while the render thread reads the other. */
     private final Matrix4f[][] chainDeltaBuf;
     /** Double-buffered effective visibility scales (same layout as chainDeltaBuf). */
@@ -192,7 +183,6 @@ public final class YSMPlayerAnimator implements Molang.Env {
         hasScale = new boolean[n];
         localAnim = new Matrix4f[n];
         deltaModel = new Matrix4f[n];
-        physicsDelta = new Matrix4f[n];
         chainDeltaBuf = new Matrix4f[2][n];
         effMinScaleBuf = new float[2][n];
         composed = new boolean[n];
@@ -200,7 +190,6 @@ public final class YSMPlayerAnimator implements Molang.Env {
         for (int i = 0; i < n; i++) {
             localAnim[i] = new Matrix4f();
             deltaModel[i] = new Matrix4f();
-            physicsDelta[i] = new Matrix4f();
             chainDeltaBuf[0][i] = new Matrix4f();
             chainDeltaBuf[1][i] = new Matrix4f();
             partMats[i] = new OpenMatrix4f();
@@ -208,25 +197,12 @@ public final class YSMPlayerAnimator implements Molang.Env {
         channelCursor = new int[model.channelCount];
         java.util.Arrays.fill(channelCursor, -1);
 
-        // Secondary motion: classified once per model, then simulated per composed
-        // frame. The classification walks every bone against every other to reject
-        // containers, so doing it here rather than per frame is what keeps the feature
-        // affordable on a phone.
+        // Secondary motion: classified once per model, and reported at construction. The
+        // classification walks every bone against every other to reject containers, so doing it
+        // here rather than per frame is what keeps the feature affordable on a phone - and the list
+        // is what the report below names, so a model with no hanging pieces says so rather than
+        // staying silent.
         this.physicsChains = YsmPhysicsChains.build(model);
-        this.physicsStates = new YsmPhysicsSimulator.ChainState[this.physicsChains.size()];
-        this.physicsAnchors = new Vector3f[this.physicsChains.size()][2];
-        this.physicsBindRot = new Quaternionf[this.physicsChains.size()];
-        for (int c = 0; c < this.physicsChains.size(); c++) {
-            this.physicsStates[c] = new YsmPhysicsSimulator.ChainState();
-            YSMRuntimeModel.BoneRt bone = model.bones[this.physicsChains.get(c).boneIndex()];
-            // The pivot is the bone's bind pivot, and the tip is where its own children
-            // hang - both in model bind space, which is where the pose deltas are
-            // composed. Computed once: neither moves with the animation.
-            this.physicsAnchors[c][0] = new Vector3f(bone.bindWorld.m30(), bone.bindWorld.m31(), bone.bindWorld.m32());
-            this.physicsAnchors[c][1] = chainRestTip(model, this.physicsChains.get(c), this.physicsAnchors[c][0]);
-            this.physicsBindRot[c] = new Quaternionf();
-            YsmPhysicsSimulator.rotationOf(bone.bindWorld, this.physicsBindRot[c]);
-        }
 
         // Reported at construction rather than on the first composed frame, because the
         // two ways this feature does nothing are a missing animator and an empty
@@ -255,35 +231,8 @@ public final class YSMPlayerAnimator implements Molang.Env {
     }
 
     /**
-     * Where a chain's tip hangs at bind time: the average bind position of the bones
-     * under it, or the pivot itself when it has none.
-     *
-     * <p>The average rather than the first child because a piece of hair is usually a
-     * short fan of strands, and their midpoint is a better lever than any one strand.
+     * Whether {@code candidate} sits under {@code ancestor}, with a cycle guard.
      */
-    private static Vector3f chainRestTip(YSMRuntimeModel model, YsmPhysicsChains.Chain chain, Vector3f pivot) {
-        YSMRuntimeModel.BoneRt[] bones = model.bones;
-        float sx = 0.0F, sy = 0.0F, sz = 0.0F;
-        int found = 0;
-        for (int i = 0; i < bones.length; i++) {
-            if (i == chain.boneIndex() || bones[i] == null) {
-                continue;
-            }
-            if (!isUnder(bones, i, chain.boneIndex())) {
-                continue;
-            }
-            sx += bones[i].bindWorld.m30();
-            sy += bones[i].bindWorld.m31();
-            sz += bones[i].bindWorld.m32();
-            found++;
-        }
-        if (found == 0) {
-            return new Vector3f(pivot);
-        }
-        return new Vector3f(sx / found, sy / found, sz / found);
-    }
-
-    /** Whether {@code candidate} sits under {@code ancestor}, with a cycle guard. */
     private static boolean isUnder(YSMRuntimeModel.BoneRt[] bones, int candidate, int ancestor) {
         int guard = 0;
         for (int i = bones[candidate].parent; i >= 0 && guard++ <= bones.length; i = bones[i].parent) {
@@ -707,15 +656,6 @@ public final class YSMPlayerAnimator implements Molang.Env {
      * current write buffer. Runs only on full-evaluation frames.
      */
     private void compose() {
-        // The chain simulation runs on the same cadence as the script evaluation, so
-        // this is where its time step is measured. Compose runs once per full
-        // evaluation, which is what makes the step a real elapsed time rather than a
-        // fixed guess: on a rate-limited or async path it is simply longer.
-        double nowSeconds = System.nanoTime() / 1.0E9D;
-        this.physicsDtSeconds = this.physicsLastEvalSeconds < 0.0
-                ? 0.0F
-                : (float) (nowSeconds - this.physicsLastEvalSeconds);
-        this.physicsLastEvalSeconds = nowSeconds;
         advancePhysics();
 
         java.util.Arrays.fill(composed, false);
@@ -724,16 +664,6 @@ public final class YSMPlayerAnimator implements Molang.Env {
             composeBone(i);
         }
     }
-
-    /**
-     * Seconds since the previous full evaluation, for the chain simulation. Set by
-     * {@link #apply}; {@link YsmPhysicsSimulator} clamps it, so a lag spike cannot
-     * fling a chain.
-     */
-    private float physicsDtSeconds = 0.0F;
-
-    /** Last wall-clock time a full evaluation ran, for {@link #physicsDtSeconds}. */
-    private double physicsLastEvalSeconds = -1.0;
 
     /** True once the secondary-motion classification has been reported. */
     private boolean physicsLogged = false;
@@ -859,23 +789,37 @@ public final class YSMPlayerAnimator implements Molang.Env {
     }
 
     /**
-     * Advance every chain of this model and fold the resulting swing into
-     * {@link #physicsDelta}. Runs on full-evaluation frames only, alongside
-     * {@link #compose()}: the chains' state is persistent, so a frame that reuses the
-     * previous pose simply reuses the previous swing with it.
+     * Report which of this model's bones were classified as hanging pieces, once.
      *
-     * <p>Each chain's swing is written in the same shape as {@link #deltaModel} - a
-     * model-space delta conjugated out of the bone's local bind frame - so the caller
-     * can compose the two without knowing anything about either.
+     * <p>Runs on full-evaluation frames only, alongside {@link #compose()}, and it is the whole of
+     * this class's remaining part in secondary motion.
+     *
+     * <h2>What used to be here, and why it is not</h2>
+     *
+     * <p>This method used to run a spring - {@code YsmPhysicsSimulator} - over every classified
+     * chain and write the result into a {@code physicsDelta} array that {@link #composeBone}
+     * multiplied into each bone's local transform. Both the class and the array are gone, and the
+     * reason is the one this method's own comment used to carry: the chains were anchored to
+     * <b>bind</b> data (a pivot and a rest tip resolved once at construction), so the direction the
+     * spring pulled toward never moved with the animation, and the simulation could not produce a
+     * swing at all however it was tuned. It was a second engine that wrote nothing, competing for
+     * the same output as the one that does.
+     *
+     * <p>The engine that swings a model's hanging pieces is {@code YsmMeshSecondaryMotion}, driven
+     * where the mesh is drawn: it reads the pose Epic Fight is about to draw, integrates each bone's
+     * own pendulum about its own pivot, and publishes the deltas onto the mesh parts. Deleting this
+     * class's half of it therefore removes nothing that was visible - and <b>restoring
+     * {@code YsmPhysicsSimulator} from git history would not bring a working feature back</b>, it
+     * would restore the second engine and re-open the question of which of the two owns a part's
+     * transform. It was removed deliberately; a reader who finds it in the history is looking at
+     * the version that did not work.
+     *
+     * <p>What is left is worth keeping because "the pieces do not move" has two causes that look
+     * identical on screen and different here: a model whose every candidate was rejected because no
+     * bone of it reads as hanging cloth or hair, and an animator that was never built for the model
+     * at all. This line is the one that tells them apart.
      */
     private void advancePhysics() {
-        // Superseded on the only path that draws the converted mesh. The chains here are
-        // anchored to *bind* data (see the physicsAnchors initialisation in the constructor),
-        // so their rest tips never move and this simulation cannot produce a swing however it
-        // is tuned; the live engine is YsmMeshSecondaryMotion, which is driven by the pose
-        // Epic Fight is about to draw. What is still worth doing here is reporting which bones
-        // this model offers, because that is what tells "no motion" apart from "nothing
-        // classified" on a model whose controller declares no physics animation.
         boolean enabled;
         try {
             enabled = com.ysmef.compat.config.YSMCompatConfig.ENABLE_SECONDARY_MOTION.get();
@@ -883,79 +827,34 @@ public final class YSMPlayerAnimator implements Molang.Env {
             enabled = false;
         }
 
-        if (!this.physicsLogged) {
-            this.physicsLogged = true;
-            // Says once per animator which bones this model will swing, and whether the
-            // feature is on. Reported even when the list is empty: "the option is off",
-            // "this model has no bones recognised as hanging" and "the animator was never
-            // built for this model" are three different problems, and without a line for
-            // the empty case the first two are indistinguishable from the third.
-            StringBuilder names = new StringBuilder();
-            for (YsmPhysicsChains.Chain c : this.physicsChains) {
-                names.append(names.length() == 0 ? "" : ", ").append(c.boneName());
-            }
-            com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
-                    "YSM-EF Compat: [physics] secondary motion {} for model '{}': {} chain bone(s){}",
-                    enabled ? "active" : "off (config enableSecondaryMotion)",
-                    model.modelId, this.physicsChains.size(),
-                    names.length() == 0
-                            ? " - no bone of this model reads as hanging cloth or hair"
-                            : " [" + names + "]");
-            if (enabled && !this.physicsChains.isEmpty()) {
-                // The four settings that decide how the swing looks, reported next to the
-                // bones it will swing: "it looks wrong" is otherwise unanswerable without
-                // knowing which values produced it.
-                com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
-                        "YSM-EF Compat: [physics] tuning {}", YsmPhysicsTuning.current());
-            }
-        }
-
-        if (this.physicsChains.isEmpty()) {
+        if (this.physicsLogged) {
             return;
         }
-
-        // Resolved once per frame rather than per chain: it is a config read, and the
-        // four settings are what make the swing tunable without a rebuild.
-        YsmPhysicsTuning tuning = YsmPhysicsTuning.current();
-
-        // The simulation runs even while the feature is off - the loop below still needs
-        // a dt to advance the states with. Two reasons: clearing the deltas costs one
-        // identity write per chain and keeps the disabled path as cheap as not having the
-        // feature at all, and the time step keeps advancing, so turning it on does not
-        // feed the integrator one enormous dt covering however long it was off and fling
-        // every chain at once.
-        float dt = this.physicsDtSeconds;
-        for (int c = 0; c < this.physicsChains.size(); c++) {
-            YsmPhysicsChains.Chain chain = this.physicsChains.get(c);
-            YSMRuntimeModel.BoneRt bone = model.bones[chain.boneIndex()];
-            YsmPhysicsSimulator.INSTANCE.update(
-                    this.physicsStates[c], this.physicsAnchors[c][0], this.physicsAnchors[c][1],
-                    chain, dt, tuning, this.physicsScratch);
-
-            if (!enabled || isNeutral(this.physicsScratch)) {
-                // No swing, or the feature is off: leave the delta identity rather than
-                // build a no-op matrix.
-                this.physicsDelta[chain.boneIndex()].identity();
-                continue;
-            }
-
-            // The dynamics are in model space; the local transform the caller composes is
-            // not, so the rotation is conjugated into the bone's own bind frame.
-            YsmPhysicsSimulator.toLocal(this.physicsLocal, this.physicsScratch, this.physicsBindRot[c]);
-            this.physicsScratchMat.identity()
-                    .translate(bone.px, bone.py, bone.pz)
-                    .rotate(this.physicsLocal)
-                    .translate(-bone.px, -bone.py, -bone.pz);
-            this.physicsDelta[chain.boneIndex()].set(this.physicsScratchMat);
+        this.physicsLogged = true;
+        // Says once per animator which bones this model will swing, and whether the
+        // feature is on. Reported even when the list is empty: "the option is off",
+        // "this model has no bones recognised as hanging" and "the animator was never
+        // built for this model" are three different problems, and without a line for
+        // the empty case the first two are indistinguishable from the third.
+        StringBuilder names = new StringBuilder();
+        for (YsmPhysicsChains.Chain c : this.physicsChains) {
+            names.append(names.length() == 0 ? "" : ", ").append(c.boneName());
         }
-    }
-
-    /** True for the identity rotation, the common case for a settled chain. */
-    private static boolean isNeutral(Quaternionf q) {
-        return Math.abs(q.w() - 1.0F) < 1.0E-6F
-                && Math.abs(q.x()) < 1.0E-6F
-                && Math.abs(q.y()) < 1.0E-6F
-                && Math.abs(q.z()) < 1.0E-6F;
+        com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
+                "YSM-EF Compat: [physics] secondary motion {} for model '{}': {} chain bone(s){}",
+                enabled ? "active" : "off (config enableSecondaryMotion)",
+                model.modelId, this.physicsChains.size(),
+                names.length() == 0
+                        ? " - no bone of this model reads as hanging cloth or hair"
+                        : " [" + names + "]");
+        if (enabled && !this.physicsChains.isEmpty()) {
+            // The settings that decide how the swing looks, reported next to the bones it will
+            // swing: "it looks wrong" is otherwise unanswerable without knowing which values
+            // produced it. The engine that uses them is YsmMeshSecondaryMotion; this line is the
+            // only place they are printed alongside the classified bone list.
+            com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
+                    "YSM-EF Compat: [physics] tuning {}", YsmPhysicsTuning.current());
+        }
     }
 
     /**
@@ -1002,12 +901,15 @@ public final class YSMPlayerAnimator implements Molang.Env {
 
         // delta of this bone's animated local vs its bind local, conjugated into
         // model bind space so it can pre-multiply the Epic Fight joint pose.
-        // The chain's secondary-motion rotation belongs here rather than after the
-        // conjugation: it is a local-space factor exactly like localAnim (both rotate
-        // about the bone's pivot and vanish at rest), so composing it first gives the
-        // bone's local transform including the swing, and the conjugation below then
-        // carries it to model space with the same math as the animation.
-        scratchA.set(localAnim[i]).mul(physicsDelta[i]).mul(bone.bindLocalInv);
+        //
+        // A secondary-motion rotation used to be folded in between the two, as a local-space factor
+        // exactly like localAnim. It is gone, and it was identity on every frame it was ever
+        // written (see #advancePhysics): the swing that used to be composed here is produced by
+        // YsmMeshSecondaryMotion, which applies it to the mesh part rather than to this delta. The
+        // multiplication is removed rather than kept with an identity factor so that "this delta is
+        // the animation and nothing else" is a fact about the expression instead of about a matrix
+        // that happens to hold the identity.
+        scratchA.set(localAnim[i]).mul(bone.bindLocalInv);
         if (isIdentity(scratchA)) {
             deltaModel[i].identity();
         } else {
