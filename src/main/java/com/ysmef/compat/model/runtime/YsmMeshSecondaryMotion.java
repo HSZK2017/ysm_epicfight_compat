@@ -474,6 +474,7 @@ public final class YsmMeshSecondaryMotion {
         YsmPhysicsParts.clear();
         MISMATCH_LOGGED.clear();
         LEG_REGION_LOGGED.clear();
+        HEAD_REGION_LOGGED.clear();
     }
 
     /**
@@ -644,6 +645,11 @@ public final class YsmMeshSecondaryMotion {
         if (YsmDiag.isEnabled() && LEG_REGION_LOGGED.add(model.modelId)) {
             // Reads only: this branch prints what the frame already computed and writes nothing.
             logLegRegion(model, mesh, state, armature, poses);
+        }
+        if (YsmDiag.isEnabled() && HEAD_REGION_LOGGED.add(model.modelId)) {
+            // The same, for the chest and the head: the region the reported head-hair defect is in.
+            // Reads only, once per model, bounded - see logHeadRegion.
+            logHeadRegion(model, mesh, state, armature, poses);
         }
         if (state.frames % 240 == 0) {
             YSMEpicFightCompat.LOGGER.info(
@@ -816,6 +822,32 @@ public final class YsmMeshSecondaryMotion {
     /** The most leg pieces one model prints; anything beyond it is counted, not listed. */
     private static final int LEG_DIAG_MAX_PIECES = 16;
 
+    /**
+     * Models whose head-region diagnostic has already been printed. Its own set rather than the leg
+     * one's, because the two are asked about different models in different sessions and one being
+     * printed must not suppress the other. Cleared with the rest of the per-mesh state by
+     * {@link #clear()}.
+     */
+    private static final java.util.Set<String> HEAD_REGION_LOGGED =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** The most head pieces one model prints; anything beyond it is counted, not listed. */
+    private static final int HEAD_DIAG_MAX_PIECES = 24;
+
+    /**
+     * Epic Fight's chest and head joints, by {@code JointTable}: Chest = 8, Head = 9. The head region
+     * is where the reported "the top-of-head hair moves the wrong way when the head pitches" lives,
+     * and it is a region rather than a joint because the pieces that move are drawn on the head while
+     * the ones below them hang off the chest.
+     */
+    private static final int JOINT_CHEST = 8;
+    private static final int JOINT_HEAD = 9;
+    private static final int[] HEAD_JOINTS = {JOINT_CHEST, JOINT_HEAD};
+
+    private static boolean isHeadJoint(int joint) {
+        return joint == JOINT_CHEST || joint == JOINT_HEAD;
+    }
+
     /** Epic Fight's leg joints, by {@code JointTable}: Thigh_R, Leg_R, Knee_R, Thigh_L, Leg_L, Knee_L. */
     private static final int LEG_JOINT_FIRST = 1;
     private static final int LEG_JOINT_LAST = 6;
@@ -854,7 +886,7 @@ public final class YsmMeshSecondaryMotion {
      * ones that are not simulated</b> - a piece the new rule rejected has no segment at all, and a
      * diagnostic that could only see simulated pieces would report "the thigh is simulated" on a build
      * where it no longer is. Each row says which it is and, when it is not simulated, which gate
-     * dropped it.
+     * dropped it. {@link #logHeadRegion} lists the same rows for the chest and the head.
      *
      * <p>EF's own biped values are printed for the same joint ids from {@code Armatures.BIPED} - the
      * authored rest pose of Epic Fight's biped skeleton, which is what this mod's re-bound armature is
@@ -989,6 +1021,104 @@ public final class YsmMeshSecondaryMotion {
         row.append(" | joint pose ").append(degrees(degreesOf(poses, bone.joint)))
                 .append(" deg, pose x toOrigin ").append(degrees(degreesOf(deformation))).append(" deg");
         return row.toString();
+    }
+
+    /**
+     * The chest-and-head region of one model, once per model, behind {@code -Dysm_ef_compat.diag=true}.
+     *
+     * <h2>What this settles</h2>
+     *
+     * <p>The reported defect is the <b>top-of-head hair</b> under a head pitch: it moves the wrong way
+     * - down when the head looks up - and the whole block moves rather than the tip. Three different
+     * causes produce a picture like that and the leg line's columns separate them exactly as they do
+     * for a thigh: the piece's <b>own delta</b> has laid it out (a piece swinging about a pivot that
+     * is not where it is attached - {@link YsmPhysicsParts#risesOffPivot} refuses the up-pointing
+     * case, the wrap rule the band-shaped one), the <b>joint's pose</b> already put it there, or the
+     * piece is not simulated at all and simply rides the head. Each row prints the drawn long axis
+     * from vertical three times - in bind, after the pose alone, and after the pose and the piece's
+     * own delta - so {@code bind -> pose} is what Epic Fight's animation did and
+     * {@code pose -> pose+delta} is what this mod's simulation did. The joint rows below print the
+     * Chest's and the Head's own pose rotations, which is the pitch the region is being asked about.
+     *
+     * <h2>What it is, and is not</h2>
+     *
+     * <p><b>Reads only.</b> It runs after the frame's transforms have been written to the mesh and
+     * writes nothing: every value comes from what the frame already computed, so it cannot change what
+     * is drawn, and it is the same class of line as {@link #logLegRegion} - the one this round added
+     * beside it rather than replacing.
+     *
+     * <p>It prints at most {@value #HEAD_DIAG_MAX_PIECES} pieces plus the Chest and the Head, once per
+     * model, and only when the diagnostic flag is on. The pieces are listed <b>simulated first</b>:
+     * the reported model has more than a hundred bones carrying geometry on the head joint, most of
+     * them a mouth or an eye a few millimetres across, and a bound that printed them in bone order
+     * would spend every row on the face and never reach the hair. Anything past the bound is counted.
+     */
+    private static void logHeadRegion(YSMRuntimeModel model, YSMMesh mesh, State state,
+                                      Armature armature, OpenMatrix4f[] poses) {
+        try {
+            if (model == null || state == null || state.parts == null || poses == null) {
+                return;
+            }
+            YsmPhysicsParts.Segment[] segments = state.parts.segments();
+            Map<String, Integer> segmentOfBone = new java.util.HashMap<>();
+            for (int i = 0; i < segments.length; i++) {
+                segmentOfBone.put(segments[i].boneName(), i);
+            }
+            Map<Integer, List<Vector3f>> vertices = YsmPhysicsParts.verticesByBone(mesh, model);
+            YSMEpicFightCompat.LOGGER.info(
+                    "YSM-EF Compat: [physics] head diag of '{}': {} simulated piece(s) in all; the region below is the Chest ({}) and the Head ({}), EF's own joint ids. "
+                            + "Columns: pivot; own geometry y range; lever L; rest angle from straight down (bind); upShare = the up-component of the unit rest direction (margin {}); the drawn long axis from vertical in bind, after the joint's pose only, and after the pose and the piece's own delta; and the joint's pose rotation for that piece. Pieces are listed simulated first",
+                    model.modelId, segments.length, JOINT_CHEST, JOINT_HEAD,
+                    YsmPhysicsParts.risesFromPivotMargin());
+            List<Integer> simulated = new java.util.ArrayList<>();
+            List<Integer> rigid = new java.util.ArrayList<>();
+            for (int boneIndex = 0; boneIndex < model.bones.length; boneIndex++) {
+                YSMRuntimeModel.BoneRt bone = model.bones[boneIndex];
+                if (bone == null || !isHeadJoint(bone.joint)) {
+                    continue;
+                }
+                List<Vector3f> own = vertices.get(boneIndex);
+                if (own == null || own.isEmpty()) {
+                    continue;
+                }
+                // "Would be listed" is asked of everything with geometry, including the pieces a
+                // gate dropped: a diagnostic that could only see simulated pieces would report "the
+                // hair is simulated" on a build where it no longer is.
+                if (segmentOfBone.containsKey(bone.name)) {
+                    simulated.add(boneIndex);
+                } else {
+                    rigid.add(boneIndex);
+                }
+            }
+            int printed = 0;
+            int beyond = 0;
+            for (int pass = 0; pass < 2; pass++) {
+                for (int boneIndex : pass == 0 ? simulated : rigid) {
+                    if (printed >= HEAD_DIAG_MAX_PIECES) {
+                        beyond++;
+                        continue;
+                    }
+                    printed++;
+                    YSMEpicFightCompat.LOGGER.info("YSM-EF Compat: [physics] head diag '{}': {}",
+                            model.modelId, legPieceRow(model, state, model.bones[boneIndex], boneIndex,
+                                    vertices.get(boneIndex), segmentOfBone, armature, poses));
+                }
+            }
+            if (beyond > 0) {
+                YSMEpicFightCompat.LOGGER.info(
+                        "YSM-EF Compat: [physics] head diag '{}': {} further chest/head piece(s) not listed ({} simulated, {} rigid)",
+                        model.modelId, beyond, simulated.size(), rigid.size());
+            }
+            for (int joint : HEAD_JOINTS) {
+                YSMEpicFightCompat.LOGGER.info("YSM-EF Compat: [physics] head diag '{}': {}",
+                        model.modelId, legJointRow(armature, poses, joint));
+            }
+        } catch (Throwable t) {
+            // A diagnostic that can break a frame is worse than no diagnostic: the frame is already
+            // drawn by the time this runs, and the line is only ever read by a person.
+            YSMEpicFightCompat.LOGGER.warn(
+                    "YSM-EF Compat: [physics] head diag of '{}' could not be produced", model.modelId, t);
+        }
     }
 
     /** One leg joint: its rest rotation, its live pose, and Epic Fight's own biped rest for it. */

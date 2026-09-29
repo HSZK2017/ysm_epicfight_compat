@@ -997,6 +997,241 @@ class DefectCalibrationCorpusSweepTest {
      * piece, and a pivot that is not even inside the box the piece occupies is not a hinge whatever
      * the margin.
      */
+    /**
+     * The <b>direction-independent containment</b> rule over the corpus: a piece whose pivot is not on
+     * its own geometry is never simulated, whatever its rest direction.
+     *
+     * <p>This is the candidate the reported top-of-head hair motivates, and it is measured rather than
+     * argued about for the same reason the shipped rule was. The shipped pair is
+     * {@code risesOffPivot} = (the piece points up) AND (the pivot is off it); dropping the direction
+     * half generalises it to a piece that hangs down from a pivot it is not attached by, which is the
+     * shape a strand can have. What the corpus has to say about it is how much of the simulation it
+     * removes, on which models, how far outside the geometry those pivots are, and how much of it the
+     * two shipped rules already cover - and the head-region probe says what it does to the reported
+     * model itself.
+     *
+     * <p>Written beside the shipped rule's own sweep rather than into it, because the two are
+     * different claims: that one is calibrated and shipped, this one is a candidate.
+     */
+    @Test
+    void theDirectionIndependentContainmentRuleOverTheCorpus() throws Exception {
+        String root = System.getenv("YSMEF_YSM_CORPUS_ROOT");
+        assumeTrue(root != null && !root.isEmpty(), "set YSMEF_YSM_CORPUS_ROOT to sweep the model corpus");
+        List<Path> files = new ArrayList<>();
+        try (Stream<Path> walk = Files.walk(Paths.get(root))) {
+            walk.filter(Files::isRegularFile)
+                    .filter(p -> p.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".ysm"))
+                    .forEach(files::add);
+        }
+        files.sort(Comparator.comparing(Path::toString));
+
+        long candidates = 0;
+        long selectedBones = 0;
+        long offPiece = 0;
+        long offPieceSelected = 0;
+        long offPieceAlsoRises = 0;
+        long offPieceAlsoWraps = 0;
+        long offPieceDown = 0;
+        long offPieceDownSelected = 0;
+        long[] gapBands = new long[5];
+        long[] gapBandsSelected = new long[5];
+        Set<String> models = new java.util.LinkedHashSet<>();
+        Set<String> selectedModels = new java.util.LinkedHashSet<>();
+        List<String> rows = new ArrayList<>();
+        int parsed = 0;
+        int skipped = 0;
+
+        for (Path file : files) {
+            String modelName = file.getFileName().toString();
+            YSMGeoModel model;
+            float scaleW;
+            float scaleH;
+            try {
+                YsmBinaryReader.BinaryModel binary = YsmBinaryReader.read(
+                        YsmFileCrypto.decryptYsmFile(Files.readAllBytes(file)));
+                model = YSMGeoModel.fromBinary(binary);
+                scaleW = binary.widthScale;
+                scaleH = binary.heightScale;
+            } catch (Throwable t) {
+                skipped++;
+                continue;
+            }
+            parsed++;
+            if (parsed % 100 == 0) {
+                System.out.println("[containment sweep] parsed=" + parsed + " skipped=" + skipped
+                        + " candidates=" + candidates + " off-piece=" + offPiece);
+            }
+            List<YSMGeoModel.Bone> bones = new ArrayList<>(model.bonesByName.values());
+            Map<String, Matrix4f> worlds = new HashMap<>();
+            Map<String, List<Vector3f>> baked = new LinkedHashMap<>();
+            for (YSMGeoModel.Bone bone : bones) {
+                if (bone.quads.isEmpty()) {
+                    continue;
+                }
+                List<Vector3f> vertices = new ArrayList<>(bone.quads.size() * 4);
+                Matrix4f world = worldOf(bone, worlds, 0);
+                for (YSMGeoModel.Quad quad : bone.quads) {
+                    for (Vector3f corner : quad.positions) {
+                        if (corner == null) {
+                            continue;
+                        }
+                        Vector3f p = new Vector3f(corner).mulPosition(world);
+                        vertices.add(new Vector3f(p.x * scaleW, p.y * scaleH, p.z * scaleW));
+                    }
+                }
+                baked.put(bone.name, vertices);
+            }
+            Map<String, Integer> boneIndexByName = new HashMap<>();
+            for (int i = 0; i < bones.size(); i++) {
+                boneIndexByName.put(bones.get(i).name, i);
+            }
+            YSMRuntimeModel.BoneRt[] bonesRt = new YSMRuntimeModel.BoneRt[bones.size()];
+            Map<Integer, float[]> geometryByBone = new HashMap<>();
+            Map<Integer, int[]> partsByBone = new HashMap<>();
+            for (int i = 0; i < bones.size(); i++) {
+                YSMGeoModel.Bone bone = bones.get(i);
+                YSMRuntimeModel.BoneRt rt = new YSMRuntimeModel.BoneRt();
+                rt.name = bone.name;
+                rt.parent = bone.parent == null ? -1 : boneIndexByName.getOrDefault(bone.parent.name, -1);
+                rt.joint = YSMJointMapper.resolveJointId(bone, model);
+                rt.mapped = YSMJointMapper.isDirectlyMapped(bone);
+                bonesRt[i] = rt;
+                List<Vector3f> vertices = baked.get(bone.name);
+                if (vertices != null && !vertices.isEmpty()) {
+                    Vector3f centre = centroidOf(vertices);
+                    geometryByBone.put(i, new float[]{centre.x, centre.y, centre.z, vertices.size()});
+                    partsByBone.put(i, new int[]{0});
+                }
+            }
+            java.util.function.IntPredicate ownsGeometry =
+                    index -> YsmPhysicsParts.ownsItsGeometry(index, geometryByBone, partsByBone);
+            Set<Integer> classified = new java.util.HashSet<>(YsmPhysicsParts.selectBones(
+                    bonesRt, ownsGeometry, YsmPhysicsTuning.maxChains(), new int[1]));
+            selectedBones += classified.size();
+
+            Set<String> baseForms = BoneAlternateForms.baseFormsPresent(
+                    model.bonesByName.keySet().toArray(new String[0]));
+            for (int boneIdx = 0; boneIdx < bones.size(); boneIdx++) {
+                YSMGeoModel.Bone bone = bones.get(boneIdx);
+                List<Vector3f> vertices = baked.get(bone.name);
+                if (vertices == null || vertices.size() < 4) {
+                    continue;
+                }
+                if (YSMJointMapper.resolveJointId(bone, model) < 0 || YSMJointMapper.isDirectlyMapped(bone)
+                        || YsmBindArmature.tierOf(bone.name, baseForms, Set.of()) != 0) {
+                    continue;
+                }
+                Vector3f pivot = pivotOf(bone, worlds, scaleW, scaleH);
+                Vector3f centroid = centroidOf(vertices);
+                if (pivot == null || centroid == null) {
+                    continue;
+                }
+                Vector3f rest = new Vector3f(centroid).sub(pivot);
+                float lever = rest.length();
+                if (!Float.isFinite(lever) || lever < 0.01F) {
+                    continue;
+                }
+                candidates++;
+                boolean selected = classified.contains(boneIdx);
+                if (pivotInsideOwnBox(vertices, pivot)) {
+                    continue;
+                }
+                double gap = YsmPhysicsParts.pivotGapFromGeometry(vertices, pivot);
+                offPiece++;
+                models.add(modelName);
+                int gapBand = gap < 0.005D ? 0 : gap < 0.02D ? 1 : gap < 0.05D ? 2 : gap < 0.2D ? 3 : 4;
+                gapBands[gapBand]++;
+                boolean rises = YsmPhysicsParts.risesOffPivot(vertices, pivot, rest, lever);
+                boolean wraps = YsmPhysicsParts.wrapsPivot(vertices, pivot);
+                if (rises) {
+                    offPieceAlsoRises++;
+                }
+                if (wraps) {
+                    offPieceAlsoWraps++;
+                }
+                if (rest.y <= 0.0F) {
+                    offPieceDown++;
+                }
+                if (selected) {
+                    offPieceSelected++;
+                    selectedModels.add(modelName);
+                    gapBandsSelected[gapBand]++;
+                    if (rest.y <= 0.0F) {
+                        offPieceDownSelected++;
+                    }
+                }
+                if (rows.size() < 300) {
+                    rows.add(String.format(Locale.ROOT,
+                            "%s  %s  gap %.3f  upShare %+.3f  lever %.3f  joint %d  slots %d  wraps %s  rises %s%s",
+                            modelName, bone.name, gap, rest.y / lever, lever,
+                            YSMJointMapper.resolveJointId(bone, model), vertices.size(), wraps, rises,
+                            selected ? "  [classifier segment]" : ""));
+                }
+            }
+        }
+
+        StringBuilder report = new StringBuilder();
+        report.append("# The direction-independent containment rule over the corpus\n\n")
+                .append("The candidate rule: **a piece whose pivot is not inside the bounding box of its ")
+                .append("own geometry is never simulated, whatever direction it hangs in.** It is the ")
+                .append("shipped `risesOffPivot` with the direction half dropped, i.e. the rule the ")
+                .append("reported down-pointing top-hair shape would need. Everything below is measured ")
+                .append("over the same candidates the shipped rule's own sweep uses (own geometry >= 4 ")
+                .append("slots, a joint, tier 0, not directly mapped, lever >= 0.01).\n\n")
+                .append(String.format(Locale.ROOT,
+                        "parsed=%d skipped=%d | candidate bones=%d | the production classifier's own "
+                                + "segments=%d%n%n",
+                        parsed, skipped, candidates, selectedBones))
+                .append(String.format(Locale.ROOT,
+                        "- pieces with a pivot off their own geometry: **%d** in %d model(s)%n"
+                                + "- of the production classifier's own segments: **%d** in **%d** model(s) "
+                                + "(%.1f per cent of %d)%n"
+                                + "- of those, %d point down or level (the shape the shipped rule cannot "
+                                + "reach: `upShare <= 0`), %d of them classifier segments%n"
+                                + "- how much the shipped pair already covers: %d of them are dropped by "
+                                + "the direction half (up-share above the margin) and %d by the wrap rule%n%n",
+                        offPiece, models.size(), offPieceSelected, selectedModels.size(),
+                        selectedBones == 0 ? 0.0 : 100.0 * offPieceSelected / selectedBones,
+                        selectedBones, offPieceDown, offPieceDownSelected,
+                        offPieceAlsoRises, offPieceAlsoWraps));
+        report.append("## How far outside its own geometry the dropped pivots sit\n\n")
+                .append("| pivot gap | bones | of the classifier's segments |\n|---|---|---|\n");
+        String[] gapLabels = {"under 0.005 blocks", "0.005 .. 0.02", "0.02 .. 0.05", "0.05 .. 0.2",
+                "0.2 blocks and more"};
+        for (int i = 0; i < gapLabels.length; i++) {
+            report.append(String.format(Locale.ROOT, "| %s | %d | %d |%n",
+                    gapLabels[i], gapBands[i], gapBandsSelected[i]));
+        }
+        report.append("\n## Every piece the candidate rule would drop (up to 300)\n\n```\n");
+        for (String line : rows) {
+            report.append(line).append('\n');
+        }
+        report.append("```\n");
+        write("ysm-containment-rule-corpus.md", report.toString());
+        System.out.println(report.substring(0, Math.min(4000, report.length())));
+
+        // The invariant the candidate rule cannot break, asserted rather than described: it fires on
+        // containment alone, so it cannot drop more pieces than containment does, and the corpus must
+        // contain the shape it is for.
+        assertTrue(offPiece > 0, "the candidate rule never fires, so the sweep proved nothing");
+        assertTrue(offPieceDown > 0,
+                "the corpus contains no down-pointing piece with a pivot off its own geometry, which "
+                        + "is the shape the whole candidate exists for");
+        assertTrue(offPieceAlsoRises <= offPiece,
+                "more pieces are dropped by the direction half than by containment, which cannot be: "
+                        + "the shipped rule is the intersection");
+    }
+
+    /**
+     * Whether a pivot is still on the piece it belongs to: inside the piece's own bounding box.
+     *
+     * <p>A boolean and not a distance, deliberately. The distance from the pivot to the geometry was
+     * measured in an earlier round and is knife-edge between the two models this rule is calibrated
+     * against (0.048 blocks on the reported model's shin piece against 0.037 on the worst piece of the
+     * known-good one), so it cannot carry a threshold. Containment can: a hinge is a point on the
+     * piece, and a pivot that is not even inside the box the piece occupies is not a hinge whatever
+     * the margin.
+     */
     private static boolean pivotInsideOwnBox(List<Vector3f> vertices, Vector3f pivot) {
         if (vertices == null || vertices.isEmpty() || pivot == null) {
             return false;
@@ -1027,6 +1262,262 @@ class DefectCalibrationCorpusSweepTest {
         return pivot.x >= minX - slack && pivot.x <= maxX + slack
                 && pivot.y >= minY - slack && pivot.y <= maxY + slack
                 && pivot.z >= minZ - slack && pivot.z <= maxZ + slack;
+    }
+
+    /**
+     * The <b>hinge test</b> over the corpus: does a rotation about a piece's own bind pivot leave any
+     * of its geometry where it was?
+     *
+     * <p>The question this sweep answers is narrow and it is the one the round's hypothesis needs: if
+     * "the piece is a cap whose pivot is inside it" were a shape at all, then the pieces that are
+     * <i>not</i> that shape - the strands that must keep swinging - would have a vertex that a
+     * rotation about the pivot does not move, and the caps would not. The statistic is the largest
+     * displacement any of the piece's own vertices shows under a ten-degree swing about the pivot,
+     * as a share of the piece's lever, so it is size-normalised; a hinge reads 0.
+     *
+     * <p>It is reported as a distribution and as a blast radius rather than as a threshold, because
+     * the thing to find out is whether a band exists at all. Nothing here ships: the sweep exists to
+     * say whether a rule <i>could</i>.
+     */
+    @Test
+    void theHingeStatisticOverTheCorpus() throws Exception {
+        String root = System.getenv("YSMEF_YSM_CORPUS_ROOT");
+        assumeTrue(root != null && !root.isEmpty(), "set YSMEF_YSM_CORPUS_ROOT to sweep the model corpus");
+        List<Path> files = new ArrayList<>();
+        try (Stream<Path> walk = Files.walk(Paths.get(root))) {
+            walk.filter(Files::isRegularFile)
+                    .filter(p -> p.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".ysm"))
+                    .forEach(files::add);
+        }
+        files.sort(Comparator.comparing(Path::toString));
+
+        // The share bands the distribution is reported in. The reference values are the maid's own
+        // measured pieces: BaseHair 0.449, LongHair 0.701, LongRightHair2 0.718, LeftSideHair 0.327.
+        double[] bandEdges = {0.0, 0.05, 0.10, 0.20, 0.30, 0.45, 0.60, 0.80, 1.0, Double.MAX_VALUE};
+        long[] bands = new long[bandEdges.length];
+        long candidates = 0;
+        long selected = 0;
+        long parsed = 0;
+        long skipped = 0;
+        long overCapShare = 0;
+        long overCapShareSelected = 0;
+        long alsoWraps = 0;
+        long alsoRises = 0;
+        long pivotInside = 0;
+        long pivotInsideSelected = 0;
+        Set<String> overCapShareModels = new java.util.LinkedHashSet<>();
+        Set<String> overCapShareSelectedModels = new java.util.LinkedHashSet<>();
+        List<String> worst = new ArrayList<>();
+
+        for (Path file : files) {
+            String modelName = file.getFileName().toString();
+            YSMGeoModel model;
+            float scaleW;
+            float scaleH;
+            try {
+                YsmBinaryReader.BinaryModel binary = YsmBinaryReader.read(
+                        YsmFileCrypto.decryptYsmFile(Files.readAllBytes(file)));
+                model = YSMGeoModel.fromBinary(binary);
+                scaleW = binary.widthScale;
+                scaleH = binary.heightScale;
+            } catch (Throwable t) {
+                skipped++;
+                continue;
+            }
+            parsed++;
+            if (parsed % 100 == 0) {
+                System.out.println("[hinge sweep] parsed=" + parsed + " candidates=" + candidates
+                        + " over-cap=" + overCapShare);
+            }
+            List<YSMGeoModel.Bone> bones = new ArrayList<>(model.bonesByName.values());
+            Map<String, Matrix4f> worlds = new HashMap<>();
+            Map<String, List<Vector3f>> baked = new LinkedHashMap<>();
+            for (YSMGeoModel.Bone bone : bones) {
+                if (bone.quads.isEmpty()) {
+                    continue;
+                }
+                List<Vector3f> vertices = new ArrayList<>(bone.quads.size() * 4);
+                Matrix4f world = worldOf(bone, worlds, 0);
+                for (YSMGeoModel.Quad quad : bone.quads) {
+                    for (Vector3f corner : quad.positions) {
+                        if (corner == null) {
+                            continue;
+                        }
+                        Vector3f p = new Vector3f(corner).mulPosition(world);
+                        vertices.add(new Vector3f(p.x * scaleW, p.y * scaleH, p.z * scaleW));
+                    }
+                }
+                baked.put(bone.name, vertices);
+            }
+            Map<String, Integer> boneIndexByName = new HashMap<>();
+            for (int i = 0; i < bones.size(); i++) {
+                boneIndexByName.put(bones.get(i).name, i);
+            }
+            YSMRuntimeModel.BoneRt[] bonesRt = new YSMRuntimeModel.BoneRt[bones.size()];
+            Map<Integer, float[]> geometryByBone = new HashMap<>();
+            Map<Integer, int[]> partsByBone = new HashMap<>();
+            for (int i = 0; i < bones.size(); i++) {
+                YSMGeoModel.Bone bone = bones.get(i);
+                YSMRuntimeModel.BoneRt rt = new YSMRuntimeModel.BoneRt();
+                rt.name = bone.name;
+                rt.parent = bone.parent == null ? -1 : boneIndexByName.getOrDefault(bone.parent.name, -1);
+                rt.joint = YSMJointMapper.resolveJointId(bone, model);
+                rt.mapped = YSMJointMapper.isDirectlyMapped(bone);
+                bonesRt[i] = rt;
+                List<Vector3f> vertices = baked.get(bone.name);
+                if (vertices != null && !vertices.isEmpty()) {
+                    Vector3f centre = centroidOf(vertices);
+                    geometryByBone.put(i, new float[]{centre.x, centre.y, centre.z, vertices.size()});
+                    partsByBone.put(i, new int[]{0});
+                }
+            }
+            java.util.function.IntPredicate ownsGeometry =
+                    index -> YsmPhysicsParts.ownsItsGeometry(index, geometryByBone, partsByBone);
+            Set<Integer> classified = new java.util.HashSet<>(YsmPhysicsParts.selectBones(
+                    bonesRt, ownsGeometry, YsmPhysicsTuning.maxChains(), new int[1]));
+
+            Set<String> baseForms = BoneAlternateForms.baseFormsPresent(
+                    model.bonesByName.keySet().toArray(new String[0]));
+            for (int boneIdx = 0; boneIdx < bones.size(); boneIdx++) {
+                YSMGeoModel.Bone bone = bones.get(boneIdx);
+                List<Vector3f> vertices = baked.get(bone.name);
+                if (vertices == null || vertices.size() < 4) {
+                    continue;
+                }
+                if (YSMJointMapper.resolveJointId(bone, model) < 0 || YSMJointMapper.isDirectlyMapped(bone)
+                        || YsmBindArmature.tierOf(bone.name, baseForms, Set.of()) != 0) {
+                    continue;
+                }
+                Vector3f pivot = pivotOf(bone, worlds, scaleW, scaleH);
+                Vector3f centroid = centroidOf(vertices);
+                if (pivot == null || centroid == null) {
+                    continue;
+                }
+                Vector3f rest = new Vector3f(centroid).sub(pivot);
+                float lever = rest.length();
+                if (!Float.isFinite(lever) || lever < 0.01F) {
+                    continue;
+                }
+                candidates++;
+                boolean isSegment = classified.contains(boneIdx);
+                if (isSegment) {
+                    selected++;
+                }
+                float share = hingeShare(vertices, pivot, rest, lever);
+                int band = bandEdges.length - 1;
+                for (int i = 0; i < bandEdges.length; i++) {
+                    if (share <= bandEdges[i]) {
+                        band = i;
+                        break;
+                    }
+                }
+                bands[band]++;
+                // The reference value the maid's cap measures. Everything at or above it is what a
+                // rule drawn at the cap's own score would take.
+                if (share >= 0.449F) {
+                    overCapShare++;
+                    overCapShareModels.add(modelName);
+                    if (isSegment) {
+                        overCapShareSelected++;
+                        overCapShareSelectedModels.add(modelName);
+                    }
+                    if (YsmPhysicsParts.wrapsPivot(vertices, pivot)) {
+                        alsoWraps++;
+                    }
+                    if (YsmPhysicsParts.risesOffPivot(vertices, pivot, rest, lever)) {
+                        alsoRises++;
+                    }
+                    if (pivotInsideOwnBox(vertices, pivot)) {
+                        pivotInside++;
+                        if (isSegment) {
+                            pivotInsideSelected++;
+                        }
+                    }
+                    if (worst.size() < 200) {
+                        worst.add(String.format(Locale.ROOT,
+                                "%s  %s  hinge %.3f  lever %.3f  upShare %+.3f  pivotInside %s%s",
+                                modelName, bone.name, share, lever, rest.y / lever,
+                                pivotInsideOwnBox(vertices, pivot),
+                                isSegment ? "  [classifier segment]" : ""));
+                    }
+                }
+            }
+        }
+
+        StringBuilder report = new StringBuilder();
+        report.append("# The hinge statistic over the corpus\n\n")
+                .append("For every candidate bone (own geometry >= 4 slots, a joint, tier 0, not ")
+                .append("directly mapped, lever >= 0.01 - the same set the shipped rule's sweep uses) ")
+                .append("the piece is swung ten degrees about its own bind pivot and the largest ")
+                .append("distance any of its own vertices moves is taken, as a share of its lever. A ")
+                .append("piece held *at* its pivot reads 0; a cap whose pivot is inside it cannot.\n\n")
+                .append(String.format(Locale.ROOT,
+                        "parsed=%d skipped=%d | candidates=%d | the production classifier's own "
+                                + "segments=%d%n%n",
+                        parsed, skipped, candidates, selected));
+        report.append("## The distribution\n\n")
+                .append("| hinge share | bones |\n|---|---|\n");
+        for (int i = 0; i < bandEdges.length; i++) {
+            report.append(String.format(Locale.ROOT, "| %s | %d |%n",
+                    i == 0 ? "<= 0.00" : ("<= " + bandEdges[i]), bands[i]));
+        }
+        report.append(String.format(Locale.ROOT,
+                "%n## What a rule drawn at the maid's cap (share 0.449) would take%n%n"
+                        + "- bones at or above it: **%d** in %d model(s)%n"
+                        + "- of the production classifier's own segments: **%d** in **%d** model(s) "
+                        + "(%.1f per cent of %d)%n"
+                        + "- of those, %d are already dropped by `wrapsPivot` and %d by "
+                        + "`risesOffPivot`%n"
+                        + "- of those, %d have a pivot inside their own geometry (%d of the segments) "
+                        + "- the shape the shipped containment rule deliberately keeps%n%n",
+                overCapShare, overCapShareModels.size(), overCapShareSelected,
+                overCapShareSelectedModels.size(),
+                selected == 0 ? 0.0 : 100.0 * overCapShareSelected / selected, selected,
+                alsoWraps, alsoRises, pivotInside, pivotInsideSelected));
+        report.append("## The pieces a rule at that score would drop (up to 200)\n\n```\n");
+        for (String line : worst) {
+            report.append(line).append('\n');
+        }
+        report.append("```\n");
+        write("ysm-cap-statistic-corpus.md", report.toString());
+        System.out.println(report.substring(0, Math.min(3000, report.length())));
+
+        assertTrue(candidates > 1000, "the corpus sweep found almost no candidates, so it proved nothing");
+        assertTrue(overCapShare > 0, "no piece in the corpus scores at the cap's own share");
+    }
+
+    /**
+     * The hinge statistic: swing the piece {@code HINGE_DEGREES} about its own bind pivot, about the
+     * axis perpendicular to its rest direction, and answer the largest displacement any of its own
+     * vertices shows, as a share of its lever.
+     */
+    private static float hingeShare(List<Vector3f> vertices, Vector3f pivot, Vector3f rest, float lever) {
+        final float degrees = 10.0F;
+        Vector3f axis = new Vector3f(1.0F, 0.0F, 0.0F);
+        Vector3f direction = new Vector3f(rest);
+        if (direction.lengthSquared() > 1.0E-8F) {
+            direction.normalize();
+            Vector3f up = Math.abs(direction.y) < 0.9F
+                    ? new Vector3f(0.0F, 1.0F, 0.0F) : new Vector3f(1.0F, 0.0F, 0.0F);
+            axis.set(up).cross(direction);
+            if (axis.lengthSquared() < 1.0E-8F) {
+                axis.set(1.0F, 0.0F, 0.0F);
+            } else {
+                axis.normalize();
+            }
+        }
+        Matrix4f turn = new Matrix4f()
+                .translate(pivot.x, pivot.y, pivot.z)
+                .rotate((float) Math.toRadians(degrees), axis.x, axis.y, axis.z)
+                .translate(-pivot.x, -pivot.y, -pivot.z);
+        float worst = 0.0F;
+        for (Vector3f vertex : vertices) {
+            if (vertex == null) {
+                continue;
+            }
+            worst = Math.max(worst, new Vector3f(vertex).mulPosition(turn).distance(vertex));
+        }
+        return lever > 1.0E-6F ? worst / lever : Float.NaN;
     }
 
     private static void write(String name, String content) throws java.io.IOException {
