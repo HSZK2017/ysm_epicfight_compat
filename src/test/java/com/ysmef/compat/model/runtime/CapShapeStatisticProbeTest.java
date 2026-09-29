@@ -181,6 +181,51 @@ class CapShapeStatisticProbeTest {
         assertTrue(problems.isEmpty(), String.join("\n", problems));
     }
 
+    /**
+     * The re-anchor round: <b>which vertex of a piece is "where it is held"</b>, and what changes if the
+     * solved rotation is applied about that vertex instead of about the piece's bind pivot.
+     *
+     * <p>The three blockers the re-anchor brief names are answered by one run, because they are the
+     * same run: the settled angle (the solver is handed the same inputs either way), the choice of
+     * anchor (the model's own head origin and the armature's settled head pivot are 0.23 blocks apart -
+     * wider than the 0.15-0.21 block defect being fixed), and the child chain.
+     *
+     * <p>The reported symptom is measured physically rather than by a statistic: <b>the gap between the
+     * piece and the geometry it rests against</b>, before and after the piece's own delta. "Lifts off
+     * the skull" is an increase in that gap, "sinks into the head" a decrease, so a candidate anchor is
+     * judged by the worst and mean gap change over the piece's own vertices - with no threshold, no
+     * name and no shape statistic anywhere in the judgement.
+     */
+    @Test
+    void theAnchorCandidatesAgainstTheSkullGap() throws Exception {
+        Path pack = convertedPackRoot();
+        assumeTrue(pack != null, "set -D" + YsmModelPackage.CONFIG_ROOT_PROPERTY
+                + "=<.../config/yes_steve_model> (or " + YsmModelPackage.CONFIG_ROOT_ENV
+                + ") to run this against a real install");
+
+        Rig maid = Rig.load(pack, MAID[1]);
+        StringBuilder report = new StringBuilder();
+        List<String> problems = new ArrayList<>();
+        String problem = maid.calibrateAgainstTheClientLegRows(report);
+        if (problem != null) {
+            problems.add(problem);
+        }
+        report.append(maid.anchorReport(pack));
+        Path out = Paths.get("build", "reports", "ysm-reanchor-measurement.md");
+        Files.createDirectories(out.getParent());
+        Files.writeString(out, report.toString(), StandardCharsets.UTF_8);
+
+        StringBuilder console = new StringBuilder();
+        for (String line : report.toString().split("\n", -1)) {
+            if (line.startsWith("#") || line.startsWith("| `") || line.startsWith("VERDICT")
+                    || line.startsWith("| anchor |") || line.startsWith("| piece |")) {
+                console.append(line).append('\n');
+            }
+        }
+        System.out.println(console);
+        assertTrue(problems.isEmpty(), String.join("\n", problems));
+    }
+
     // ------------------------------------------------------------------
     // Per-bone measurement
     // ------------------------------------------------------------------
@@ -227,6 +272,14 @@ class CapShapeStatisticProbeTest {
         }
 
         boolean simulatedAsSegment;
+
+        /**
+         * True when the two shipped containment rules drop this piece, read from production's own
+         * functions. A piece that is already dropped is not simulated, so no anchor choice can disturb
+         * it - counting its numbers as a cost of a candidate rule would be counting a piece that does
+         * not swing at all.
+         */
+        boolean droppedByShippedRules;
 
         /** Distance from the pivot to the joint the piece is drawn on - the point it must stay at. */
         float pivotJoint() {
@@ -481,6 +534,8 @@ class CapShapeStatisticProbeTest {
             piece.nearVertexT = piece.yBelow + piece.yAbove > 1.0E-6F
                     ? piece.yBelow / (piece.yBelow + piece.yAbove) : Float.NaN;
             piece.spread = YsmPhysicsParts.directionSpread(piece.own, pivot);
+            piece.droppedByShippedRules = YsmPhysicsParts.wrapsPivot(piece.own, pivot)
+                    || YsmPhysicsParts.risesOffPivot(piece.own, pivot, rest, piece.lever);
             measureSlide(piece);
         }
 
@@ -1081,6 +1136,928 @@ class CapShapeStatisticProbeTest {
                 }
             }
             return best;
+        }
+
+        // --------------------------------------------------------------
+        // The re-anchor round: candidate attachment points
+        // --------------------------------------------------------------
+
+        /** One rule for "where is this piece held": a label and the vertex it picks. */
+        private static final class Rule {
+            final String label;
+            private final java.util.function.Function<Piece, Vector3f> pick;
+
+            Rule(String label, java.util.function.Function<Piece, Vector3f> pick) {
+                this.label = label;
+                this.pick = pick;
+            }
+
+            Vector3f of(Piece piece) {
+                return pick.apply(piece);
+            }
+        }
+
+        /** What one anchor does to one piece at one commanded pose. */
+        private static final class Held {
+            final Rule rule;
+            final Vector3f point;
+            final float fromPivot;
+            float residual;
+            float gapUp;
+            float gapIn;
+            float gapMean;
+            float tipMoved;
+            float tipChange;
+            Vector3f tipDrawn;
+
+            Held(Rule rule, Vector3f point, Vector3f pivot) {
+                this.rule = rule;
+                this.point = point;
+                this.fromPivot = point.distance(pivot);
+            }
+        }
+
+        /**
+         * One piece at one commanded pose, with the solver already settled and nothing anchored yet.
+         *
+         * <p>The settle happens once per piece and per pose and <b>before any anchor exists</b>, which is
+         * the whole of the answer to the equilibrium blocker: the anchor is read by
+         * {@link #buildSegmentDelta} after the solver has returned, is not an input to it, and is not
+         * fed back into the next frame's pivot or rest direction, so no anchor choice can move the
+         * settled angle. The report prints that angle beside every anchor so the claim is a reading
+         * rather than an argument.
+         */
+        private final class Pose {
+            final Piece piece;
+            final Matrix4f deformation;
+            final org.joml.Quaternionf bindSwing = new org.joml.Quaternionf();
+            final float settled;
+            final Vector3f reference;
+            final Vector3f contactPoint;
+            final List<Vector3f> posed;
+            final List<Vector3f> contactPosed;
+            final int tipIndex;
+
+            Pose(Piece piece, char axis, float commanded) {
+                this.piece = piece;
+                this.deformation = deformationFor(piece.joint, axis, commanded);
+                this.settled = settledSwing(piece, deformation, bindSwing);
+                Vector3f origin = jointOriginOfJoint(piece.joint);
+                this.reference = nearestTo(piece.own, origin == null ? piece.pivot : origin);
+                List<Vector3f> contact = contactGeometry(piece);
+                int contactJoint = contactJoint(piece);
+                List<Vector3f> contactPosedPoints = null;
+                if (contact != null) {
+                    Matrix4f contactDeformation = contactJoint == piece.joint
+                            ? deformation : deformationFor(contactJoint, axis, commanded);
+                    contactPosedPoints = posed(contact, contactDeformation);
+                }
+                this.contactPoint = contact == null ? null : nearestOwnToCloud(piece.own, contact);
+                this.contactPosed = contactPosedPoints;
+                this.posed = posed(piece.own, deformation);
+                int far = 0;
+                float farDistance = -1.0F;
+                for (int i = 0; i < piece.own.size(); i++) {
+                    float distance = piece.own.get(i).distance(piece.pivot);
+                    if (distance > farDistance) {
+                        farDistance = distance;
+                        far = i;
+                    }
+                }
+                this.tipIndex = far;
+            }
+        }
+
+        /** The deformation a rotation of one joint about its own origin and one axis produces. */
+        private Matrix4f deformationFor(int joint, char axis, float degrees) {
+            Vector3f origin = jointOriginOfJoint(joint);
+            if (origin == null) {
+                origin = new Vector3f();
+            }
+            float radians = (float) Math.toRadians(degrees);
+            Matrix4f out = new Matrix4f().translate(origin.x, origin.y, origin.z);
+            if (axis == 'x') {
+                out.rotateX(radians);
+            } else if (axis == 'y') {
+                out.rotateY(radians);
+            } else {
+                out.rotateZ(radians);
+            }
+            return out.translate(-origin.x, -origin.y, -origin.z);
+        }
+
+        /** The armature's settled pivot per joint - the second of the two answers to "where is it". */
+        private Map<Integer, Vector3f> armaturePivots(Path pack) {
+            Map<Integer, Vector3f> out = new LinkedHashMap<>();
+            try {
+                List<String> warnings = new ArrayList<>();
+                YsmBindArmature.GeometryInput input = geometryInput(stemLabel, pack, bones);
+                YsmBindArmature.GeometryData data = YsmBindArmature.collectGeometry(input, warnings::add);
+                out.putAll(YsmBindArmature.computePivots(input, data, warnings::add).byJoint());
+            } catch (IOException e) {
+                out.clear();
+            }
+            return out;
+        }
+
+        /**
+         * The geometry a piece rests against: the own geometry of the nearest ancestor bone that has
+         * any. For the maid's cap that is the skull - the bones between it and the skull (`Hair`) carry
+         * no geometry of their own.
+         */
+        private List<Vector3f> contactGeometry(Piece piece) {
+            for (int at = bones[piece.index].parent; at >= 0; at = bones[at].parent) {
+                List<Vector3f> own = allGeometry.get(at);
+                if (own != null && !own.isEmpty()) {
+                    return own;
+                }
+            }
+            return null;
+        }
+
+        /** The joint whose pose carries {@link #contactGeometry} - the frame that geometry lives in. */
+        private int contactJoint(Piece piece) {
+            for (int at = bones[piece.index].parent; at >= 0; at = bones[at].parent) {
+                List<Vector3f> own = allGeometry.get(at);
+                if (own != null && !own.isEmpty()) {
+                    return bones[at].joint;
+                }
+            }
+            return piece.joint;
+        }
+
+        /** The six reads of "where is this piece held", in the order the report scores them. */
+        private List<Rule> rules(Map<Integer, Vector3f> armature) {
+            List<Rule> out = new ArrayList<>();
+            out.add(new Rule("shipped (bindPivot)", p -> p.pivot));
+            out.add(new Rule("own vertex near pivot", p -> nearestTo(p.own, p.pivot)));
+            out.add(new Rule("own vertex near author head origin", p -> {
+                Vector3f origin = jointOriginOfJoint(p.joint);
+                return nearestTo(p.own, origin == null ? p.pivot : origin);
+            }));
+            out.add(new Rule("own vertex near armature joint pivot", p -> {
+                Vector3f origin = armature.get(p.joint);
+                return nearestTo(p.own, origin == null ? p.pivot : origin);
+            }));
+            out.add(new Rule("own vertex near the geometry it rests on", p -> {
+                List<Vector3f> contact = contactGeometry(p);
+                return contact == null ? nearestTo(p.own, p.pivot) : nearestOwnToCloud(p.own, contact);
+            }));
+            out.add(new Rule("own vertex near the parent bone's pivot", p -> {
+                int parent = bones[p.index].parent;
+                if (parent < 0) {
+                    return nearestTo(p.own, p.pivot);
+                }
+                Vector3f parentPivot = YsmPhysicsParts.pivotInMeshSpace(bones[parent].bindWorld,
+                        bones[parent].px, bones[parent].py, bones[parent].pz, scaleX, scaleY);
+                return nearestTo(p.own, parentPivot == null ? p.pivot : parentPivot);
+            }));
+            // A single nearest vertex is a quantisation of the contact, and on a box part it can land
+            // on a far corner: the strand's nearest corner to the skull is 0.31 blocks from its own
+            // pivot while the top face it actually hangs by is 0.07 away. The centre of the contact
+            // patch is the quantity that does not care which corner is nearest, so it is offered at
+            // three tolerances - the patch is every own vertex within that many blocks of the piece's
+            // own closest approach to what it rests on.
+            for (float tolerance : new float[]{0.0F, 0.005F, 0.01F, 0.03F, 0.06F}) {
+                out.add(new Rule(tolerance == 0.0F ? "contact patch centre (exact minimum)"
+                        : String.format(Locale.ROOT, "contact patch centre (within %.3f)", tolerance),
+                        p -> contactPatchCentre(p, tolerance)));
+            }
+            // The same reading of "where it touches" against the ancestor's bounding box surface
+            // instead of its vertex cloud: one pass over the piece's own vertices, no cloud-to-cloud
+            // loop, which is what makes it affordable at load time on a model with a hundred thousand
+            // vertices. Offered here so the cheap version can be checked against the exact one on the
+            // reported model before either is written into production.
+            // The shipped rule, called rather than imitated: production's own function on the same
+            // geometry this probe measures every other candidate on. Its one difference from the plain
+            // patch centre is the lever bound - the hinge may not travel further from the pivot than the
+            // radius the piece's own swing is drawn on - which the corpus sweep showed is needed: without
+            // it the walk up to the first ancestor with geometry moves one corpus hairpin's hinge 3.869
+            // blocks.
+            out.add(new Rule("production contactAnchor (lever-bounded)",
+                    p -> YsmPhysicsParts.contactAnchor(p.own, contactGeometry(p), p.pivot, p.lever)));
+            return out;
+        }
+
+        /**
+         * The centre of the piece's contact patch against the ancestor geometry's <b>bounding box
+         * surface</b>: every own vertex within {@code tolerance} blocks of the piece's own closest
+         * approach to that surface, averaged.
+         *
+         * <p>A vertex inside the box is measured from the surface too - the distance to the nearest
+         * face - because the piece that wraps what it rests on (the cap around the skull) is inside it
+         * everywhere, and against the box itself every one of its vertices would read zero and the
+         * patch would be the whole piece.
+         */
+        private Vector3f boxContactPatchCentre(Piece piece, float tolerance) {
+            List<Vector3f> contact = contactGeometry(piece);
+            if (contact == null || contact.isEmpty()) {
+                return piece.pivot;
+            }
+            float minX = Float.MAX_VALUE;
+            float minY = Float.MAX_VALUE;
+            float minZ = Float.MAX_VALUE;
+            float maxX = -Float.MAX_VALUE;
+            float maxY = -Float.MAX_VALUE;
+            float maxZ = -Float.MAX_VALUE;
+            for (Vector3f vertex : contact) {
+                minX = Math.min(minX, vertex.x);
+                minY = Math.min(minY, vertex.y);
+                minZ = Math.min(minZ, vertex.z);
+                maxX = Math.max(maxX, vertex.x);
+                maxY = Math.max(maxY, vertex.y);
+                maxZ = Math.max(maxZ, vertex.z);
+            }
+            float nearest = Float.MAX_VALUE;
+            for (Vector3f vertex : piece.own) {
+                nearest = Math.min(nearest, distanceToBoxSurface(vertex, minX, minY, minZ,
+                        maxX, maxY, maxZ));
+            }
+            Vector3f sum = new Vector3f();
+            int used = 0;
+            for (Vector3f vertex : piece.own) {
+                if (distanceToBoxSurface(vertex, minX, minY, minZ, maxX, maxY, maxZ)
+                        <= nearest + tolerance) {
+                    sum.add(vertex);
+                    used++;
+                }
+            }
+            return used == 0 ? piece.pivot : sum.div(used);
+        }
+
+        /** How far a point is from a box's <b>surface</b>, zero only on the surface itself. */
+        private static float distanceToBoxSurface(Vector3f point, float minX, float minY, float minZ,
+                                                  float maxX, float maxY, float maxZ) {
+            float dx = Math.max(Math.max(minX - point.x, point.x - maxX), 0.0F);
+            float dy = Math.max(Math.max(minY - point.y, point.y - maxY), 0.0F);
+            float dz = Math.max(Math.max(minZ - point.z, point.z - maxZ), 0.0F);
+            if (dx > 0.0F || dy > 0.0F || dz > 0.0F) {
+                return (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+            }
+            return Math.min(Math.min(point.x - minX, maxX - point.x),
+                    Math.min(Math.min(point.y - minY, maxY - point.y),
+                            Math.min(point.z - minZ, maxZ - point.z)));
+        }
+
+        /**
+         * The centre of the patch of the piece that touches what it rests on: every own vertex within
+         * {@code tolerance} blocks of the piece's own closest approach to the parent's geometry, averaged.
+         *
+         * <p>Falls back to the bind pivot when the piece rests on nothing with geometry, which is the
+         * one answer that changes nothing.
+         */
+        private Vector3f contactPatchCentre(Piece piece, float tolerance) {
+            List<Vector3f> contact = contactGeometry(piece);
+            if (contact == null || contact.isEmpty()) {
+                return piece.pivot;
+            }
+            float nearest = Float.MAX_VALUE;
+            for (Vector3f vertex : piece.own) {
+                nearest = Math.min(nearest, distanceToCloud(vertex, contact));
+            }
+            Vector3f sum = new Vector3f();
+            int used = 0;
+            for (Vector3f vertex : piece.own) {
+                if (distanceToCloud(vertex, contact) <= nearest + tolerance) {
+                    sum.add(vertex);
+                    used++;
+                }
+            }
+            return used == 0 ? piece.pivot : sum.div(used);
+        }
+
+        /**
+         * Drive the production solver to its settled swing at one commanded pose.
+         *
+         * <p>Verbatim the call the frame path makes, with the frame path's own fallback constants where
+         * a per-model binding is not read here (frequency, damping) and the piece's own measured lever.
+         * The same call the earlier round's motion table used, which is what lets the shipped row of
+         * this report be checked against that table's 0.209 / 0.149 blocks.
+         *
+         * @return the settled angle in degrees, with {@code out} holding the swing in model space
+         */
+        private float settledSwing(Piece piece, Matrix4f deformation, org.joml.Quaternionf out) {
+            Vector3f pivot = new Vector3f(piece.pivot).mulPosition(deformation);
+            Vector3f restDir = new Vector3f(centroid(piece.own)).sub(piece.pivot)
+                    .mulDirection(deformation).normalize();
+            YsmDynamicBoneSolver.SegmentState state = new YsmDynamicBoneSolver.SegmentState();
+            org.joml.Quaternionf pivotDelta = new org.joml.Quaternionf();
+            YsmMeshSecondaryMotion.pivotDeltaOf(toOpen(deformation), pivotDelta);
+            for (int step = 0; step < SETTLE_STEPS; step++) {
+                YsmDynamicBoneSolver.INSTANCE.update(state,
+                        YsmDynamicBoneSolver.GRAVITY, YsmDynamicBoneSolver.AIR_DRAG,
+                        0.6F, new Vector3f(0.0F, -1.0F, 0.0F), pivot, restDir, piece.lever,
+                        (float) YsmPhysicsTuning.DEFAULTS.frequency(),
+                        (float) YsmPhysicsTuning.DEFAULTS.dampingRatio(),
+                        4.0F, (float) YsmPhysicsTuning.DEFAULTS.maxAngle,
+                        null, YsmDynamicBoneSolver.NO_COLLIDERS, 0.03F, null,
+                        0.0F, 0.0F, 1.0F / 60.0F, out, pivotDelta);
+            }
+            float degrees = (float) Math.toDegrees(state.lastAngle);
+            float allowed = YsmPhysicsParts.chainLimitFor(1, (float) YsmPhysicsTuning.DEFAULTS.maxAngle);
+            if (state.lastAngle > allowed && state.lastAngle > 1.0E-4F) {
+                out.slerp(new org.joml.Quaternionf(), 1.0F - allowed / state.lastAngle);
+            }
+            return degrees;
+        }
+
+        /** Apply one anchor's delta to a settled pose and read off what it does. */
+        private Held held(Pose pose, Rule rule) {
+            Vector3f point = rule.of(pose.piece);
+            Held held = new Held(rule, point, pose.piece.pivot);
+            Matrix4f delta = new Matrix4f();
+            YsmMeshSecondaryMotion.buildSegmentDelta(point, pose.bindSwing, delta);
+            Vector3f referencePosed = new Vector3f(pose.reference).mulPosition(pose.deformation);
+            held.residual = new Vector3f(pose.reference).mulPosition(delta)
+                    .mulPosition(pose.deformation).distance(referencePosed);
+            float sum = 0.0F;
+            int used = 0;
+            for (int i = 0; i < pose.piece.own.size(); i++) {
+                Vector3f posedAt = pose.posed.get(i);
+                Vector3f drawn = new Vector3f(pose.piece.own.get(i)).mulPosition(delta)
+                        .mulPosition(pose.deformation);
+                if (pose.contactPosed != null && !pose.contactPosed.isEmpty()) {
+                    float change = distanceToCloud(drawn, pose.contactPosed)
+                            - distanceToCloud(posedAt, pose.contactPosed);
+                    held.gapUp = Math.max(held.gapUp, change);
+                    held.gapIn = Math.min(held.gapIn, change);
+                    sum += change;
+                    used++;
+                }
+                if (i == pose.tipIndex) {
+                    held.tipMoved = drawn.distance(posedAt);
+                    held.tipDrawn = drawn;
+                }
+            }
+            held.gapMean = used == 0 ? Float.NaN : sum / used;
+            return held;
+        }
+
+        /** Every anchor's answer for one piece at one commanded pose, with the shipped one first. */
+        private List<Held> heldAt(Piece piece, char axis, float commanded, List<Rule> rules, float[] settled) {
+            Pose pose = new Pose(piece, axis, commanded);
+            settled[0] = pose.settled;
+            List<Held> out = new ArrayList<>();
+            for (Rule rule : rules) {
+                out.add(held(pose, rule));
+            }
+            Held shipped = out.get(0);
+            for (Held held : out) {
+                held.tipChange = held.tipDrawn == null || shipped.tipDrawn == null ? Float.NaN
+                        : held.tipDrawn.distance(shipped.tipDrawn);
+            }
+            return out;
+        }
+
+        private static List<Vector3f> posed(List<Vector3f> points, Matrix4f deformation) {
+            List<Vector3f> out = new ArrayList<>(points.size());
+            for (Vector3f point : points) {
+                out.add(new Vector3f(point).mulPosition(deformation));
+            }
+            return out;
+        }
+
+        private static float distanceToCloud(Vector3f point, List<Vector3f> cloud) {
+            float best = Float.MAX_VALUE;
+            for (Vector3f other : cloud) {
+                best = Math.min(best, point.distance(other));
+            }
+            return best;
+        }
+
+        private static Vector3f nearestOwnToCloud(List<Vector3f> own, List<Vector3f> cloud) {
+            Vector3f best = own.get(0);
+            float bestDistance = Float.MAX_VALUE;
+            for (Vector3f point : own) {
+                float distance = distanceToCloud(point, cloud);
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    best = point;
+                }
+            }
+            return best;
+        }
+
+        /**
+         * The whole re-anchor measurement, as one markdown report.
+         *
+         * <p>Four tables, in the order the brief's blockers are asked: the candidates per piece and what
+         * each does (the anchor choice), the six rules scored (the decision), every head piece and both
+         * tail chains under the shipped rule and the winning one (the equilibrium and the
+         * must-keep-swinging set), and the two chains drawn the way the frame path composes them (the
+         * child chain).
+         */
+        String anchorReport(Path pack) {
+            Map<Integer, Vector3f> armature = armaturePivots(pack);
+            flagSegments();
+            List<Rule> rules = rules(armature);
+            StringBuilder out = new StringBuilder();
+            out.append("# Where the top-of-head cap is held, and what re-anchoring its delta changes\n\n")
+                    .append("Model `").append(stemLabel).append("`, read from the deployed build's own ")
+                    .append("converted artefacts in the frames the earlier rounds calibrated (geometry ")
+                    .append("`(x,y,z) -> (x,z,-y)`, pivot `bindWorld x (pivot x scale)`). The solver call ")
+                    .append("is the production one, settled for ").append(SETTLE_STEPS)
+                    .append(" steps at 60 Hz, and it runs <b>before any anchor is chosen</b>: the anchor ")
+                    .append("reaches only `buildSegmentDelta`, which the frame path calls after the ")
+                    .append("solver has returned.\n\n")
+                    .append("`d(pivot->anchor)` is how far the hinge moves; `attachment residual` is how ")
+                    .append("far the piece's own vertex nearest its joint origin (the vertex the earlier ")
+                    .append("round's 0.209/0.149 blocks were measured on) still moves under the delta; ")
+                    .append("`gap lifted`/`gap sunk` are the largest increase and decrease of the ")
+                    .append("distance between the piece's own vertices and the geometry it rests on ")
+                    .append("(all bones, hidden included, of the nearest ancestor that has any) - the ")
+                    .append("physical reading of \"lifts off the skull\" and \"sinks into the head\"; ")
+                    .append("`tip vs shipped` is how far the piece's far end lands from where the ")
+                    .append("shipped code puts it.\n\n");
+
+            out.append("## 1. The candidates, piece by piece\n\n")
+                    .append("The cap, and three pieces the user says behave. `look up` is the commanded ")
+                    .append("rotation that lifts the model's own face normal (`").append(point(face))
+                    .append("`).\n\n");
+            String[] named = {"BaseHair", "Bangs", "LongHair", "LongHair2"};
+            for (float commanded : new float[]{30.0F * Math.signum(pitchSign()),
+                    -30.0F * Math.signum(pitchSign())}) {
+                out.append("### ").append(commanded > 0.0F ? "Look up" : "Look down").append(" ")
+                        .append(fmt(Math.abs(commanded))).append(" deg\n\n")
+                        .append("| piece | anchor | d(pivot->anchor) | settled | attachment residual ")
+                        .append("| gap lifted (+) | gap sunk (-) | mean gap | tip moved | tip vs shipped |\n")
+                        .append("|---|---|---|---|---|---|---|---|---|---|\n");
+                for (String name : named) {
+                    Piece piece = pieceNamed(name);
+                    if (piece == null || piece.own.isEmpty()) {
+                        continue;
+                    }
+                    float[] settled = new float[1];
+                    for (Held held : heldAt(piece, 'x', commanded, rules, settled)) {
+                        out.append(row(piece.name, held, settled[0]));
+                    }
+                }
+                out.append('\n');
+            }
+
+            out.append("## 1b. Where each rule puts the hinge, in blocks of the model's own space\n\n")
+                    .append("`contact patch` is how many of the piece's own vertices are in the patch ")
+                    .append("the centre rules average, and `patch spread` how far the furthest of them ")
+                    .append("is from its centre - a patch that is not compact is not a contact, it is a ")
+                    .append("selection artifact.\n\n")
+                    .append("| piece | rule | point | d(pivot) | contact patch | patch spread |\n")
+                    .append("|---|---|---|---|---|---|\n");
+            for (String name : new String[]{"BaseHair", "Bangs", "LongHair", "LongHair2",
+                    "LeftSideHair", "Tail", "Tail2"}) {
+                Piece piece = pieceNamed(name);
+                if (piece == null || piece.own.isEmpty()) {
+                    continue;
+                }
+                for (int at = 0; at < rules.size(); at++) {
+                    Rule rule = rules.get(at);
+                    Vector3f point = rule.of(piece);
+                    int patch = 0;
+                    float spread = 0.0F;
+                    if (rule.label.startsWith("contact patch")) {
+                        float tolerance = rule.label.contains("exact") ? 0.0F
+                                : Float.parseFloat(rule.label.substring(
+                                        rule.label.indexOf("within ") + 7, rule.label.length() - 1));
+                        List<Vector3f> contact = contactGeometry(piece);
+                        if (contact != null) {
+                            float nearest = Float.MAX_VALUE;
+                            for (Vector3f vertex : piece.own) {
+                                nearest = Math.min(nearest, distanceToCloud(vertex, contact));
+                            }
+                            for (Vector3f vertex : piece.own) {
+                                if (distanceToCloud(vertex, contact) <= nearest + tolerance) {
+                                    patch++;
+                                    spread = Math.max(spread, vertex.distance(point));
+                                }
+                            }
+                        }
+                    }
+                    out.append("| `").append(piece.name).append("` | ").append(rule.label).append(" | ")
+                            .append(point(point)).append(" | ").append(fmt(point.distance(piece.pivot)))
+                            .append(" | ").append(patch == 0 ? "-" : Integer.toString(patch))
+                            .append(" | ").append(patch == 0 ? "-" : fmt(spread)).append(" |\n");
+                }
+            }
+            out.append('\n');
+
+            out.append("## 1c. The shipped function, against this probe's own rule\n\n")
+                    .append("`patch 0.01` is this probe's own implementation of the contact patch; ")
+                    .append("`production` is `YsmPhysicsParts#contactAnchor` called on the same geometry ")
+                    .append("and the same cloud, with the same tolerance. They can differ only in the ")
+                    .append("lever bound, and the last column says whether that bound bound.\n\n")
+                    .append("| piece | patch 0.01 | production | lever bound bound? |\n|---|---|---|---|\n");
+            for (String name : new String[]{"BaseHair", "Bangs", "LongHair", "LongHair2",
+                    "LeftSideHair", "Tail", "Tail2"}) {
+                Piece piece = pieceNamed(name);
+                if (piece == null || piece.own.isEmpty()) {
+                    continue;
+                }
+                Vector3f patch = contactPatchCentre(piece, 0.01F);
+                Vector3f shipped = YsmPhysicsParts.contactAnchor(piece.own, contactGeometry(piece),
+                        piece.pivot, piece.lever);
+                out.append("| `").append(piece.name).append("` | ").append(point(patch)).append(" | ")
+                        .append(point(shipped)).append(" | ")
+                        .append(patch.distance(shipped) > 1.0E-5F ? "yes" : "no").append(" |\n");
+            }
+            out.append('\n');
+
+            out.append("## 2. The rules, scored\n\n")
+                    .append("`hinge moves on a healthy piece` is how far a rule shifts the point a ")
+                    .append("piece turns about, over the pieces the user says behave. `healthy pieces: ")
+                    .append("tip vs shipped` is the visible cost of that shift - how far their far end ")
+                    .append("lands from where the shipped code puts it, over both commanded pitches ")
+                    .append("(mean / worst). The cap columns are the benefit: how far its attachment ")
+                    .append("still moves, how far it still separates from what it rests on (worst and ")
+                    .append("mean), and how far its own far end moves. Everything is in blocks, so the ")
+                    .append("columns can be compared, and the winner is the smallest sum of exactly ")
+                    .append("the three terms the brief names: the healthy cost, twice the cap's ")
+                    .append("attachment residual, and the cap's mean separation.\n\n")
+                    .append("| anchor rule | hinge moves on a healthy piece (mean / worst) | healthy ")
+                    .append("pieces: tip vs shipped (mean / worst) | cap: hinge moves | cap: attachment ")
+                    .append("residual (up / down) | cap: gap lifted (up / down) | cap: mean gap (up / ")
+                    .append("down) | cap: tip vs shipped (up / down) |\n")
+                    .append("|---|---|---|---|---|---|---|---|\n");
+            double[][] score = scorecard(rules);
+            for (int at = 0; at < rules.size(); at++) {
+                out.append("| ").append(rules.get(at).label).append(" | ")
+                        .append(fmt(score[at][0])).append(" / ").append(fmt(score[at][1])).append(" | ")
+                        .append(fmt(score[at][2])).append(" / ").append(fmt(score[at][3])).append(" | ")
+                        .append(fmt(score[at][4])).append(" | ").append(fmt(score[at][5])).append(" / ")
+                        .append(fmt(score[at][6])).append(" | ").append(fmt(score[at][7])).append(" / ")
+                        .append(fmt(score[at][8])).append(" | ").append(fmt(score[at][9])).append(" / ")
+                        .append(fmt(score[at][10])).append(" | ").append(fmt(score[at][11]))
+                        .append(" / ").append(fmt(score[at][12])).append(" |\n");
+            }
+            out.append('\n');
+
+            out.append("## 2c. What each rule costs each piece that must keep swinging\n\n")
+                    .append("`tip move` is how far the piece's own far vertex travels under the shipped ")
+                    .append("rule (its swing, in blocks, at the commanded pitch); the remaining columns ")
+                    .append("are how far that far vertex lands from the shipped answer under each ")
+                    .append("candidate, worst over look up and look down. A candidate that reads 0.000 ")
+                    .append("leaves the piece exactly where the shipped code leaves it; the number to ")
+                    .append("compare it with is `tip move`, which is the swing it must not lose.\n\n")
+                    .append("| piece | simulated | tip move (up / down) | author head origin ")
+                    .append("| contact vertex | patch exact | patch 0.01 | patch 0.03 |\n")
+                    .append("|---|---|---|---|---|---|---|---|\n");
+            for (String name : MUST_KEEP_SWINGING) {
+                Piece piece = pieceNamed(name);
+                if (piece == null || piece.own.isEmpty()) {
+                    continue;
+                }
+                double[] cost = new double[6];
+                StringBuilder moves = new StringBuilder();
+                for (float commanded : new float[]{30.0F * Math.signum(pitchSign()),
+                        -30.0F * Math.signum(pitchSign())}) {
+                    float[] settled = new float[1];
+                    List<Held> held = heldAt(piece, 'x', commanded, rules, settled);
+                    if (moves.length() > 0) {
+                        moves.append(" / ");
+                    }
+                    moves.append(fmt(held.get(0).tipMoved));
+                    cost[0] = Math.max(cost[0], tipChangeOf(held, "own vertex near author head origin"));
+                    cost[1] = Math.max(cost[1], tipChangeOf(held,
+                            "own vertex near the geometry it rests on"));
+                    cost[2] = Math.max(cost[2], tipChangeOf(held,
+                            "contact patch centre (exact minimum)"));
+                    cost[3] = Math.max(cost[3], tipChangeOf(held,
+                            "contact patch centre (within 0.010)"));
+                    cost[4] = Math.max(cost[4], tipChangeOf(held,
+                            "contact patch centre (within 0.030)"));
+                }
+                out.append("| `").append(piece.name).append("` | ")
+                        .append(piece.droppedByShippedRules ? "no (shipped rule drops it)" : "yes")
+                        .append(" | ").append(moves).append(" | ")
+                        .append(fmt(cost[0])).append(" | ").append(fmt(cost[1])).append(" | ")
+                        .append(fmt(cost[2])).append(" | ").append(fmt(cost[3])).append(" | ")
+                        .append(fmt(cost[4])).append(" |\n");
+            }
+            out.append('\n');
+
+            out.append("## 2b. Sway: a head turn about the model's vertical, 30 deg\n\n")
+                    .append("The third symptom (\"swaying left/right it lags the head\"). Same columns, ")
+                    .append("for the cap and two pieces that must keep swinging.\n\n")
+                    .append("| piece | anchor | d(pivot->anchor) | settled | attachment residual ")
+                    .append("| gap lifted (+) | gap sunk (-) | tip moved | tip vs shipped |\n")
+                    .append("|---|---|---|---|---|---|---|---|---|\n");
+            for (String name : new String[]{"BaseHair", "Bangs", "LongHair"}) {
+                Piece piece = pieceNamed(name);
+                if (piece == null || piece.own.isEmpty()) {
+                    continue;
+                }
+                float[] settled = new float[1];
+                for (Held held : heldAt(piece, 'y', 30.0F, rules, settled)) {
+                    out.append(row(piece.name, held, settled[0]));
+                }
+            }
+            out.append('\n');
+
+            out.append("## 3. Every head piece and both tail chains, shipped against the winner\n\n")
+                    .append("The equilibrium reading: `settled` is the angle the solver returns, and it ")
+                    .append("is the same number under both rules because the solver call is made before ")
+                    .append("either delta is built and never sees the anchor. What does change is the ")
+                    .append("arc the piece is drawn on: `swing radius` is the distance from the piece's ")
+                    .append("own centroid to the point it turns about, so the visible swing scales with ")
+                    .append("it (`2 L sin(theta/2)`), which is the equilibrium's visible half.\n\n");
+            String winner = bestRuleLabel(rules);
+            out.append("| piece | parent | joint | anchor | d(pivot->anchor) | swing radius | pose ")
+                    .append("| settled | attachment residual | gap lifted (+) | gap sunk (-) | tip ")
+                    .append("moved | tip vs shipped |\n")
+                    .append("|---|---|---|---|---|---|---|---|---|---|---|---|---|\n");
+            for (String name : new String[]{"BaseHair", "Bangs", "LongHair", "LongHair2",
+                    "LeftSideHair", "RightSideHair", "LongRightHair", "LongRightHair2",
+                    "LongLeftHair", "LongLeftHair2", "Head", "Tail", "Tail2", "Tail3", "Tail4",
+                    "Tail5", "Tail6", "Tail7"}) {
+                Piece piece = pieceNamed(name);
+                if (piece == null || piece.own.isEmpty()) {
+                    continue;
+                }
+                for (float commanded : new float[]{30.0F * Math.signum(pitchSign()),
+                        -30.0F * Math.signum(pitchSign())}) {
+                    float[] settled = new float[1];
+                    List<Held> held = heldAt(piece, 'x', commanded, rules, settled);
+                    String parentName = bones[piece.index].parent < 0 ? "-"
+                            : bones[bones[piece.index].parent].name;
+                    Vector3f centre = centroid(piece.own);
+                    for (Held entry : held) {
+                        if (entry.rule.label.equals("shipped (bindPivot)")
+                                || entry.rule.label.equals(winner)) {
+                            out.append("| `").append(piece.name).append("` | `").append(parentName)
+                                    .append("` | ").append(piece.joint).append(" | ")
+                                    .append(entry.rule.label).append(" | ")
+                                    .append(fmt(entry.fromPivot)).append(" | ")
+                                    .append(fmt(centre.distance(entry.point))).append(" | ")
+                                    .append(commanded > 0.0F ? "up" : "down").append(" | ")
+                                    .append(fmt(settled[0])).append(" | ").append(fmt(entry.residual))
+                                    .append(" | ").append(fmt(entry.gapUp)).append(" | ")
+                                    .append(fmt(entry.gapIn)).append(" | ").append(fmt(entry.tipMoved))
+                                    .append(" | ").append(fmt(entry.tipChange)).append(" |\n");
+                        }
+                    }
+                }
+            }
+            out.append('\n');
+
+            out.append("## 4. The child chains, composed the way the frame path composes them\n\n")
+                    .append("Each piece's own delta about its own anchor, multiplied under its parent's ")
+                    .append("composed delta (`resolveSegment`). `travel` is how far the piece's own far ")
+                    .append("vertex moves from where the pose put it; `junction shift` is how far the ")
+                    .append("piece's anchor vertex lands from the shipped answer, which is the number ")
+                    .append("that says whether a child was torn off the piece it hangs from.\n\n")
+                    .append("| chain | piece | pose | travel (shipped) | travel (winner) | junction ")
+                    .append("shift |\n|---|---|---|---|---|---|\n");
+            for (String[] chain : new String[][]{{"hair", "LongHair", "LongHair2"},
+                    {"tail", "Tail", "Tail2", "Tail3", "Tail4", "Tail5", "Tail6", "Tail7"}}) {
+                Rule shipped = rules.get(0);
+                Rule candidate = ruleNamed(rules, winner);
+                for (float commanded : new float[]{30.0F * Math.signum(pitchSign()),
+                        -30.0F * Math.signum(pitchSign())}) {
+                    List<Piece> pieces = new ArrayList<>();
+                    for (int at = 1; at < chain.length; at++) {
+                        Piece piece = pieceNamed(chain[at]);
+                        if (piece != null && !piece.own.isEmpty()) {
+                            pieces.add(piece);
+                        }
+                    }
+                    Map<String, float[]> one = chainTravel(pieces, 'x', commanded, shipped);
+                    Map<String, float[]> two = chainTravel(pieces, 'x', commanded, candidate);
+                    for (Piece piece : pieces) {
+                        float[] shippedRow = one.get(piece.name);
+                        float[] winnerRow = two.get(piece.name);
+                        if (shippedRow == null || winnerRow == null) {
+                            continue;
+                        }
+                        out.append("| ").append(chain[0]).append(" | `").append(piece.name)
+                                .append("` | ").append(commanded > 0.0F ? "up" : "down")
+                                .append(" | ").append(fmt(shippedRow[0])).append(" | ")
+                                .append(fmt(winnerRow[0])).append(" | ")
+                                .append(fmt(winnerRow[1])).append(" |\n");
+                    }
+                }
+            }
+            out.append('\n');
+            out.append(verdict(rules, winner));
+            return out.toString();
+        }
+
+        private String row(String name, Held held, float settled) {
+            return "| `" + name + "` | " + held.rule.label + " | " + fmt(held.fromPivot) + " | "
+                    + fmt(settled) + " | " + fmt(held.residual) + " | " + fmt(held.gapUp) + " | "
+                    + fmt(held.gapIn) + " | " + fmt(held.gapMean) + " | " + fmt(held.tipMoved) + " | "
+                    + fmt(held.tipChange) + " |\n";
+        }
+
+        /**
+         * One row per rule, over the healthy set and the cap, all in blocks: the healthy pieces' hinge
+         * movement (mean, worst) and their visible change (mean, worst `tip vs shipped`), and the cap's
+         * hinge movement, attachment residual, gap lifted, mean gap and visible change, each worst over
+         * the two commanded pitches. Returned as numbers rather than text so the winner below and the
+         * table above cannot disagree.
+         */
+        private double[][] scorecard(List<Rule> rules) {
+            int count = rules.size();
+            double[][] out = new double[count][13];
+            double[] healthySum = new double[count];
+            double[] tipSum = new double[count];
+            int healthyUsed = 0;
+            int healthyRows = 0;
+            for (String name : MUST_KEEP_SWINGING) {
+                Piece piece = pieceNamed(name);
+                if (piece == null || piece.own.isEmpty() || piece.droppedByShippedRules) {
+                    continue;
+                }
+                healthyUsed++;
+                healthyRows += 2;
+                for (float commanded : new float[]{30.0F * Math.signum(pitchSign()),
+                        -30.0F * Math.signum(pitchSign())}) {
+                    float[] settled = new float[1];
+                    List<Held> held = heldAt(piece, 'x', commanded, rules, settled);
+                    for (int at = 0; at < count; at++) {
+                        healthySum[at] += held.get(at).fromPivot;
+                        out[at][1] = Math.max(out[at][1], held.get(at).fromPivot);
+                        tipSum[at] += held.get(at).tipChange;
+                        out[at][3] = Math.max(out[at][3], held.get(at).tipChange);
+                    }
+                }
+            }
+            for (int at = 0; at < count; at++) {
+                out[at][0] = healthyRows == 0 ? Double.NaN : healthySum[at] / healthyRows;
+                out[at][2] = healthyRows == 0 ? Double.NaN : tipSum[at] / healthyRows;
+            }
+            Piece cap = pieceNamed("BaseHair");
+            if (cap == null || cap.own.isEmpty()) {
+                return out;
+            }
+            for (int at = 0; at < count; at++) {
+                out[at][4] = rules.get(at).of(cap).distance(cap.pivot);
+                double residualUp = 0.0D;
+                double residualDown = 0.0D;
+                double gapUp = 0.0D;
+                double gapDown = 0.0D;
+                double meanUp = 0.0D;
+                double meanDown = 0.0D;
+                double tipUp = 0.0D;
+                double tipDown = 0.0D;
+                for (float commanded : new float[]{30.0F * Math.signum(pitchSign()),
+                        -30.0F * Math.signum(pitchSign())}) {
+                    Held entry = heldAt(cap, 'x', commanded, rules, new float[1]).get(at);
+                    boolean up = commanded > 0.0F;
+                    if (up) {
+                        residualUp = entry.residual;
+                        gapUp = entry.gapUp;
+                        meanUp = entry.gapMean;
+                        tipUp = entry.tipChange;
+                    } else {
+                        residualDown = entry.residual;
+                        gapDown = entry.gapUp;
+                        meanDown = entry.gapMean;
+                        tipDown = entry.tipChange;
+                    }
+                }
+                out[at][5] = residualUp;
+                out[at][6] = residualDown;
+                out[at][7] = gapUp;
+                out[at][8] = gapDown;
+                out[at][9] = meanUp;
+                out[at][10] = meanDown;
+                out[at][11] = tipUp;
+                out[at][12] = tipDown;
+            }
+            return out;
+        }
+
+        private Rule ruleNamed(List<Rule> rules, String label) {
+            for (Rule rule : rules) {
+                if (rule.label.equals(label)) {
+                    return rule;
+                }
+            }
+            return rules.get(0);
+        }
+
+        /**
+         * The winning rule, decided by the numbers this report prints and by nothing else: the largest
+         * <b>net</b> benefit, in blocks.
+         *
+         * <p>Benefit is what the rule removes from the cap's attachment translation, worst over the two
+         * commanded pitches; cost is what it moves the far end of the pieces that must keep swinging,
+         * also worst over the two pitches and taken over the pieces the shipped classifier actually
+         * simulates (a piece that is already dropped cannot be disturbed by anything). One unit, one
+         * comparison, no weights to tune - and a rule that buys the cap something smaller than what it
+         * costs the hair is rejected by the arithmetic rather than by taste.
+         */
+        private String bestRuleLabel(List<Rule> rules) {
+            double[][] score = scorecard(rules);
+            String best = rules.get(0).label;
+            double bestNet = -Double.MAX_VALUE;
+            for (int at = 0; at < rules.size(); at++) {
+                double removed = Math.max(score[0][5], score[0][6])
+                        - Math.max(score[at][5], score[at][6]);
+                double cost = Math.max(score[at][3], score[at][2]);
+                double net = removed - cost;
+                if (Double.isFinite(net) && net > bestNet) {
+                    bestNet = net;
+                    best = rules.get(at).label;
+                }
+            }
+            return best;
+        }
+
+        /** One held entry's tip change by rule label, or NaN when the rule is not in the list. */
+        private static float tipChangeOf(List<Held> held, String label) {
+            for (Held entry : held) {
+                if (entry.rule.label.equals(label)) {
+                    return entry.tipChange;
+                }
+            }
+            return Float.NaN;
+        }
+
+        /**
+         * Draw a chain the way the frame path draws it: per piece, settle, build the delta about that
+         * piece's own anchor, compose it under the parent's composed delta, and read how far the piece's
+         * own far vertex travels and how far its anchor vertex lands from the shipped answer.
+         */
+        private Map<String, float[]> chainTravel(List<Piece> chain, char axis, float commanded, Rule rule) {
+            Map<String, float[]> out = new LinkedHashMap<>();
+            Map<Integer, Matrix4f> composed = new HashMap<>();
+            Map<Integer, Matrix4f> deformationByJoint = new HashMap<>();
+            for (Piece piece : chain) {
+                Matrix4f deformation = deformationByJoint.computeIfAbsent(piece.joint,
+                        joint -> deformationFor(joint, axis, commanded));
+                org.joml.Quaternionf bind = new org.joml.Quaternionf();
+                settledSwing(piece, deformation, bind);
+                Vector3f anchor = rule.of(piece);
+                Matrix4f own = new Matrix4f();
+                YsmMeshSecondaryMotion.buildSegmentDelta(anchor, bind, own);
+                Matrix4f parent = composed.get(bones[piece.index].parent);
+                Matrix4f total = parent == null ? new Matrix4f(own) : new Matrix4f(parent).mul(own);
+                composed.put(piece.index, total);
+                int far = 0;
+                float farDistance = -1.0F;
+                for (int i = 0; i < piece.own.size(); i++) {
+                    float distance = piece.own.get(i).distance(piece.pivot);
+                    if (distance > farDistance) {
+                        farDistance = distance;
+                        far = i;
+                    }
+                }
+                Vector3f posedFar = new Vector3f(piece.own.get(far)).mulPosition(deformation);
+                Vector3f drawnFar = new Vector3f(piece.own.get(far)).mulPosition(total)
+                        .mulPosition(deformation);
+                Vector3f posedAnchor = new Vector3f(anchor).mulPosition(deformation);
+                Vector3f drawnAnchor = new Vector3f(anchor).mulPosition(total).mulPosition(deformation);
+                out.put(piece.name, new float[]{drawnFar.distance(posedFar),
+                        drawnAnchor.distance(posedAnchor)});
+            }
+            return out;
+        }
+
+        /** The reading of the four tables, as one paragraph with the numbers in it. */
+        private String verdict(List<Rule> rules, String winner) {
+            Piece cap = pieceNamed("BaseHair");
+            if (cap == null || cap.own.isEmpty()) {
+                return "VERDICT: the cap is not in this model, so nothing was measured.\n";
+            }
+            double[][] score = scorecard(rules);
+            StringBuilder out = new StringBuilder("VERDICT\n");
+            int winnerAt = 0;
+            for (int at = 0; at < rules.size(); at++) {
+                if (rules.get(at).label.equals(winner)) {
+                    winnerAt = at;
+                }
+            }
+            float[] settled = new float[1];
+            List<Held> capUpShipped = heldAt(cap, 'x', 30.0F * Math.signum(pitchSign()), rules, settled);
+            List<Held> capDownShipped = heldAt(cap, 'x', -30.0F * Math.signum(pitchSign()), rules,
+                    new float[1]);
+            List<Held> capSwayShipped = heldAt(cap, 'y', 30.0F, rules, new float[1]);
+            out.append("Rule `").append(winner).append("` has the largest net benefit: it removes ")
+                    .append(fmt(score[0][5] - score[winnerAt][5])).append(" (up) / ")
+                    .append(fmt(score[0][6] - score[winnerAt][6])).append(" (down) blocks of the cap's ")
+                    .append("attachment translation and costs the simulated pieces that must keep ")
+                    .append("swinging ").append(fmt(score[winnerAt][2])).append(" (mean) / ")
+                    .append(fmt(score[winnerAt][3])).append(" (worst) blocks of far-end change, against ")
+                    .append(fmt(score[winnerAt][0])).append(" / ").append(fmt(score[winnerAt][1]))
+                    .append(" blocks of hinge movement.\n\n")
+                    .append("The cap's attachment moves ").append(fmt(capUpShipped.get(0).residual))
+                    .append(" (up) / ").append(fmt(capDownShipped.get(0).residual))
+                    .append(" (down) / ").append(fmt(capSwayShipped.get(0).residual))
+                    .append(" (sway) blocks under the shipped rule and ")
+                    .append(fmt(capUpShipped.get(winnerAt).residual)).append(" / ")
+                    .append(fmt(capDownShipped.get(winnerAt).residual)).append(" / ")
+                    .append(fmt(capSwayShipped.get(winnerAt).residual))
+                    .append(" under the winner; its mean separation from the skull goes from ")
+                    .append(fmt(capUpShipped.get(0).gapMean)).append(" to ")
+                    .append(fmt(capUpShipped.get(winnerAt).gapMean)).append(" blocks on look up.\n\n")
+                    .append("What the winner does NOT fix, stated here rather than left to be ")
+                    .append("discovered in game: the cap still turns by the solved angle (")
+                    .append(fmt(settled[0])).append(" degrees on look up), and a rigid turn separates ")
+                    .append("the far side of a half-block-wide piece from the skull wherever the hinge ")
+                    .append("is - the worst single-vertex lift is ").append(fmt(capUpShipped.get(0).gapUp))
+                    .append(" blocks shipped against ").append(fmt(capUpShipped.get(winnerAt).gapUp))
+                    .append(" under the winner. What is removed is the whole-piece slide, which is the ")
+                    .append("mean.\n");
+            return out.toString();
         }
     }
 

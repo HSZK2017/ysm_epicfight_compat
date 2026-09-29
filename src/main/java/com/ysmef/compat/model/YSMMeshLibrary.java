@@ -854,6 +854,11 @@ public class YSMMeshLibrary {
         // take effect on the same reload that rebuilds the runtime models, without
         // a game restart.
         com.ysmef.compat.model.runtime.YsmBoneOverrides.invalidate();
+        // The per-model physics overrides are read when a model's pieces are built, and
+        // the pieces are rebuilt by this same reload: dropping the cache here is what
+        // makes an edited physics_overrides/<model>.json take effect on that reload
+        // instead of on the next launch.
+        com.ysmef.compat.model.runtime.YsmPhysicsOverrides.invalidate();
     }
 
     /**

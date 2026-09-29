@@ -103,9 +103,20 @@ public final class YsmMeshSecondaryMotion {
          * an argument about the code: only {@link #resolveSegment} sets an entry, and it sets it
          * exactly where it hands the segment to {@link YsmDynamicBoneSolver}. A frame path that
          * wrote something else onto the parts would leave these false, which is what a test can
-         * read.
+         * read. A segment held rigid by the user's override is never handed to the solver, so its
+         * entry stays false - which is also what keeps it out of the knit relaxation.
          */
         final boolean[] integrated;
+        /**
+         * Which segments the user's {@code physics_overrides} file holds rigid.
+         *
+         * <p>False for every segment of every model that has no override file: the file is read
+         * once, where the segments are built, and the frame path only ever asks these flags. See
+         * {@link YsmPhysicsOverrides#markHeld} - with no file the array is left untouched, so the
+         * branch that reads it is unreachable and the shipped behaviour stays the shipped
+         * behaviour, byte for byte.
+         */
+        final boolean[] held;
         /** The drawn frame's pose, created on the first frame. See {@link ArmaturePose}. */
         private ArmaturePose live;
         /** Per-segment scratch: the joint deformation, its pivot and its rest direction. */
@@ -207,6 +218,7 @@ public final class YsmMeshSecondaryMotion {
             this.resolved = new boolean[count];
             this.resolveDepth = new int[count];
             this.integrated = new boolean[count];
+            this.held = new boolean[count];
             this.deformations = new OpenMatrix4f[count];
             this.pivots = new Vector3f[count];
             this.restDirections = new Vector3f[count];
@@ -739,7 +751,13 @@ public final class YsmMeshSecondaryMotion {
             YsmBodyColliders colliders = parts.isEmpty() ? null : YsmBodyColliders.build(mesh, model);
             // The per-joint limit is what one joint may swing; the piece's own total is scaled from
             // it by how many joints the piece has, so a long chain is not shared into stillness.
-            return new State(parts, colliders, (float) tuning.maxAngle);
+            State state = new State(parts, colliders, (float) tuning.maxAngle);
+            // The user's choice, if they made one: the bones this model must not swing. Read here -
+            // once, where the pieces are built - and it applies nothing at all unless
+            // config/ysm_epicfight_compat/physics_overrides/<model>.json exists, so the report line
+            // it writes says which bones were held and the frame path below needs no file of its own.
+            YsmPhysicsOverrides.markHeld(model.modelId, model.bones, parts.segments(), state.held);
+            return state;
         } catch (Throwable t) {
             YSMEpicFightCompat.LOGGER.warn(
                     "YSM-EF Compat: [physics] could not classify physics bones for model '{}'; secondary motion stays off for it",
@@ -1399,6 +1417,32 @@ public final class YsmMeshSecondaryMotion {
         // own. Last frame's answer must not be left standing for them.
         state.chainUsed[index] = hasParent ? state.chainUsed[parent] : 0.0F;
 
+        // Held rigid by the user's physics_overrides file: the piece follows the pose exactly, so its
+        // delta is the identity - the same thing this method writes for a joint with no pose this
+        // frame, and what the mesh already holds for a part nothing moved. Three consequences, all of
+        // them intended and all of them stated here because each is visible somewhere else:
+        //
+        //  - the piece is not handed to the solver, so `integrated` stays false and the knit
+        //    relaxation neither pulls it nor is pulled by it. A held panel simply does not take part;
+        //    it is not a panel held at zero degrees, which would still drag its neighbours toward it.
+        //  - `chainUsed` is already the ancestors' usage and nothing of this piece's own, so the
+        //    joints below are not charged for a swing that no longer exists. That is what makes a
+        //    strand hanging under a held cap keep the budget it had while the cap itself moves none.
+        //  - the children resolved after this one compose under the identity (see the composition at
+        //    the end of this method), so they swing about their own anchors from wherever the pose
+        //    put the piece they hang from - a held piece is a piece that is simply not simulated, it
+        //    is never a hole in the chain.
+        if (state.held[index]) {
+            state.jomlDeltas[index].identity();
+            state.lastDegrees[index] = 0.0F;
+            state.lastContact[index] = 0.0F;
+            state.lastDisplacement[index] = 0.0F;
+            state.chainAngle[index] = 0.0F;
+            state.lastChainAngle[index] = 0.0F;
+            state.chainBudget[index] = 0.0F;
+            return;
+        }
+
         OpenMatrix4f toOrigin = poses.toOriginOf(segment.joint());
         OpenMatrix4f jointPose = poses.poseOf(segment.joint());
         if (toOrigin == null || jointPose == null) {
@@ -1503,11 +1547,17 @@ public final class YsmMeshSecondaryMotion {
         state.lastDisplacement[index] = 2.0F * segment.lever() * (float) Math.sin(ownAngle * 0.5F);
 
         // The swing is a model-space rotation; the part transform acts in bind space, so it is
-        // conjugated out of the joint's deformation and applied about the bone's own bind
-        // pivot. Without the pivot the piece swings about the model origin.
+        // conjugated out of the joint's deformation and applied about the point the piece is HELD by -
+        // its own contact patch with what it rests on, not its bind pivot. The two are the same point
+        // for a strand whose pivot sits at its root; for a piece whose pivot is inside its own volume
+        // (the reported top-of-head cap, pivot 0.107 blocks from its nearest vertex) rotating about the
+        // pivot sweeps the end the piece is attached by, and that sweep is the whole-piece slide the
+        // user reports as the hair lifting off the skull and sinking into it. The anchor is measured
+        // once per model in YsmPhysicsParts#contactAnchor; nothing about the solved angle changes, since
+        // the solver never sees it. Without a pivot the piece swings about the model origin.
         bindSwingOf(deformation, scratch, bindRotation);
         Matrix4f delta = state.jomlDeltas[index];
-        buildSegmentDelta(segment.bindPivot(), bindRotation, delta);
+        buildSegmentDelta(segment.bindAnchor(), bindRotation, delta);
         if (hasParent) {
             // Composed under the parent so a nested piece keeps its shape: the parent's swing
             // carries the child, and the child's own swing is measured from there.
@@ -1734,17 +1784,23 @@ public final class YsmMeshSecondaryMotion {
     private static final Quaternionf IDENTITY = new Quaternionf();
 
     /**
-     * The bind-space transform that rotates a part by {@code bindSwing} about {@code bindPivot}.
+     * The bind-space transform that rotates a part by {@code bindSwing} about {@code bindAnchor}.
      *
      * <p>Package-private and static so the identity it has to satisfy can be tested rather than
      * argued about. Epic Fight draws a part as {@code deformation x delta x vertex}, and the
      * caller's {@code deformation} is {@code pose x toOrigin}; the pair must therefore be
      * equivalent to rotating the <i>posed</i> part by the model-space swing about the
-     * <i>posed</i> pivot:
+     * <i>posed</i> anchor:
      *
      * <pre>
-     *   deformation x delta  ==  T(P) x Q x T(-P) x deformation,   P = deformation x bindPivot
+     *   deformation x delta  ==  T(A) x Q x T(-A) x deformation,   A = deformation x bindAnchor
      * </pre>
+     *
+     * <p>The anchor is the point the piece is held by ({@code Segment#bindAnchor}), not its bind pivot:
+     * the two coincide for a piece whose pivot is where it is held, and differ exactly where rotating
+     * about the pivot would slide the piece off the body - see {@code YsmPhysicsParts#contactAnchor}.
+     * A caller that passes the pivot here gets the older behaviour, which is what the tests that build a
+     * segment by hand rely on.
      *
      * <p>Getting this wrong does not look like a rotation error. Every point of the part is
      * displaced instead of turned, by an amount proportional to how far the pivot is from the
@@ -1753,8 +1809,8 @@ public final class YsmMeshSecondaryMotion {
      * reads as the garment shattering, which is why it is pinned by a test rather than by a
      * comment.
      */
-    static void buildSegmentDelta(Vector3f bindPivot, Quaternionf bindSwing, Matrix4f out) {
-        if (bindPivot == null || bindSwing == null || out == null) {
+    static void buildSegmentDelta(Vector3f bindAnchor, Quaternionf bindSwing, Matrix4f out) {
+        if (bindAnchor == null || bindSwing == null || out == null) {
             if (out != null) {
                 out.identity();
             }
@@ -1771,9 +1827,9 @@ public final class YsmMeshSecondaryMotion {
             return;
         }
         out.identity()
-                .translate(bindPivot.x, bindPivot.y, bindPivot.z)
+                .translate(bindAnchor.x, bindAnchor.y, bindAnchor.z)
                 .rotate(bindSwing)
-                .translate(-bindPivot.x, -bindPivot.y, -bindPivot.z);
+                .translate(-bindAnchor.x, -bindAnchor.y, -bindAnchor.z);
     }
 
     private static OpenMatrix4f toOriginOf(Armature armature, int joint) {

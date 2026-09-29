@@ -676,7 +676,11 @@ public final class YsmPhysicsParts {
      * @param boneIndex   index into {@link YSMRuntimeModel#bones}
      * @param boneName    the bone's name, for the log and for user overrides
      * @param joint       the Epic Fight joint whose pose carries this part
-     * @param bindPivot   the pivot in model bind space; the point the delta rotates about
+     * @param bindPivot   the pivot in model bind space
+     * @param bindAnchor  the point the piece is <b>held</b> by, model bind space, and the point its
+     *                    delta actually rotates about - the centre of its contact patch with the
+     *                    geometry it rests on, see {@link #contactAnchor}. Equal to
+     *                    {@code bindPivot} for a piece whose pivot is already where it is held.
      * @param bindRest    pivot to centre of mass, model bind space; its length is the lever
      * @param lever       {@code |bindRest|}, blocks. The moment arm.
      * @param radius      collision radius, blocks
@@ -700,7 +704,7 @@ public final class YsmPhysicsParts {
      *                    {@code YsmMeshSecondaryMotion#relaxTowardsNeighbours}.
      */
     public record Segment(int boneIndex, String boneName, int joint, Vector3f bindPivot,
-                          Vector3f bindRest, float lever, float radius, float mass,
+                          Vector3f bindAnchor, Vector3f bindRest, float lever, float radius, float mass,
                           float frequency, float coefficient, float maxAngle, int parent,
                           int[] parts, boolean authored, int[] neighbours,
                           Category category) {
@@ -712,13 +716,17 @@ public final class YsmPhysicsParts {
          * should not have to invent a skeleton for it. The frame path always goes through
          * {@link YsmPhysicsParts#build}, which fills the family from the container rule, so nothing a
          * player sees depends on this convenience.
+         *
+         * <p>The hinge defaults to the bind pivot, which is the identity these callers are written
+         * against: a segment built by hand turns about the point it was given. The frame path uses the
+         * canonical constructor and passes the {@link #bindAnchor()} it measured.
          */
         public Segment(int boneIndex, String boneName, int joint, Vector3f bindPivot,
                        Vector3f bindRest, float lever, float radius, float mass,
                        float frequency, float coefficient, float maxAngle, int parent,
                        int[] parts, boolean authored, int[] neighbours) {
-            this(boneIndex, boneName, joint, bindPivot, bindRest, lever, radius, mass, frequency,
-                    coefficient, maxAngle, parent, parts, authored, neighbours,
+            this(boneIndex, boneName, joint, bindPivot, bindPivot, bindRest, lever, radius, mass,
+                    frequency, coefficient, maxAngle, parent, parts, authored, neighbours,
                     categoryOf(boneName));
         }
 
@@ -962,7 +970,7 @@ public final class YsmPhysicsParts {
 
     /** A segment before its parent link is known in segment indices. */
     private record Draft(int boneIndex, String boneName, int joint, Vector3f bindPivot,
-                         Vector3f bindRest, float lever, float radius, float mass,
+                         Vector3f bindAnchor, Vector3f bindRest, float lever, float radius, float mass,
                          float frequency, float coefficient, float maxAngle, int parentBone,
                          int[] parts, boolean authored) {}
 
@@ -1076,7 +1084,8 @@ public final class YsmPhysicsParts {
             // is three times the firm limit a base is supposed to have.
             float limit = swingLimit(parent >= 0, draft.joint() == JOINT_TORSO, maxAngle, maxAngleRoot);
             segments[i] = new Segment(draft.boneIndex(), draft.boneName(), draft.joint(),
-                    draft.bindPivot(), draft.bindRest(), draft.lever(), draft.radius(), draft.mass(),
+                    draft.bindPivot(), draft.bindAnchor(), draft.bindRest(), draft.lever(),
+                    draft.radius(), draft.mass(),
                     draft.frequency(), draft.coefficient(), limit, parent,
                     draft.parts(), draft.authored(), NO_NEIGHBOURS,
                     classifyBone(model, draft.boneIndex()));
@@ -1333,7 +1342,8 @@ public final class YsmPhysicsParts {
             int[] neighbours = new int[count];
             System.arraycopy(best, 0, neighbours, 0, count);
             segments[i] = new Segment(segments[i].boneIndex(), segments[i].boneName(),
-                    segments[i].joint(), segments[i].bindPivot(), segments[i].bindRest(),
+                    segments[i].joint(), segments[i].bindPivot(), segments[i].bindAnchor(),
+                    segments[i].bindRest(),
                     segments[i].lever(), segments[i].radius(), segments[i].mass(),
                     segments[i].frequency(), segments[i].coefficient(), segments[i].maxAngle(),
                     segments[i].parent(), segments[i].parts(), segments[i].authored(), neighbours,
@@ -1763,13 +1773,43 @@ public final class YsmPhysicsParts {
         int parentBone = nearestSimulatedAncestor(model, boneIndex, bindings, ownsGeometry);
 
         int[] parts = partOrdinals.getOrDefault(boneIndex, new int[0]);
+        // Where this piece is *held*, which is where its delta turns it - see contactAnchor. Measured
+        // here, once per model rather than once per frame, from the two geometries the model already
+        // carries: the piece's own, and the first ancestor's above it that has any.
+        Vector3f anchor = contactAnchor(vertices.get(boneIndex),
+                restsOnGeometry(model.bones, boneIndex, vertices), pivot, lever);
+        if (anchor != pivot && anchor.distance(pivot) > ANCHOR_REPORT_DISTANCE
+                && ANCHOR_MOVED_LOGGED.add(model.modelId + '/' + bone.name)) {
+            com.ysmef.compat.YSMEpicFightCompat.LOGGER.info("YSM-EF Compat: [physics] model '{}': bone '{}' turns about the point it is held "
+                            + "by, {} blocks from its own pivot (pivot ({},{},{}), hinge ({},{},{})), so its "
+                            + "own swing no longer slides the end it hangs by",
+                    model.modelId, bone.name,
+                    Math.round(anchor.distance(pivot) * 1000.0F) / 1000.0F,
+                    Math.round(pivot.x * 1000.0F) / 1000.0F, Math.round(pivot.y * 1000.0F) / 1000.0F,
+                    Math.round(pivot.z * 1000.0F) / 1000.0F,
+                    Math.round(anchor.x * 1000.0F) / 1000.0F, Math.round(anchor.y * 1000.0F) / 1000.0F,
+                    Math.round(anchor.z * 1000.0F) / 1000.0F);
+        }
         // The swing limit is not decided here: the parent link is only provisional until the
         // surviving segments are known, and the limit has to follow the link that survives. See
         // the second pass in build().
-        return new Draft(boneIndex, bone.name, bone.joint, pivot, rest, lever,
+        return new Draft(boneIndex, bone.name, bone.joint, pivot, anchor, rest, lever,
                 radiusFor(vertices.get(boneIndex), pivot, rest), mass(geometry.get(boneIndex)),
                 frequency, coefficient, 0.0F, parentBone, parts, binding != null);
     }
+
+    /**
+     * How far the hinge has to move off the pivot before it is worth a log line, in blocks - one
+     * millimetre.
+     *
+     * <p>Below this the two points are the same point at the resolution the report reads them at, and a
+     * line per piece per model would be noise; above it the piece is one whose own swing used to slide.
+     */
+    static final float ANCHOR_REPORT_DISTANCE = 0.001F;
+
+    /** Model/bone keys already reported as hinged off their pivot, so a reload does not repeat the line. */
+    private static final java.util.Set<String> ANCHOR_MOVED_LOGGED =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     /**
      * The bone's pivot in the mesh's model bind space.
@@ -1797,6 +1837,190 @@ public final class YsmPhysicsParts {
             scaleY = 1.0F;
         }
         return pivotInMeshSpace(bone.bindWorld, bone.px, bone.py, bone.pz, scaleX, scaleY);
+    }
+
+    /**
+     * How close to its own closest approach to what it rests on a vertex has to be to count as part of
+     * the contact patch the hinge is placed at, in blocks - one centimetre in the mesh's own space.
+     *
+     * <p>This is a <b>resolution, not a threshold on pieces</b>: it says which of a piece's own vertices
+     * are touching, and it is applied to every piece of every model by the same rule. It was fixed by
+     * measurement on the reported model rather than by taste ({@code build/reports/ysm-reanchor-round.md}):
+     * at 0.005 and 0.010 blocks the cap's patch is the same 27 vertices and its hinge the same point; at
+     * 0.030 the patch swallows the whole inner shell (378 vertices), the hinge drifts back to the middle
+     * of the piece and less of the defect is removed, not more.
+     */
+    static final float CONTACT_PATCH_TOLERANCE = 0.01F;
+
+    /**
+     * The most distance tests the contact search may spend on one piece.
+     *
+     * <p>The patch walks the piece's own vertices against the cloud it rests on. On this project's models
+     * that product is small for a strand and large for a cap wrapped round a skull, and a converted mesh
+     * can carry a hundred thousand vertices, so a cloud bigger than this budget is strided. The budget
+     * bounds the work at model load rather than changing what is measured: the stride is derived from the
+     * two cloud sizes, and the check that it does not move the hinge on the reported model is in the
+     * round's report.
+     */
+    static final int CONTACT_SEARCH_WORK = 262144;
+
+    /**
+     * The point of a piece that is <b>held</b>: the centre of the patch of its own geometry that touches
+     * the geometry it rests on.
+     *
+     * <p><b>Why the hinge is not the pivot.</b> The delta the frame path hands the mesh is a rotation
+     * about a point, and rotating a body about a point that is not where it is held <i>translates</i> the
+     * end it is held by. For a strand whose pivot sits at its root the two coincide and nothing is wrong;
+     * for a piece whose pivot is inside its own volume - the reported top-of-head cap, whose pivot is
+     * 0.107 blocks from the nearest vertex of its own geometry - the whole piece slides, which is what
+     * "the hair lifts off the skull when she looks down" is. The point it is held by is where it touches
+     * what it hangs from, and that is measurable from the model's own two geometries without a name, a
+     * shape statistic or a threshold on pieces.
+     *
+     * <p>The patch is every one of the piece's own vertices within {@link #CONTACT_PATCH_TOLERANCE} of its
+     * own closest approach to {@code restsOn}, averaged, because a single nearest vertex is a quantisation
+     * of the contact and on a box part it can land on a far corner - on the reported model the strand
+     * {@code LongHair}'s nearest corner to the skull is 0.31 blocks from its own pivot while the top face
+     * it actually hangs by is 0.055 away, and hinging the strand at its bottom corner is a worse defect
+     * than the one being fixed.
+     *
+     * @param own      the piece's own geometry, mesh space
+     * @param restsOn  the geometry it rests on, mesh space, or null when nothing above it has any
+     * @param fallback the bind pivot, which is what a piece that rests on nothing measurable keeps
+     * @param lever    {@code |centroid - pivot|}, blocks: how far the hinge may travel from the pivot
+     * @return the hinge point, never null when {@code fallback} is not
+     */
+    static Vector3f contactAnchor(List<Vector3f> own, List<Vector3f> restsOn, Vector3f fallback,
+                                  float lever) {
+        if (own == null || own.isEmpty() || restsOn == null || restsOn.isEmpty() || fallback == null) {
+            return fallback;
+        }
+        int stride = contactStride(own.size(), restsOn.size());
+        float nearest = Float.MAX_VALUE;
+        for (Vector3f vertex : own) {
+            if (vertex == null || !YsmDynamicBoneSolver.isFinite(vertex)) {
+                continue;
+            }
+            nearest = Math.min(nearest, distanceToCloud(vertex, restsOn, stride));
+        }
+        if (!Float.isFinite(nearest)) {
+            return fallback;
+        }
+        Vector3f sum = new Vector3f();
+        int used = 0;
+        for (Vector3f vertex : own) {
+            if (vertex == null || !YsmDynamicBoneSolver.isFinite(vertex)) {
+                continue;
+            }
+            if (distanceToCloud(vertex, restsOn, stride) <= nearest + CONTACT_PATCH_TOLERANCE) {
+                sum.add(vertex);
+                used++;
+            }
+        }
+        if (used == 0) {
+            return fallback;
+        }
+        return withinLever(fallback, sum.div(used), lever);
+    }
+
+    /**
+     * The furthest the hinge may travel from the piece's bind pivot, in blocks - a quarter of a block.
+     *
+     * <p>The correction the reported defect needs is 0.162 blocks after the lever bound below, so this
+     * ceiling does not bind on the case that motivated the rule; it binds on the pieces whose contact is
+     * found far from their pivot, where the walk up to the first ancestor with geometry has landed on
+     * geometry a limb away. A quarter of a block is also below the size at which the resulting translation
+     * of the whole piece is visible at ordinary swings: {@code 0.25 * 2 sin(10 deg) = 0.043} blocks, four
+     * centimetres. Measured over the corpus, 90 per cent of simulated pieces move their hinge by under
+     * 0.082 blocks on average and every one of them by at most this.
+     */
+    static final float CONTACT_HINGE_LIMIT = 0.25F;
+
+    /**
+     * The contact centre, pulled back to within the piece's own lever of its pivot and within
+     * {@link #CONTACT_HINGE_LIMIT} blocks of it.
+     *
+     * <p><b>Why a bound is needed.</b> The walk that finds what a piece rests on climbs past ancestors
+     * that carry no geometry, and on a model whose nearest bone is a container the geometry it lands on
+     * can be a limb away: measured over the corpus the unbounded rule moves the hinge by up to
+     * <b>3.869 blocks</b> on one hairpin, which would fling it that far at any swing. The bound is not a
+     * classifier - every piece is measured by the same rule, and the rule is a distance in blocks - and
+     * the piece's own lever is the natural half of it, because that is the radius the piece's own swing
+     * is already drawn on: the hinge stays inside the piece's own scale. Measured on the reported model
+     * the lever binds on the cap ({@code 0.187 -> 0.162}, 87 per cent of the correction kept) and on
+     * nothing else in its head region.
+     */
+    private static Vector3f withinLever(Vector3f pivot, Vector3f contact, float lever) {
+        float distance = pivot.distance(contact);
+        if (!Float.isFinite(distance) || distance <= 0.0F) {
+            return pivot;
+        }
+        float limit = CONTACT_HINGE_LIMIT;
+        if (Float.isFinite(lever) && lever > 0.0F) {
+            limit = Math.min(limit, lever);
+        }
+        if (distance <= limit) {
+            return contact;
+        }
+        return new Vector3f(pivot).lerp(contact, limit / distance);
+    }
+
+    /**
+     * The own geometry of the nearest ancestor bone that has any - what this piece rests on.
+     *
+     * <p>Walked up the model's own bone chain rather than taken from the parent alone, because the bone a
+     * piece hangs from is often a container with no geometry of its own: on the reported model the cap's
+     * parent is {@code Hair}, which carries none, and the first ancestor that does is the skull. For a
+     * strand of a chain the first ancestor with geometry is the strand above it, which is where a chain
+     * link is held.
+     */
+    static List<Vector3f> restsOnGeometry(YSMRuntimeModel.BoneRt[] bones, int boneIndex,
+                                          Map<Integer, List<Vector3f>> vertices) {
+        if (bones == null || vertices == null) {
+            return null;
+        }
+        int at = parentOf(bones, boneIndex);
+        for (int guard = 0; at >= 0 && guard <= bones.length; guard++) {
+            List<Vector3f> own = vertices.get(at);
+            if (own != null && !own.isEmpty()) {
+                return own;
+            }
+            at = parentOf(bones, at);
+        }
+        return null;
+    }
+
+    /** The bone's parent index, or -1 when it has none or the table does not carry it. */
+    private static int parentOf(YSMRuntimeModel.BoneRt[] bones, int boneIndex) {
+        if (boneIndex < 0 || boneIndex >= bones.length || bones[boneIndex] == null) {
+            return -1;
+        }
+        return bones[boneIndex].parent;
+    }
+
+    /**
+     * How many of a cloud's vertices the contact search reads: one when the product fits the budget, and
+     * otherwise the smallest stride that brings it inside - derived from the data, so the search cost per
+     * piece is bounded while the measurement stays as close to the whole cloud as the budget allows.
+     */
+    private static int contactStride(int ownSize, int cloudSize) {
+        long product = (long) ownSize * (long) cloudSize;
+        if (product <= CONTACT_SEARCH_WORK || ownSize <= 0) {
+            return 1;
+        }
+        return (int) Math.max(1L, Math.min(cloudSize, (product + CONTACT_SEARCH_WORK - 1) / CONTACT_SEARCH_WORK));
+    }
+
+    /** The distance from a point to the nearest point of a cloud, reading every {@code stride}-th one. */
+    private static float distanceToCloud(Vector3f point, List<Vector3f> cloud, int stride) {
+        float best = Float.MAX_VALUE;
+        for (int at = 0; at < cloud.size(); at += stride) {
+            Vector3f other = cloud.get(at);
+            if (other != null && YsmDynamicBoneSolver.isFinite(other)) {
+                best = Math.min(best, point.distance(other));
+            }
+        }
+        return best;
     }
 
     /**

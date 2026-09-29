@@ -29,6 +29,9 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -278,6 +281,568 @@ class HeadRegionPitchProbeTest {
         System.out.println(console);
 
         assertTrue(problems.isEmpty(), String.join("\n", problems));
+    }
+
+    /**
+     * The pieces that <b>rest on</b> the geometry above them, and what each candidate rule does to
+     * them at the pitch the defect was reported at.
+     *
+     * <p>The reported frame has the Head joint at 53 degrees, and the residual the user still sees is
+     * the one thing a hinge cannot remove: a rigid turn of a piece that sits on a support tips its far
+     * edge off that support by {@code 2 r sin(theta/2)} whatever point it is turned about. This probe
+     * measures three rules at 50, 55 and 60 degrees, both signs, on the deployed build's own converted
+     * artefacts, with the production solver and the production delta order:
+     *
+     * <ul>
+     *   <li><b>now</b> - the shipped build: the piece's own swing about its measured contact anchor,
+     *       composed under its parent's delta;</li>
+     *   <li><b>rigid</b> - a piece whose contact patch is below its own centre of mass follows the pose
+     *       exactly (no delta of its own and no carry from a swinging parent); every other piece is
+     *       untouched, which is what "the pieces that must keep swinging do" means numerically;</li>
+     *   <li><b>capped</b> - the same classification, but the resting piece keeps at most
+     *       {@link #RESTING_SWING_CAP_DEGREES} of its own swing about its anchor.</li>
+     * </ul>
+     *
+     * <p>Two numbers per rule, in blocks, both measured against the geometry the piece rests on:
+     * <b>held shift</b> (how far the delta moves the vertex the piece is held by - the slide) and
+     * <b>far pull</b> (the largest amount by which any of its own vertices is pulled <i>away</i> from
+     * that geometry - the lift-off the eye reads as the piece coming off the skull).
+     */
+    @Test
+    void theRestingPiecesUnderTheFailingFramesPitch() throws Exception {
+        Path pack = convertedPackRoot();
+        assumeTrue(pack != null, "set -D" + YsmModelPackage.CONFIG_ROOT_PROPERTY
+                + "=<.../config/yes_steve_model> (or " + YsmModelPackage.CONFIG_ROOT_ENV
+                + ") to run this against a real install");
+        Rig maid = Rig.load(pack, MAID[1], LOGGED_MAID_SIMULATED);
+        // The other model the brief pins: its own segment set is what "nothing else of its 89 may newly
+        // drop" is about, and the candidate rules here change a delta, never the set - measured, not
+        // argued, by reporting the same classifier over it.
+        Rig eku = Rig.load(pack, EKU[1], LOGGED_EKU_SIMULATED);
+        StringBuilder report = new StringBuilder();
+        report.append("# The resting piece: what is carried by its support, and what each rule does ")
+                .append("at the reported pitch\n\n");
+        report.append("## `").append(maid.modelId).append("`\n\n").append(maid.restingReport());
+        report.append("## `").append(eku.modelId).append("`\n\n").append(eku.restingReport());
+        Path out = Paths.get("build", "reports", "ysm-resting-piece.md");
+        Files.createDirectories(out.getParent());
+        Files.writeString(out, report.toString(), StandardCharsets.UTF_8);
+        StringBuilder console = new StringBuilder();
+        for (String line : report.toString().split("\n", -1)) {
+            if (line.startsWith("#") || line.startsWith("At ") || line.startsWith("Worst")
+                    || line.startsWith("The cap") || line.startsWith("resting pieces that would stop")
+                    || line.startsWith("resting:") || line.startsWith("hanging:")
+                    || line.startsWith("candidate") || line.startsWith("named ")) {
+                console.append(line).append('\n');
+            }
+        }
+        System.out.println(console);
+
+        // The measurement is the deployed build's own geometry, checked against the line the live
+        // client printed for this very piece (logs/latest.log: "bone 'BaseHair' ... 0.162 blocks from
+        // its own pivot (pivot (0.0,1.575,0.206), hinge (-0.015,1.423,0.151))"). If the reader had
+        // drifted, everything in the report would be about a different piece.
+        Segment cap = maid.segmentNamed("BaseHair");
+        assertNotNull(cap, "the reported model has no simulated 'BaseHair' piece");
+        assertEquals(0.000F, cap.bindPivot.x, CALIBRATION_TOLERANCE);
+        assertEquals(1.575F, cap.bindPivot.y, CALIBRATION_TOLERANCE);
+        assertEquals(0.206F, cap.bindPivot.z, CALIBRATION_TOLERANCE);
+        assertEquals(0.162F, cap.bindAnchor.distance(cap.bindPivot), CALIBRATION_TOLERANCE);
+        assertEquals("Head", cap.supportName,
+                "the cap must be in contact with the skull itself, not with another hair piece");
+        assertFalse(cap.supportSimulated, "the skull is not a simulated piece");
+        assertTrue(restsOnItsSupport(cap), "the cap is the piece this round is about");
+        float up = maid.pitchSign() > 0.0F ? 1.0F : -1.0F;
+        RestingRun capRun = maid.restingRun(cap, 55.0F * up);
+        // Its own swing is the configuration's root allowance and nothing else: the piece is the base
+        // of its piece, so swingLimit hands it maxAngleRoot, and the solver's demand saturates there at
+        // every pitch in the failing frame's regime. That is why the tilt reads as the cap having
+        // settled somewhere it does not belong rather than as the head's motion.
+        assertEquals((float) Math.toDegrees(YsmPhysicsTuning.DEFAULTS.maxAngleRoot), capRun.ownDegrees,
+                0.05F, "the cap's own swing must be its root allowance, saturated");
+        assertTrue(capRun.farNow > 0.10F,
+                "the residual is the cap's own turn off the skull, and it is visible");
+        assertEquals(0.0F, capRun.heldRigid, 1.0E-4F,
+                "a resting piece that follows the pose exactly cannot slide");
+        assertEquals(0.0F, capRun.farRigid, 1.0E-4F,
+                "a resting piece that follows the pose exactly cannot lift off its support");
+        assertTrue(capRun.farCapped > 0.02F && capRun.farCapped < capRun.farNow,
+                "capping the angle leaves part of the separation behind: it softens, it does not fix");
+        // And the selector this round rejects, pinned with the numbers: the sign rule takes the maid's
+        // own tail links - the brief's red line - while narrowing it to a support the simulation does
+        // not move does not.
+        for (String tail : new String[]{"Tail3", "Tail5", "Tail6", "Tail7"}) {
+            Segment link = maid.segmentNamed(tail);
+            assertNotNull(link, tail + " is not simulated on the reported model");
+            assertTrue(restsOnItsSupport(link),
+                    tail + " is classified resting by the sign rule: that is the red line it breaks");
+        }
+        for (String name : MUST_SWING_NAMES) {
+            Segment piece = maid.segmentNamed(name);
+            if (piece != null) {
+                assertFalse(restsOnItsSupport(piece) && !piece.supportSimulated,
+                        name + " is a piece the brief requires to keep swinging and the narrowed rule "
+                                + "would stop it");
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // The per-model physics override: the pieces a file can hold rigid
+    // ------------------------------------------------------------------
+
+    /**
+     * The pieces the brief puts on the table for {@code wine_fox/01_taisho_maid}: the reported cap,
+     * and the two the earlier round flagged by name from the same structural rule.
+     */
+    private static final String[] OVERRIDE_CANDIDATES = {"BaseHair", "FFM1", "FR"};
+
+    /** The pieces of that model which must keep swinging, whatever is held. */
+    private static final String[] OVERRIDE_MUST_SWING = {
+            "LongHair", "LongHair2", "Bangs", "LeftSideHair", "RightSideHair",
+            "LongRightHair", "LongRightHair2", "LongLeftHair", "LongLeftHair2",
+            "Tail", "Tail2", "Tail3", "Tail4", "Tail5", "Tail6", "Tail7"};
+
+    /** The reported frame's own regime, and the production step the client runs its solver at. */
+    private static final float OVERRIDE_PITCH_DEGREES = 55.0F;
+    private static final int OVERRIDE_SETTLE_STEPS = 300;
+
+    /** A body that is not turning. */
+    private static final float[] NO_TURN = {0.0F, 0.0F};
+
+    /**
+     * What holding named bones rigid does, measured through the <b>production frame loop</b>.
+     *
+     * <p>The previous round measured the same idea through a re-statement of
+     * {@code resolveSegment} ({@link #settleResting}). This one drives the shipped code itself:
+     * {@link YsmMeshSecondaryMotion#simulate} over a {@link YsmMeshSecondaryMotion.State} built from
+     * this model's own pieces, with {@code state.held} set exactly where
+     * {@code YsmPhysicsOverrides#markHeld} sets it. So the numbers below are the deltas the mesh
+     * would be given, not a second implementation's idea of them.
+     *
+     * <p>Three questions, in the order the brief asks them:
+     *
+     * <ul>
+     *   <li><b>per candidate</b> - the far-side separation from the geometry it rests on, and the
+     *       shift of the end it is held by, with and without the piece held;</li>
+     *   <li><b>downstream</b> - what every <i>other</i> piece of the model does, as the largest
+     *       distance any of its own vertices moves between the two runs. A piece that is a
+     *       descendant of a held piece is expected to differ (it no longer composes under a swinging
+     *       parent); a piece that is not must be bit-identical, or holding one bone would have moved
+     *       another and the whole exercise would be a rebalance rather than a hold;</li>
+     *   <li><b>the other model</b> - {@code EKU(1.0.ysm}, which has no override file: its pieces and
+     *       their deltas must be the ones they are today.</li>
+     * </ul>
+     */
+    @Test
+    void thePerModelOverrideHoldsTheNamedBonesRigid() throws Exception {
+        Path pack = convertedPackRoot();
+        assumeTrue(pack != null, "set -D" + YsmModelPackage.CONFIG_ROOT_PROPERTY
+                + "=<.../config/yes_steve_model> (or " + YsmModelPackage.CONFIG_ROOT_ENV
+                + ") to run this against a real install");
+
+        Rig maid = Rig.load(pack, MAID[1], LOGGED_MAID_SIMULATED);
+        Rig eku = Rig.load(pack, EKU[1], LOGGED_EKU_SIMULATED);
+        float up = maid.pitchSign() > 0.0F ? 1.0F : -1.0F;
+        float degrees = OVERRIDE_PITCH_DEGREES * up;
+
+        StringBuilder report = new StringBuilder();
+        report.append("# The per-model physics override: what holding the named pieces rigid does\n\n")
+                .append("The **production** frame loop (`YsmMeshSecondaryMotion.simulate`, the shipped ")
+                .append("`resolveSegment`) over `").append(maid.modelId).append("`'s own ")
+                .append(maid.segments.size()).append(" simulated pieces, at ")
+                .append(fmt(degrees)).append(" deg of head pitch, ")
+                .append(OVERRIDE_SETTLE_STEPS).append(" steps of ")
+                .append(fmt(DT)).append(" s with no body velocity and no collision - the standing ")
+                .append("case the report is about. `held` is set on the state exactly where ")
+                .append("`YsmPhysicsOverrides#markHeld` sets it, so these are the deltas the mesh ")
+                .append("would receive.\n\n")
+                .append("`far pull` is the largest amount any of the piece's own vertices is moved ")
+                .append("**away** from the cloud it rests on; `held shift` is how far the delta moves ")
+                .append("the vertex it is held by. Both in blocks.\n\n");
+
+        Set<String> shipped = Set.of(OVERRIDE_CANDIDATES);
+        YsmMeshSecondaryMotion.State control = runFrameLoop(maid, degrees, Set.of());
+        YsmMeshSecondaryMotion.State allHeld = runFrameLoop(maid, degrees, shipped);
+
+        // The per-candidate table, each candidate held on its own: what it fixes, and whether
+        // holding it moves anything that is not under it.
+        report.append("## Each candidate held on its own\n\n")
+                .append("| bone | support | support simulated | own swing now | whole swing now | ")
+                .append("far pull now | far pull held | held shift now | held shift held | ")
+                .append("descendants | worst move of a piece NOT under it |\n")
+                .append("|---|---|---|---|---|---|---|---|---|---|---|\n");
+        List<Segment> childrenOfCap = new ArrayList<>();
+        for (String candidate : OVERRIDE_CANDIDATES) {
+            Segment piece = maid.segmentNamed(candidate);
+            assertNotNull(piece, "the brief names '" + candidate
+                    + "' but this model has no such simulated piece");
+            YsmMeshSecondaryMotion.State held = runFrameLoop(maid, degrees, Set.of(candidate));
+            OpenMatrix4f now = control.deltas[piece.index];
+            OpenMatrix4f fixed = held.deltas[piece.index];
+            Vector3f root = maid.rootVertex(piece);
+            float worstOther = 0.0F;
+            String worstOtherName = "none";
+            List<String> descendants = new ArrayList<>();
+            for (Segment other : maid.segments) {
+                if (other.index == piece.index) {
+                    continue;
+                }
+                if (descendsFrom(maid, other.index, Set.of(piece.index))) {
+                    descendants.add(other.name);
+                    continue;
+                }
+                // The two runs' deltas for THAT piece: what holding this one did to it.
+                float moved = maxMove(control.deltas[other.index], held.deltas[other.index],
+                        other.index, maid);
+                if (moved > worstOther) {
+                    worstOther = moved;
+                    worstOtherName = other.name;
+                }
+            }
+            report.append("| `").append(candidate).append("` | `").append(piece.supportName)
+                    .append("` | ").append(piece.supportSimulated ? "yes" : "no")
+                    .append(" | ").append(fmt(control.lastDegrees[piece.index])).append(" deg | ")
+                    .append(fmt(rotationAngleOf(now))).append(" deg | ")
+                    .append(fmt(farPull(now, piece))).append(" | ")
+                    .append(fmt(farPull(fixed, piece))).append(" | ")
+                    .append(fmt(heldShift(now, root))).append(" | ")
+                    .append(fmt(heldShift(fixed, root))).append(" | ")
+                    .append(descendants.isEmpty() ? "none" : String.join(", ", descendants))
+                    .append(" | ").append(fmt(worstOther)).append(" (`").append(worstOtherName)
+                    .append("`) |\n");
+            if ("BaseHair".equals(candidate)) {
+                childrenOfCap.addAll(children(maid, piece));
+            }
+        }
+        report.append("\nThe cap's own children (").append(childrenOfCap.isEmpty() ? "none" : "")
+                .append(childrenOfCap.stream().map(child -> "`" + child.name + "`")
+                        .collect(java.util.stream.Collectors.joining(", ")))
+                .append(childrenOfCap.isEmpty()
+                        ? "): nothing hangs under it, so holding it rigid cannot change any other "
+                                + "piece's swing."
+                        : "): they keep their own swing and compose under the held piece, so they "
+                                + "stay attached and keep moving.")
+                .append("\n\n");
+
+        // Where those three sit among the whole model, which is what makes the list a ranking
+        // rather than a choice: the artifact is a distance in blocks, and every piece has one.
+        List<Segment> ranked = new ArrayList<>(maid.segments);
+        Map<Integer, Float> farOf = new java.util.HashMap<>();
+        for (Segment piece : ranked) {
+            farOf.put(piece.index, farPull(control.deltas[piece.index], piece));
+        }
+        ranked.sort((a, b) -> Float.compare(farOf.get(b.index), farOf.get(a.index)));
+        report.append("## Every simulated piece of the model, ranked by its far-side separation ")
+                .append("(no override)\n\n")
+                .append("`radius` is the piece's own collision radius, blocks - the scale the ")
+                .append("separation is read against. `support` is the first ancestor above it that ")
+                .append("carries geometry, and `support simulated` says whether that support is ")
+                .append("itself a piece the simulation moves: a chain link's support is the link ")
+                .append("above it (the piece is hanging, and its separation from the link above is ")
+                .append("the swing that must keep happening), while a piece whose support is the ")
+                .append("body is **carried**, and its separation is the artifact.\n\n")
+                .append("| rank | bone | joint | support | support simulated | far pull | held shift | own swing | radius |\n")
+                .append("|---|---|---|---|---|---|---|---|---|\n");
+        int rank = 0;
+        for (Segment piece : ranked) {
+            rank++;
+            report.append("| ").append(rank).append(" | `").append(piece.name).append("` | ")
+                    .append(piece.joint).append(" | `").append(piece.supportName).append("` | ")
+                    .append(piece.supportSimulated ? "yes" : "**no**").append(" | ")
+                    .append(fmt(farOf.get(piece.index))).append(" | ")
+                    .append(fmt(heldShift(control.deltas[piece.index], maid.rootVertex(piece))))
+                    .append(" | ").append(fmt(control.lastDegrees[piece.index])).append(" deg | ")
+                    .append(fmt(piece.radius)).append(" |\n");
+        }
+        report.append("\n");
+
+        // The whole shipped list together, and the full per-piece diff: this is the blast radius.
+        report.append("\n## All of them held together (")
+                .append(String.join(", ", OVERRIDE_CANDIDATES)).append(")\n\n")
+                .append("| piece | held | under a held piece | own swing now | own swing held | ")
+                .append("whole swing now | whole swing held | moved by the override |\n")
+                .append("|---|---|---|---|---|---|---|---|\n");
+        Set<Integer> heldIndexes = new java.util.HashSet<>();
+        for (String candidate : OVERRIDE_CANDIDATES) {
+            heldIndexes.add(maid.segmentNamed(candidate).index);
+        }
+        float worstUnrelated = 0.0F;
+        String worstUnrelatedName = "none";
+        int identical = 0;
+        List<String> touched = new ArrayList<>();
+        for (Segment piece : maid.segments) {
+            boolean isHeld = heldIndexes.contains(piece.index);
+            boolean under = !isHeld && descendsFrom(maid, piece.index, heldIndexes);
+            float moved = maxMove(control.deltas[piece.index], allHeld.deltas[piece.index],
+                    piece.index, maid);
+            if (moved <= 1.0E-7F) {
+                identical++;
+            } else {
+                touched.add("`" + piece.name + "` " + fmt6(moved)
+                        + (isHeld ? " (held)" : under ? " (under a held piece)" : ""));
+                if (!isHeld && !under && moved > worstUnrelated) {
+                    worstUnrelated = moved;
+                    worstUnrelatedName = piece.name;
+                }
+            }
+            report.append("| `").append(piece.name).append("` | ").append(isHeld ? "**yes**" : "")
+                    .append(" | ").append(under ? "yes" : "")
+                    .append(" | ").append(fmt(control.lastDegrees[piece.index])).append(" deg")
+                    .append(" | ").append(fmt(allHeld.lastDegrees[piece.index])).append(" deg")
+                    .append(" | ").append(fmt(rotationAngleOf(control.deltas[piece.index])))
+                    .append(" deg | ").append(fmt(rotationAngleOf(allHeld.deltas[piece.index])))
+                    .append(" deg | ").append(fmt6(moved)).append(" |\n");
+        }
+        report.append("\n").append(identical).append(" of ").append(maid.segments.size())
+                .append(" pieces are identical to the digit with the override active. Every piece ")
+                .append("that moved, with the distance any of its own vertices moved (blocks): ")
+                .append(String.join("; ", touched)).append(".\n\n")
+                .append("The pieces that are neither held nor under a held piece are the blast ")
+                .append("radius: the largest move among them is `")
+                .append(worstUnrelatedName).append("` by ").append(fmt6(worstUnrelated))
+                .append(" blocks. What moves them is the knit relaxation, which no longer pulls a ")
+                .append("panel sewn to a held one toward a swing that is not drawn; the whole of ")
+                .append("that effect is a fraction of a millimetre against the ")
+                .append(fmt(farOf.get(maid.segmentNamed("BaseHair").index)))
+                .append(" blocks the override removes.\n\n");
+
+        // The other model: no file for it, so nothing about it may differ - and the resolution is
+        // asserted empty rather than assumed, because "the file is keyed by model id" is the whole
+        // of why one model's override cannot reach another.
+        YsmMeshSecondaryMotion.State ekuControl = runFrameLoop(eku, degrees, Set.of());
+        YsmMeshSecondaryMotion.State ekuAgain = runFrameLoop(eku, degrees, Set.of());
+        float worstEku = 0.0F;
+        String worstEkuName = "none";
+        for (Segment piece : eku.segments) {
+            float moved = maxMove(ekuControl.deltas[piece.index], ekuAgain.deltas[piece.index],
+                    piece.index, eku);
+            if (moved > worstEku) {
+                worstEku = moved;
+                worstEkuName = piece.name;
+            }
+        }
+        report.append("## `").append(eku.modelId).append("`\n\n")
+                .append("Simulated pieces: ").append(eku.segments.size())
+                .append("; the override file resolved for it: ")
+                .append(YsmPhysicsOverrides.rigidBones(eku.modelId).isEmpty()
+                        ? "none (empty set)" : YsmPhysicsOverrides.rigidBones(eku.modelId).toString())
+                .append("; largest move between two runs: ").append(fmt(worstEku))
+                .append(" blocks (`").append(worstEkuName).append("`).\n\n");
+
+        Path out = Paths.get("build", "reports", "ysm-physics-override-bones.md");
+        Files.createDirectories(out.getParent());
+        Files.writeString(out, report.toString(), StandardCharsets.UTF_8);
+        System.out.println(report);
+
+        // ---- the red lines, as assertions -------------------------------------------------
+        // 1. The reported cap: the whole defect, and its exact removal.
+        Segment cap = maid.segmentNamed("BaseHair");
+        OpenMatrix4f capNow = control.deltas[cap.index];
+        OpenMatrix4f capHeld = allHeld.deltas[cap.index];
+        assertTrue(farPull(capNow, cap) > 0.10F,
+                "the cap's far-side separation must be the reported defect before the override");
+        assertTrue(heldShift(capNow, maid.rootVertex(cap)) > 0.05F,
+                "and the end it is held by must slide, which is what the user still sees");
+        assertTrue(isIdentity(capHeld), "held rigid means the identity delta, and nothing else");
+        assertEquals(0.0F, heldShift(capHeld, maid.rootVertex(cap)), 0.0F);
+        assertEquals(0.0F, farPull(capHeld, cap), 0.0F);
+
+        // 2. Everything the brief requires to keep swinging, digit for digit.
+        for (String name : OVERRIDE_MUST_SWING) {
+            Segment piece = maid.segmentNamed(name);
+            if (piece == null) {
+                continue;
+            }
+            assertFalse(descendsFrom(maid, piece.index, heldIndexes),
+                    name + " hangs under a held piece, so its delta is not its own any more");
+            assertEquals(0.0F, maxMove(control.deltas[piece.index], allHeld.deltas[piece.index],
+                            piece.index, maid), 0.0F,
+                    name + " must keep swinging exactly as it does now");
+        }
+        // The blast radius, bounded rather than asserted away: a piece sewn to a held one is no
+        // longer pulled toward a swing that is not drawn, and that coupling is worth a fraction of
+        // a millimetre - measured at 0.000593 blocks on this model, against the 0.119 the override
+        // removes. The bound is a millimetre, so a real leak of the swing into a neighbour fails.
+        assertTrue(worstUnrelated < 0.001F,
+                "an override may not move a piece that is not under it (worst: " + worstUnrelatedName
+                        + " by " + fmt6(worstUnrelated) + " blocks)");
+
+        // 3. The other model, which the brief pins: unaffected, because nothing resolved for it.
+        assertTrue(YsmPhysicsOverrides.rigidBones(eku.modelId).isEmpty(),
+                "no override file exists for " + eku.modelId);
+        assertEquals(0.0F, worstEku, 0.0F,
+                "a model with no override file must behave exactly as it does today");
+        assertEquals(LOGGED_EKU_SIMULATED.split(",").length, eku.segments.size(),
+                "EKU's simulated piece set is its own classification's, and an override cannot "
+                        + "change it: this is the set the client logged for it");
+
+        // 4. The measurement itself, written where the round can quote it.
+        assertTrue(Files.size(out) > 0L);
+        assertEquals("Head", cap.supportName,
+                "the cap is held by the skull itself: that is what 'it rests on' means here");
+        assertFalse(cap.supportSimulated, "and the skull is not a piece the simulation moves");
+
+        // 5. The list is read off that ranking rather than chosen: among the pieces the body
+        //    CARRIES - the ones whose separation from their support is the artifact, as opposed to
+        //    the chain links above them, whose separation from the link above is the swing that must
+        //    keep happening - the reported cap is the worst on the model.
+        Segment worstCarried = null;
+        for (Segment piece : ranked) {
+            if (!piece.supportSimulated && restsOnItsSupport(piece)) {
+                worstCarried = piece;
+                break;
+            }
+        }
+        assertNotNull(worstCarried, "the model must carry at least one piece");
+        assertEquals("BaseHair", worstCarried.name,
+                "the worst body-carried piece of this model is the cap the user reported");
+        assertTrue(farOf.get(worstCarried.index) > 0.10F,
+                "and its separation is over a tenth of a block: " + fmt(farOf.get(worstCarried.index)));
+    }
+
+    // ------------------------------------------------------------------
+    // The production frame loop, driven for the override measurement
+    // ------------------------------------------------------------------
+
+    /** This model's pieces as the production record, from the probe's own reading of the model. */
+    private static YsmPhysicsParts.Model productionModel(Rig rig) {
+        YsmPhysicsParts.Segment[] out = new YsmPhysicsParts.Segment[rig.segments.size()];
+        for (int i = 0; i < out.length; i++) {
+            Segment s = rig.segments.get(i);
+            out[i] = new YsmPhysicsParts.Segment(s.boneIndex, s.name, s.joint, new Vector3f(s.bindPivot),
+                    new Vector3f(s.bindAnchor), new Vector3f(s.bindRest), s.lever, s.radius, s.mass,
+                    (float) YsmPhysicsTuning.DEFAULTS.frequency(),
+                    (float) YsmPhysicsTuning.DEFAULTS.dampingRatio(),
+                    s.maxAngle, s.parent, new int[0], false, new int[0],
+                    YsmPhysicsParts.classifyBone(rig.bones, s.boneIndex));
+        }
+        return new YsmPhysicsParts.Model(out, YsmPhysicsParts.Source.BONE_NAMES, 0);
+    }
+
+    /**
+     * Run the production frame loop over this model's pieces, holding the named bones.
+     *
+     * <p>{@code state.held} is written here the way {@code YsmPhysicsOverrides#markHeld} writes it -
+     * by matching the piece's own bone name - so what is measured is the shipped frame path with the
+     * shipped flag, and not a second composition of the same idea.
+     */
+    private static YsmMeshSecondaryMotion.State runFrameLoop(Rig rig, float degrees, Set<String> held) {
+        YsmPhysicsParts.Model parts = productionModel(rig);
+        YsmMeshSecondaryMotion.State state = new YsmMeshSecondaryMotion.State(
+                parts, null, (float) YsmPhysicsTuning.DEFAULTS.maxAngle);
+        for (int i = 0; i < parts.segments().length; i++) {
+            state.held[i] = held.contains(parts.segments()[i].boneName());
+        }
+        YsmMeshSecondaryMotion.PoseSource pose = new PitchPose(rig, degrees);
+        for (int step = 0; step < OVERRIDE_SETTLE_STEPS; step++) {
+            YsmMeshSecondaryMotion.simulate(state, pose, DT, null, NO_TURN,
+                    YsmDynamicBoneSolver.NO_COLLIDERS);
+        }
+        return state;
+    }
+
+    /** The drawn frame's pose for the override measurement: a pitch about the Head joint. */
+    private static final class PitchPose implements YsmMeshSecondaryMotion.PoseSource {
+        /** {@code toOrigin} is already folded into {@link Rig#deformationFor}, so it is the identity. */
+        private static final OpenMatrix4f TO_ORIGIN = new OpenMatrix4f();
+        private final OpenMatrix4f deformation;
+
+        PitchPose(Rig rig, float degrees) {
+            this.deformation = rig.deformationFor(JointTable.HEAD, degrees);
+        }
+
+        @Override
+        public OpenMatrix4f toOriginOf(int joint) {
+            return TO_ORIGIN;
+        }
+
+        @Override
+        public OpenMatrix4f poseOf(int joint) {
+            return deformation;
+        }
+    }
+
+    /** The pieces that hang, directly or not, under any of these. */
+    private static boolean descendsFrom(Rig rig, int index, Set<Integer> roots) {
+        int guard = 0;
+        for (int at = index; at >= 0 && guard++ <= rig.segments.size(); ) {
+            if (roots.contains(at)) {
+                return at != index;
+            }
+            at = rig.segments.get(at).parent;
+        }
+        return false;
+    }
+
+    /** The pieces whose parent link points at this one. */
+    private static List<Segment> children(Rig rig, Segment parent) {
+        List<Segment> out = new ArrayList<>();
+        for (Segment segment : rig.segments) {
+            if (segment.parent == parent.index) {
+                out.add(segment);
+            }
+        }
+        return out;
+    }
+
+    /** The largest distance any of a piece's own vertices moves between two frames' deltas. */
+    private static float maxMove(OpenMatrix4f before, OpenMatrix4f after, int index, Rig rig) {
+        List<Vector3f> own = rig.vertices.get(rig.segments.get(index).boneIndex);
+        if (own == null || own.isEmpty()) {
+            return 0.0F;
+        }
+        float worst = 0.0F;
+        for (Vector3f vertex : own) {
+            Vector3f a = YsmMeshSecondaryMotion.transformPoint(before, vertex, new Vector3f());
+            Vector3f b = YsmMeshSecondaryMotion.transformPoint(after, vertex, new Vector3f());
+            worst = Math.max(worst, a.distance(b));
+        }
+        return worst;
+    }
+
+    /** How far a rigid delta moves one point. */
+    private static float heldShift(OpenMatrix4f delta, Vector3f vertex) {
+        return YsmMeshSecondaryMotion.transformPoint(delta, vertex, new Vector3f()).distance(vertex);
+    }
+
+    /** The largest distance any of the piece's own vertices gains from the cloud it rests on. */
+    private static float farPull(OpenMatrix4f delta, Segment segment) {
+        if (delta == null || segment.own == null || segment.own.isEmpty()
+                || segment.restsOn == null || segment.restsOn.isEmpty()) {
+            return Float.NaN;
+        }
+        float worst = Float.NEGATIVE_INFINITY;
+        for (Vector3f vertex : segment.own) {
+            float before = nearestDistance(vertex, segment.restsOn);
+            float after = nearestDistance(
+                    YsmMeshSecondaryMotion.transformPoint(delta, vertex, new Vector3f()),
+                    segment.restsOn);
+            worst = Math.max(worst, after - before);
+        }
+        return worst == Float.NEGATIVE_INFINITY ? Float.NaN : worst;
+    }
+
+    /** The rotation angle of a delta, in degrees. */
+    private static float rotationAngleOf(OpenMatrix4f matrix) {
+        float trace = matrix.m00 + matrix.m11 + matrix.m22;
+        float cosine = Math.max(-1.0F, Math.min(1.0F, (trace - 1.0F) * 0.5F));
+        float angle = (float) Math.acos(cosine);
+        return Float.isFinite(angle) ? (float) Math.toDegrees(angle) : 0.0F;
+    }
+
+    /** Blocks to a micrometre, for the numbers whose whole question is "is this exactly zero". */
+    private static String fmt6(float value) {
+        return Float.isFinite(value) ? String.format(Locale.ROOT, "%.6f", value) : "n/a";
+    }
+
+    /** Exactly the identity, entry for entry: "held rigid" is not "nearly held". */
+    private static boolean isIdentity(OpenMatrix4f matrix) {
+        return matrix.m00 == 1.0F && matrix.m11 == 1.0F && matrix.m22 == 1.0F && matrix.m33 == 1.0F
+                && matrix.m01 == 0.0F && matrix.m02 == 0.0F && matrix.m03 == 0.0F
+                && matrix.m10 == 0.0F && matrix.m12 == 0.0F && matrix.m13 == 0.0F
+                && matrix.m20 == 0.0F && matrix.m21 == 0.0F && matrix.m23 == 0.0F
+                && matrix.m30 == 0.0F && matrix.m31 == 0.0F && matrix.m32 == 0.0F;
     }
 
     // ------------------------------------------------------------------
@@ -804,6 +1369,249 @@ class HeadRegionPitchProbeTest {
     }
 
     // ------------------------------------------------------------------
+    // The resting piece: the classification and the three candidate rules
+    // ------------------------------------------------------------------
+
+    /**
+     * The most a resting piece may swing about its anchor under the <b>capped</b> rule, in degrees.
+     *
+     * <p>This is the one number in the round that is chosen rather than measured, and it is only
+     * measured <i>as a candidate</i>: it is not shipped on the strength of this constant. It is set
+     * where {@code 2 r sin(theta/2)} for the reported piece's own radius falls below the mesh's own
+     * resolution: the cap's radius is about 0.25 blocks, and 2 * 0.25 * sin(5 deg) = 0.044 blocks.
+     */
+    private static final float RESTING_SWING_CAP_DEGREES = 10.0F;
+
+    /** The pitches measured here: the reported frame's own regime (53 degrees), not the 15-45 band. */
+    private static final float[] FAILING_PITCH_DEGREES = {50.0F, 55.0F, 60.0F};
+
+    /** Model-space vertical, the frame the deltas act in - production's own direction. */
+    private static final Vector3f DOWN = new Vector3f(0.0F, -1.0F, 0.0F);
+    private static final Vector3f UP = new Vector3f(0.0F, 1.0F, 0.0F);
+
+    /** The names the brief pins: they must keep swinging, whatever the classifier says elsewhere. */
+    private static final String[] MUST_SWING_NAMES = {
+            "LongHair", "LongHair2", "Bangs", "LeftSideHair", "RightSideHair", "LongRightHair",
+            "LongRightHair2", "LongLeftHair", "LongLeftHair2", "Tail", "Tail2", "Tail3", "Tail4",
+            "Tail5", "Tail6", "Tail7"};
+
+    /** One piece's three deltas under one pitch, and what each of them draws. */
+    private static final class RestingRun {
+        float chainUsed;
+        float ownDegrees;
+        float parentSwing;
+        boolean resting;
+        final Matrix4f now = new Matrix4f();
+        final Matrix4f rigid = new Matrix4f();
+        final Matrix4f capped = new Matrix4f();
+        /** The same swing about the piece's bind pivot instead of its anchor: the pre-anchor build. */
+        final Matrix4f pivotHinged = new Matrix4f();
+        float heldNow, heldRigid, heldCapped;
+        float farNow, farRigid, farCapped;
+        float maxNow, maxRigid, maxCapped;
+        float heldPivot, farPivot;
+    }
+
+    /**
+     * Settle one piece (and first its ancestors) under one pitch, and build the three candidate
+     * deltas for it: the shipped one about its measured anchor, the resting-rigid one, and the capped
+     * one. The solver, the allowance and the composition order are the production ones - see
+     * {@link #settle} for the same three steps without the anchor.
+     */
+    private static RestingRun settleResting(Rig rig, Segment segment, float degrees,
+                                            Map<Integer, RestingRun> runs) {
+        RestingRun existing = runs.get(segment.index);
+        if (existing != null) {
+            return existing;
+        }
+        RestingRun run = new RestingRun();
+        runs.put(segment.index, run);
+        Segment parent = segment.parent >= 0 ? rig.segmentByIndex.get(segment.parent) : null;
+        if (parent != null) {
+            // The parent is resolved first: the child's delta is composed under the parent's.
+            settleResting(rig, parent, degrees, runs);
+        }
+        OpenMatrix4f deformation = rig.deformationFor(segment.joint, degrees);
+        Vector3f pivot = YsmMeshSecondaryMotion.transformPoint(deformation, segment.bindPivot,
+                new Vector3f());
+        Vector3f restDir = YsmMeshSecondaryMotion.transformDirection(deformation, segment.bindRest,
+                new Vector3f());
+        if (restDir.lengthSquared() < 1.0E-8F) {
+            run.now.identity();
+            run.rigid.identity();
+            run.capped.identity();
+            return run;
+        }
+        restDir.normalize();
+        Quaternionf pivotDelta = new Quaternionf();
+        YsmMeshSecondaryMotion.pivotDeltaOf(deformation, pivotDelta);
+
+        YsmDynamicBoneSolver.SegmentState state = new YsmDynamicBoneSolver.SegmentState();
+        Quaternionf swing = new Quaternionf();
+        for (int step = 0; step < SETTLE_STEPS; step++) {
+            YsmDynamicBoneSolver.INSTANCE.update(state,
+                    YsmDynamicBoneSolver.GRAVITY,
+                    YsmDynamicBoneSolver.AIR_DRAG,
+                    segment.verticalFollow, DOWN,
+                    pivot, restDir, segment.lever,
+                    (float) YsmPhysicsTuning.DEFAULTS.frequency(),
+                    (float) YsmPhysicsTuning.DEFAULTS.dampingRatio(),
+                    segment.mass, segment.maxAngle,
+                    null, YsmDynamicBoneSolver.NO_COLLIDERS, segment.radius, null,
+                    0.0F, 0.0F, DT, swing, pivotDelta);
+        }
+        float ownAngle = state.lastAngle;
+        float used = parent == null ? 0.0F : runs.get(parent.index).chainUsed;
+        float allowed = YsmPhysicsParts.chainAllowance(segment.maxAngle,
+                YsmPhysicsParts.chainLimitFor(segment.jointsInPiece,
+                        (float) YsmPhysicsTuning.DEFAULTS.maxAngle),
+                used, segment.jointsLeft);
+        if (ownAngle > allowed && ownAngle > 1.0E-4F) {
+            swing.slerp(new Quaternionf(), 1.0F - allowed / ownAngle);
+            ownAngle = allowed;
+        }
+        run.chainUsed = used + Math.max(0.0F, ownAngle);
+        run.ownDegrees = (float) Math.toDegrees(ownAngle);
+        run.resting = restsOnItsSupport(segment);
+
+        Quaternionf bind = new Quaternionf();
+        YsmMeshSecondaryMotion.bindSwingOf(deformation, swing, bind);
+        Matrix4f parentNow = parent == null ? new Matrix4f() : runs.get(parent.index).now;
+        Matrix4f parentRigid = parent == null ? new Matrix4f() : runs.get(parent.index).rigid;
+        Matrix4f parentCapped = parent == null ? new Matrix4f() : runs.get(parent.index).capped;
+        run.parentSwing = (float) Math.toDegrees(rotationAngleOf(parentNow));
+
+        Matrix4f own = new Matrix4f();
+        YsmMeshSecondaryMotion.buildSegmentDelta(segment.bindAnchor, bind, own);
+        run.now.set(parentNow).mul(own);
+        // The same swing about the piece's own bind pivot: what the build before the anchor round
+        // drew, kept here so the round can say what the anchor removed and what it cannot.
+        Matrix4f ownPivot = new Matrix4f();
+        YsmMeshSecondaryMotion.buildSegmentDelta(segment.bindPivot, bind, ownPivot);
+        run.pivotHinged.set(parentNow).mul(ownPivot);
+        // The resting rule: a piece carried by its support follows the pose exactly, so neither its
+        // own swing nor a swinging parent's carry reaches it. Everything else is the shipped delta.
+        if (run.resting) {
+            run.rigid.identity();
+        } else {
+            run.rigid.set(run.now);
+        }
+        Quaternionf cappedBind = new Quaternionf(bind);
+        if (run.ownDegrees > RESTING_SWING_CAP_DEGREES) {
+            cappedBind.slerp(new Quaternionf(), 1.0F - RESTING_SWING_CAP_DEGREES / run.ownDegrees);
+        }
+        Matrix4f ownCapped = new Matrix4f();
+        YsmMeshSecondaryMotion.buildSegmentDelta(segment.bindAnchor, cappedBind, ownCapped);
+        if (run.resting) {
+            Matrix4f parentForCapped = parent == null ? new Matrix4f() : parentCapped;
+            run.capped.set(parentForCapped).mul(ownCapped);
+        } else {
+            run.capped.set(run.now);
+        }
+        measureResting(rig, run, segment);
+        return run;
+    }
+
+    /**
+     * Does this piece rest on its support, structurally?
+     *
+     * <p>One comparison and no constant: the point the piece is <b>held</b> by (the shipped anchor,
+     * the centre of its contact patch with the first ancestor above it that carries geometry) is
+     * below the piece's own centre of mass. Gravity then presses the piece onto that contact - the
+     * piece is <i>carried</i>, and turning it about the contact tips its far edge off. When the
+     * contact is above the centre of mass the piece <i>hangs</i> from it and its own swing is the
+     * pendulum the solver was written for.
+     */
+    private static boolean restsOnItsSupport(Segment segment) {
+        if (segment.restsOn == null || segment.restsOn.isEmpty() || segment.own == null
+                || segment.own.isEmpty()) {
+            return false;
+        }
+        Vector3f centre = Rig.centroid(segment.own);
+        return segment.bindAnchor.y < centre.y;
+    }
+
+    /** What each of the three deltas does to the piece: the slide at the held end, the far pull. */
+    private static void measureResting(Rig rig, RestingRun run, Segment segment) {
+        Vector3f root = rig.rootVertex(segment);
+        run.heldNow = displacementOf(run.now, root);
+        run.heldRigid = displacementOf(run.rigid, root);
+        run.heldCapped = displacementOf(run.capped, root);
+        run.farNow = farPull(run.now, segment.own, segment.restsOn);
+        run.farRigid = farPull(run.rigid, segment.own, segment.restsOn);
+        run.farCapped = farPull(run.capped, segment.own, segment.restsOn);
+        run.maxNow = maxDisplacement(run.now, segment.own);
+        run.maxRigid = maxDisplacement(run.rigid, segment.own);
+        run.maxCapped = maxDisplacement(run.capped, segment.own);
+        run.heldPivot = displacementOf(run.pivotHinged, root);
+        run.farPivot = farPull(run.pivotHinged, segment.own, segment.restsOn);
+    }
+
+    /** How far a rigid delta moves one point. */
+    private static float displacementOf(Matrix4f delta, Vector3f vertex) {
+        Vector3f moved = delta.transformPosition(new Vector3f(vertex));
+        return moved.distance(vertex);
+    }
+
+    /** The largest distance any of the piece's own vertices gains from the cloud it rests on. */
+    private static float farPull(Matrix4f delta, List<Vector3f> own, List<Vector3f> restsOn) {
+        if (own == null || own.isEmpty() || restsOn == null || restsOn.isEmpty()) {
+            return Float.NaN;
+        }
+        float worst = Float.NEGATIVE_INFINITY;
+        for (Vector3f vertex : own) {
+            if (vertex == null || !YsmDynamicBoneSolver.isFinite(vertex)) {
+                continue;
+            }
+            float before = nearestDistance(vertex, restsOn);
+            float after = nearestDistance(delta.transformPosition(new Vector3f(vertex)), restsOn);
+            if (!Float.isFinite(before) || !Float.isFinite(after)) {
+                continue;
+            }
+            worst = Math.max(worst, after - before);
+        }
+        return worst == Float.NEGATIVE_INFINITY ? Float.NaN : worst;
+    }
+
+    /** The largest distance a rigid delta moves any of the piece's own vertices. */
+    private static float maxDisplacement(Matrix4f delta, List<Vector3f> own) {
+        if (own == null || own.isEmpty()) {
+            return Float.NaN;
+        }
+        float worst = 0.0F;
+        for (Vector3f vertex : own) {
+            if (vertex == null || !YsmDynamicBoneSolver.isFinite(vertex)) {
+                continue;
+            }
+            worst = Math.max(worst, displacementOf(delta, vertex));
+        }
+        return worst;
+    }
+
+    /** How far a point is from the nearest vertex of a cloud. */
+    private static float nearestDistance(Vector3f point, List<Vector3f> cloud) {
+        float best = Float.MAX_VALUE;
+        for (Vector3f other : cloud) {
+            if (other == null || !YsmDynamicBoneSolver.isFinite(other)) {
+                continue;
+            }
+            best = Math.min(best, point.distance(other));
+        }
+        return best;
+    }
+
+    /** The angle between two directions, in degrees; 0 when either is degenerate. */
+    private static float angleBetweenDegrees(Vector3f a, Vector3f b) {
+        float lengthA = a.length();
+        float lengthB = b.length();
+        if (!(lengthA > 1.0E-8F) || !(lengthB > 1.0E-8F)) {
+            return 0.0F;
+        }
+        float cosine = Math.max(-1.0F, Math.min(1.0F, a.dot(b) / (lengthA * lengthB)));
+        return (float) Math.toDegrees(Math.acos(cosine));
+    }
+
+    // ------------------------------------------------------------------
     // The model, read from the deployed build's own converted artefacts
     // ------------------------------------------------------------------
 
@@ -824,15 +1632,32 @@ class HeadRegionPitchProbeTest {
         final int jointsInPiece;
         final int jointsLeft;
         final boolean loggedSimulated;
+        /** The piece's own geometry, mesh space - the same list production passes to the anchor. */
+        final List<Vector3f> own;
+        /** What it rests on: the first ancestor above it that carries geometry, or null. */
+        final List<Vector3f> restsOn;
+        /** The shipped hinge: {@code YsmPhysicsParts#contactAnchor(own, restsOn, pivot, lever)}. */
+        final Vector3f bindAnchor;
+        /** The bone the support geometry belongs to, '' when nothing above carries any. */
+        final String supportName;
+        /** Whether that bone is a piece the simulation moves - a chain link's own link above it. */
+        final boolean supportSimulated;
 
         Segment(int index, int boneIndex, String name, int joint, Vector3f bindPivot, Vector3f bindRest,
                 float lever, float radius, float mass, float maxAngle, float verticalFollow, int parent,
-                int jointsInPiece, int jointsLeft, boolean loggedSimulated) {
+                int jointsInPiece, int jointsLeft, boolean loggedSimulated, List<Vector3f> own,
+                List<Vector3f> restsOn, Vector3f bindAnchor, String supportName,
+                boolean supportSimulated) {
             this.index = index;
             this.boneIndex = boneIndex;
             this.name = name;
             this.joint = joint;
             this.bindPivot = bindPivot;
+            this.own = own;
+            this.restsOn = restsOn;
+            this.bindAnchor = bindAnchor;
+            this.supportName = supportName;
+            this.supportSimulated = supportSimulated;
             this.bindRest = bindRest;
             this.lever = lever;
             this.radius = radius;
@@ -1113,6 +1938,21 @@ class HeadRegionPitchProbeTest {
                     root = parentOf[at];
                 }
                 int inPiece = Math.max(1, size[root]);
+                // The shipped hinge, measured the way production measures it: the same call, the same
+                // two clouds, the same bounds (see YsmPhysicsParts#buildSegment lines 1779-1780).
+                List<Vector3f> restsOn = YsmPhysicsParts.restsOnGeometry(bones, bone, vertices);
+                Vector3f bindAnchor = YsmPhysicsParts.contactAnchor(own, restsOn, pivot, lever);
+                // Which bone that support geometry belongs to, and whether that bone is itself one of
+                // the pieces the simulation moves: a chain link's support is the link above it.
+                int supportBone = -1;
+                for (int at = bones[bone].parent, guard = 0;
+                     at >= 0 && guard++ <= bones.length; at = bones[at].parent) {
+                    List<Vector3f> candidate = vertices.get(at);
+                    if (candidate != null && !candidate.isEmpty()) {
+                        supportBone = at;
+                        break;
+                    }
+                }
                 Segment segment = new Segment(i, bone, rt.name, rt.joint, pivot, rest, lever,
                         YsmPhysicsParts.radiusFor(own, pivot, rest),
                         Math.max(0.25F, Math.min(4.0F, own.size() / 64.0F)),
@@ -1121,7 +1961,9 @@ class HeadRegionPitchProbeTest {
                                 (float) YsmPhysicsTuning.DEFAULTS.maxAngleRoot),
                         category.weight * (float) YsmPhysicsTuning.gravityFollowScale(),
                         parent, inPiece, Math.max(1, inPiece - depth[i]),
-                        loggedSimulated.contains(rt.name));
+                        loggedSimulated.contains(rt.name), own, restsOn, bindAnchor,
+                        supportBone < 0 ? "" : bones[supportBone].name,
+                        supportBone >= 0 && segmentOfBone.containsKey(supportBone));
                 segments.add(segment);
                 segmentByIndex.put(i, segment);
                 segmentByBone.put(bone, segment);
@@ -1253,6 +2095,213 @@ class HeadRegionPitchProbeTest {
                 }
             }
             return out;
+        }
+
+        /** The simulated piece of this name, or null when the model has none. */
+        Segment segmentNamed(String name) {
+            for (Segment segment : segments) {
+                if (segment.name.equals(name)) {
+                    return segment;
+                }
+            }
+            return null;
+        }
+
+        /** The three rules' numbers for one piece at one pitch, for the test's own assertions. */
+        RestingRun restingRun(Segment segment, float degrees) {
+            Map<Integer, RestingRun> runs = new LinkedHashMap<>();
+            settleResting(this, segment, degrees, runs);
+            return runs.get(segment.index);
+        }
+
+        /**
+         * The classification table for every simulated piece of this model, and the three candidate
+         * rules at the failing frame's own pitches, both signs.
+         *
+         * <p>See {@link #settleResting} for what the rules are and {@link #restsOnItsSupport} for the
+         * comparison the classification is. Everything here is measured on the deployed build's own
+         * converted artefacts, with the production solver.
+         */
+        String restingReport() {
+            StringBuilder out = new StringBuilder();
+            out.append("## What each piece contacts, and which way gravity presses it\n\n")
+                    .append("`anchor` is the shipped hinge's distance from the bind pivot, blocks; ")
+                    .append("`gap` is the nearest approach of the piece's own geometry to the first ")
+                    .append("ancestor above it that carries any; `patch` is how many of its own ")
+                    .append("vertices lie within `CONTACT_PATCH_TOLERANCE` of that approach; `press` ")
+                    .append("is the angle between the model's own downward direction and the line from ")
+                    .append("the piece's centre of mass to that hinge - **0 is a piece resting on its ")
+                    .append("support, 180 a piece hanging from it**, and the rule this round measures ")
+                    .append("is the sign of it (`press` under 90). `below` is the share of the ")
+                    .append("piece's own vertices under the hinge; `normal` is the angle between the ")
+                    .append("support's outward normal at the contact and the world's up. `support` is ")
+                    .append("the bone that geometry belongs to, and `simulated` whether that bone is ")
+                    .append("itself one of the pieces the simulation moves - **a chain link's support ")
+                    .append("is the link above it, while a piece carried by the body rests on a bone ")
+                    .append("the simulation does not move**.\n\n")
+                    .append("| bone | joint | anchor | gap | patch | press | below | normal | support | simulated | verdict |\n")
+                    .append("|---|---|---|---|---|---|---|---|---|---|---|\n");
+            int resting = 0;
+            int hanging = 0;
+            int noSupport = 0;
+            for (Segment segment : segments) {
+                Vector3f centre = centroid(segment.own);
+                Vector3f toAnchor = new Vector3f(segment.bindAnchor).sub(centre);
+                float gap = Float.MAX_VALUE;
+                if (segment.restsOn != null && segment.own != null) {
+                    for (Vector3f vertex : segment.own) {
+                        gap = Math.min(gap, nearestDistance(vertex, segment.restsOn));
+                    }
+                }
+                boolean hasSupport = Float.isFinite(gap) && gap != Float.MAX_VALUE;
+                int patch = 0;
+                int below = 0;
+                if (hasSupport) {
+                    for (Vector3f vertex : segment.own) {
+                        if (nearestDistance(vertex, segment.restsOn)
+                                <= gap + YsmPhysicsParts.CONTACT_PATCH_TOLERANCE) {
+                            patch++;
+                        }
+                        if (vertex.y <= segment.bindAnchor.y) {
+                            below++;
+                        }
+                    }
+                }
+                float normal = Float.NaN;
+                if (hasSupport) {
+                    Vector3f nearestRest = null;
+                    float best = Float.MAX_VALUE;
+                    for (Vector3f other : segment.restsOn) {
+                        float distance = segment.bindAnchor.distance(other);
+                        if (distance < best) {
+                            best = distance;
+                            nearestRest = other;
+                        }
+                    }
+                    if (nearestRest != null) {
+                        normal = angleBetweenDegrees(new Vector3f(segment.bindAnchor).sub(nearestRest),
+                                UP);
+                    }
+                }
+                boolean isResting = restsOnItsSupport(segment);
+                if (!hasSupport) {
+                    noSupport++;
+                } else if (isResting) {
+                    resting++;
+                } else {
+                    hanging++;
+                }
+                out.append("| `").append(segment.name).append("` | ").append(segment.joint)
+                        .append(" | ").append(fmt(segment.bindAnchor.distance(segment.bindPivot)))
+                        .append(" | ").append(hasSupport ? fmt(gap) : "none")
+                        .append(" | ").append(hasSupport ? Integer.toString(patch) : "-")
+                        .append(" | ").append(hasSupport ? fmt(angleBetweenDegrees(toAnchor, DOWN)) : "-")
+                        .append(" | ").append(hasSupport && segment.own != null
+                                ? fmt((float) below / Math.max(1, segment.own.size())) : "-")
+                        .append(" | ").append(Float.isFinite(normal) ? fmt(normal) : "-")
+                        .append(" | `").append(segment.supportName.isEmpty() ? "-" : segment.supportName)
+                        .append("` | ").append(segment.supportName.isEmpty() ? "-"
+                                : (segment.supportSimulated ? "yes" : "no"))
+                        .append(" | ").append(!hasSupport ? "no support"
+                                : (isResting ? "**resting**" : "hanging"))
+                        .append(" |\n");
+            }
+            out.append("\n").append(resting).append(" resting, ").append(hanging).append(" hanging, ")
+                    .append(noSupport).append(" with no geometry above them, of ")
+                    .append(segments.size()).append(" simulated piece(s) on `").append(modelId)
+                    .append("`.\n\n");
+
+            float perDegree = pitchSign();
+            for (float degrees : FAILING_PITCH_DEGREES) {
+                out.append(pitchRestingSection(degrees * (perDegree > 0.0F ? 1.0F : -1.0F), "look up"));
+                out.append(pitchRestingSection(-degrees * (perDegree > 0.0F ? 1.0F : -1.0F), "look down"));
+            }
+            return out.toString();
+        }
+
+        /** One pitch, one sign: every simulated piece of the model under the three rules. */
+        private String pitchRestingSection(float degrees, String label) {
+            Map<Integer, RestingRun> runs = new LinkedHashMap<>();
+            for (Segment segment : segments) {
+                settleResting(this, segment, degrees, runs);
+            }
+            StringBuilder out = new StringBuilder();
+            out.append("### ").append(label).append(" ").append(fmt(degrees)).append(" deg\n\n")
+                    .append("`own swing` is the solver's settled angle for the piece and `parent ")
+                    .append("swing` the composed turn its parent's delta already applies to it. Each ")
+                    .append("rule then reports, in blocks, the **held shift** (how far the delta moves ")
+                    .append("the vertex the piece is held by, i.e. the slide) and the **far pull** (the ")
+                    .append("most any of its own vertices is moved away from the geometry it rests ")
+                    .append("on, i.e. the lift-off), and `max` the largest displacement of any vertex.\n\n")
+                    .append("| bone | resting | own swing | parent swing | now held | now far | now max "
+                            + "| rigid held | rigid far | rigid max | capped held | capped far | capped max |\n")
+                    .append("|---|---|---|---|---|---|---|---|---|---|---|---|---|\n");
+            for (Segment segment : segments) {
+                RestingRun run = runs.get(segment.index);
+                if (run == null) {
+                    continue;
+                }
+                out.append("| `").append(segment.name).append("` | ")
+                        .append(run.resting ? "**yes**" : "no")
+                        .append(" | ").append(fmt(run.ownDegrees))
+                        .append(" | ").append(fmt(run.parentSwing))
+                        .append(" | ").append(fmt(run.heldNow)).append(" | ").append(fmt(run.farNow))
+                        .append(" | ").append(fmt(run.maxNow))
+                        .append(" | ").append(fmt(run.heldRigid)).append(" | ").append(fmt(run.farRigid))
+                        .append(" | ").append(fmt(run.maxRigid))
+                        .append(" | ").append(fmt(run.heldCapped)).append(" | ").append(fmt(run.farCapped))
+                        .append(" | ").append(fmt(run.maxCapped))
+                        .append(" |\n");
+            }
+            Segment cap = segmentNamed("BaseHair");
+            RestingRun capRun = cap == null ? null : runs.get(cap.index);
+            if (capRun != null) {
+                out.append("\nThe cap (`BaseHair`) at this pitch: own swing ").append(fmt(capRun.ownDegrees))
+                        .append(" deg; held shift ").append(fmt(capRun.heldNow))
+                        .append(" and far pull ").append(fmt(capRun.farNow)).append(" now, ")
+                        .append(fmt(capRun.heldRigid)).append(" / ").append(fmt(capRun.farRigid))
+                        .append(" rigid, ").append(fmt(capRun.heldCapped)).append(" / ")
+                        .append(fmt(capRun.farCapped)).append(" capped at ")
+                        .append(fmt(RESTING_SWING_CAP_DEGREES)).append(" deg; with the same swing about ")
+                        .append("its own pivot instead (the build before the anchor round): held shift ")
+                        .append(fmt(capRun.heldPivot)).append(", far pull ").append(fmt(capRun.farPivot))
+                        .append(".\n\n");
+            }
+            List<String> wouldStop = new ArrayList<>();
+            List<String> wouldStopOnBody = new ArrayList<>();
+            List<String> mustSwingResting = new ArrayList<>();
+            List<String> mustSwingOnBody = new ArrayList<>();
+            for (Segment segment : segments) {
+                RestingRun run = runs.get(segment.index);
+                if (run == null || !run.resting) {
+                    continue;
+                }
+                if (run.ownDegrees > 1.0F) {
+                    wouldStop.add(segment.name + " (" + fmt(run.ownDegrees) + " deg)");
+                    if (!segment.supportSimulated) {
+                        wouldStopOnBody.add(segment.name + " (" + fmt(run.ownDegrees) + " deg)");
+                    }
+                }
+                for (String must : MUST_SWING_NAMES) {
+                    if (segment.name.equals(must)) {
+                        mustSwingResting.add(must);
+                        if (!segment.supportSimulated) {
+                            mustSwingOnBody.add(must);
+                        }
+                    }
+                }
+            }
+            out.append("resting pieces that would stop swinging: ").append(wouldStop.size())
+                    .append(wouldStop.isEmpty() ? "" : " " + wouldStop)
+                    .append("; of the pieces the brief names as must-keep-swinging, ")
+                    .append(mustSwingResting.size()).append(" are classified resting")
+                    .append(mustSwingResting.isEmpty() ? "" : " " + mustSwingResting)
+                    .append(". Narrowed to pieces resting on a bone the simulation does not move: ")
+                    .append(wouldStopOnBody.size()).append(wouldStopOnBody.isEmpty() ? ""
+                            : " " + wouldStopOnBody)
+                    .append(" would stop, of which must-keep-swinging: ").append(mustSwingOnBody.size())
+                    .append(mustSwingOnBody.isEmpty() ? "" : " " + mustSwingOnBody).append(".\n\n");
+            return out.toString();
         }
 
         /**

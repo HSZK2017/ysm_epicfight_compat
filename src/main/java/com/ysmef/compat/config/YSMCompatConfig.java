@@ -73,7 +73,11 @@ public class YSMCompatConfig {
      * swing are found by reading the model's bone names, so a model that names its
      * hair unconventionally either gets no motion or gets motion on the wrong bone, and
      * the only way to judge the result is to look at it. A per-model override is the
-     * intended answer for the second case.
+     * intended answer for the second case:
+     * {@code config/ysm_epicfight_compat/physics_overrides/<model>.json}, holding
+     * {@code {"rigid": ["BaseHair"]}} - the bones of that one model that must keep following
+     * their joint instead of swinging. Nothing is shipped for any model; with no file
+     * present not one number of any model's motion changes. See {@code YsmPhysicsOverrides}.
      *
      * <p>Cost is one damped-spring step per chain per full evaluation, plus one
      * identity check per bone on the compose path; the chain classification itself runs
@@ -171,6 +175,13 @@ public class YSMCompatConfig {
                         "with a log line rather than silently freezing the model. Only a model that declares nothing",
                         "usable falls back to classifying bone names, which is where a wrong bone can still be picked -",
                         "judge such a model by looking.",
+                        "A bone that is not a hanging piece at all - a hair cap sitting on the skull, a piece the body",
+                        "under it carries - can be held rigid instead of swinging, per model, by writing",
+                        "config/ysm_epicfight_compat/physics_overrides/<model>.json with {\"rigid\": [\"Bone\", ...]}.",
+                        "Held bones follow their joint exactly (measured on the reported cap: 0.120 blocks of far-side",
+                        "separation down to 0.000) and every other piece of the model keeps the swing it has now.",
+                        "Nothing is shipped for any model, and with no such file every model behaves exactly as it does",
+                        "without this option's help.",
                         "Every bone of a piece is integrated as a pendulum about its own pivot with a moment arm, mass,",
                         "gravity, the author's spring, air drag and collision against the model's own body volumes, so a",
                         "piece curls and drapes instead of rotating as one rigid card. The author's physics animation is",

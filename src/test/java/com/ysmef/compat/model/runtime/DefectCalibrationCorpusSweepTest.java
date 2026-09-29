@@ -2022,6 +2022,237 @@ class DefectCalibrationCorpusSweepTest {
         return acc.div(vertices.size());
     }
 
+    /**
+     * How many pieces the re-anchoring moves, over the corpus: the blast radius of the hinge change.
+     *
+     * <p>Production computes the hinge only for the bones it will actually simulate - a dropped piece has
+     * no delta and cannot slide - so the sweep counts the same set: the classifier's own segments. For
+     * every one of them it measures the distance from its bind pivot to the point
+     * {@code YsmPhysicsParts#contactAnchor} returns, which is exactly how far that piece's drawn swing is
+     * moved, and reports the distribution, the models affected and how many of them are the cap's shape
+     * (a pivot inside the piece's own geometry).
+     *
+     * <p>It also measures the one thing a hinge change could get wrong beyond a distance: whether the
+     * segment set itself changes. It cannot - selection runs before the anchor is measured and nothing
+     * here is an input to it - and the report prints the count so a reader has the number rather than the
+     * argument.
+     */
+    @Test
+    void theReAnchoringOverTheCorpus() throws Exception {
+        String root = System.getenv("YSMEF_YSM_CORPUS_ROOT");
+        assumeTrue(root != null && !root.isEmpty(), "set YSMEF_YSM_CORPUS_ROOT to sweep the model corpus");
+        List<Path> files = new ArrayList<>();
+        try (Stream<Path> walk = Files.walk(Paths.get(root))) {
+            walk.filter(Files::isRegularFile)
+                    .filter(p -> p.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".ysm"))
+                    .forEach(files::add);
+        }
+        files.sort(Comparator.comparing(Path::toString));
+
+        double[] bandEdges = {0.0, 0.005, 0.01, 0.02, 0.05, 0.10, 0.20, 0.50, Double.MAX_VALUE};
+        long[] bands = new long[bandEdges.length];
+        long parsed = 0;
+        long skipped = 0;
+        long candidates = 0;
+        long segments = 0;
+        long distinctSegments = 0;
+        long moved = 0;
+        long movedPivotInside = 0;
+        long restsOnNothing = 0;
+        long overLever = 0;
+        double worst = 0.0D;
+        String worstRow = "none";
+        double total = 0.0D;
+        Set<String> movedModels = new java.util.LinkedHashSet<>();
+        Set<String> parsedModels = new java.util.LinkedHashSet<>();
+        List<String> rows = new ArrayList<>();
+
+        for (Path file : files) {
+            String modelName = file.getFileName().toString();
+            YSMGeoModel model;
+            float scaleW;
+            float scaleH;
+            try {
+                YsmBinaryReader.BinaryModel binary = YsmBinaryReader.read(
+                        YsmFileCrypto.decryptYsmFile(Files.readAllBytes(file)));
+                model = YSMGeoModel.fromBinary(binary);
+                scaleW = binary.widthScale;
+                scaleH = binary.heightScale;
+            } catch (Throwable t) {
+                skipped++;
+                continue;
+            }
+            parsed++;
+            parsedModels.add(modelName);
+            if (parsed % 100 == 0) {
+                System.out.println("[anchor sweep] parsed=" + parsed + " segments=" + segments
+                        + " moved=" + moved);
+            }
+            List<YSMGeoModel.Bone> bones = new ArrayList<>(model.bonesByName.values());
+            Map<String, Matrix4f> worlds = new HashMap<>();
+            Map<String, List<Vector3f>> baked = new LinkedHashMap<>();
+            for (YSMGeoModel.Bone bone : bones) {
+                if (bone.quads.isEmpty()) {
+                    continue;
+                }
+                List<Vector3f> vertices = new ArrayList<>(bone.quads.size() * 4);
+                Matrix4f world = worldOf(bone, worlds, 0);
+                for (YSMGeoModel.Quad quad : bone.quads) {
+                    for (Vector3f corner : quad.positions) {
+                        if (corner == null) {
+                            continue;
+                        }
+                        Vector3f p = new Vector3f(corner).mulPosition(world);
+                        vertices.add(new Vector3f(p.x * scaleW, p.y * scaleH, p.z * scaleW));
+                    }
+                }
+                baked.put(bone.name, vertices);
+            }
+            Map<String, Integer> boneIndexByName = new HashMap<>();
+            for (int i = 0; i < bones.size(); i++) {
+                boneIndexByName.put(bones.get(i).name, i);
+            }
+            YSMRuntimeModel.BoneRt[] bonesRt = new YSMRuntimeModel.BoneRt[bones.size()];
+            Map<Integer, float[]> geometryByBone = new HashMap<>();
+            Map<Integer, int[]> partsByBone = new HashMap<>();
+            Map<Integer, List<Vector3f>> verticesByBoneIndex = new HashMap<>();
+            for (int i = 0; i < bones.size(); i++) {
+                YSMGeoModel.Bone bone = bones.get(i);
+                YSMRuntimeModel.BoneRt rt = new YSMRuntimeModel.BoneRt();
+                rt.name = bone.name;
+                rt.parent = bone.parent == null ? -1 : boneIndexByName.getOrDefault(bone.parent.name, -1);
+                rt.joint = YSMJointMapper.resolveJointId(bone, model);
+                rt.mapped = YSMJointMapper.isDirectlyMapped(bone);
+                bonesRt[i] = rt;
+                List<Vector3f> vertices = baked.get(bone.name);
+                if (vertices != null && !vertices.isEmpty()) {
+                    Vector3f centre = centroidOf(vertices);
+                    geometryByBone.put(i, new float[]{centre.x, centre.y, centre.z, vertices.size()});
+                    partsByBone.put(i, new int[]{0});
+                    verticesByBoneIndex.put(i, vertices);
+                }
+            }
+            java.util.function.IntPredicate ownsGeometry =
+                    index -> YsmPhysicsParts.ownsItsGeometry(index, geometryByBone, partsByBone);
+            Set<Integer> classified = new java.util.HashSet<>(YsmPhysicsParts.selectBones(
+                    bonesRt, ownsGeometry, YsmPhysicsTuning.maxChains(), new int[1]));
+            distinctSegments += classified.size();
+
+            for (int boneIdx = 0; boneIdx < bones.size(); boneIdx++) {
+                if (!classified.contains(boneIdx)) {
+                    continue;
+                }
+                YSMGeoModel.Bone bone = bones.get(boneIdx);
+                List<Vector3f> vertices = baked.get(bone.name);
+                if (vertices == null || vertices.size() < 4) {
+                    continue;
+                }
+                Vector3f pivot = pivotOf(bone, worlds, scaleW, scaleH);
+                if (pivot == null) {
+                    continue;
+                }
+                Vector3f centroid = centroidOf(vertices);
+                float lever = centroid == null ? 0.0F : new Vector3f(centroid).sub(pivot).length();
+                Vector3f rest = centroid == null ? null : new Vector3f(centroid).sub(pivot);
+                // The same drops production applies before a piece ever gets a delta: a dropped piece
+                // cannot slide, so counting it would overstate what this change reaches.
+                if (rest == null || lever < 0.01F || YsmPhysicsParts.wrapsPivot(vertices, pivot)
+                        || YsmPhysicsParts.risesOffPivot(vertices, pivot, rest, lever)
+                        || YsmPhysicsParts.poseBelongsToEpicFight(bonesRt[boneIdx])) {
+                    continue;
+                }
+                segments++;
+                List<Vector3f> restsOn = YsmPhysicsParts.restsOnGeometry(bonesRt, boneIdx,
+                        verticesByBoneIndex);
+                if (restsOn == null) {
+                    restsOnNothing++;
+                }
+                Vector3f anchor = YsmPhysicsParts.contactAnchor(vertices, restsOn, pivot, lever);
+                double distance = anchor.distance(pivot);
+                if (distance > lever + 1.0E-4D) {
+                    overLever++;
+                }
+                candidates++;
+                total += distance;
+                int band = bandEdges.length - 1;
+                for (int i = 0; i < bandEdges.length; i++) {
+                    if (distance <= bandEdges[i]) {
+                        band = i;
+                        break;
+                    }
+                }
+                bands[band]++;
+                if (distance > 0.001D) {
+                    moved++;
+                    movedModels.add(modelName);
+                    if (pivotInsideOwnBox(vertices, pivot)) {
+                        movedPivotInside++;
+                    }
+                    if (distance > worst) {
+                        worst = distance;
+                        worstRow = modelName + "  " + bone.name
+                                + String.format(Locale.ROOT, "  moved %.3f  lever-ish pivotInside %s",
+                                distance, pivotInsideOwnBox(vertices, pivot));
+                    }
+                    if (rows.size() < 60) {
+                        rows.add(String.format(Locale.ROOT, "| `%s` | `%s` | %.3f | %.3f | %s |",
+                                modelName, bone.name, distance, anchor.distance(pivot),
+                                pivotInsideOwnBox(vertices, pivot) ? "yes" : "no"));
+                    }
+                }
+            }
+        }
+
+        StringBuilder report = new StringBuilder();
+        report.append("# The hinge re-anchoring over the corpus\n\n")
+                .append("For every bone the production classifier would simulate (the same loader, the ")
+                .append("same candidate filter and the same `selectBones` call as the other sweeps in ")
+                .append("this class), the distance from its bind pivot to the hinge ")
+                .append("`YsmPhysicsParts#contactAnchor` returns: the centre of its contact patch with ")
+                .append("the first ancestor above it that carries geometry. **That distance is how far ")
+                .append("the piece's drawn swing is moved** - it is the translation the change adds or ")
+                .append("removes, in blocks.\n\n")
+                .append("```\nparsed=").append(parsed).append(" skipped=").append(skipped)
+                .append(" | classifier segments=").append(distinctSegments)
+                .append(" | simulated after the shipped drops=").append(segments)
+                .append(" | moved (>1 mm)=").append(moved)
+                .append(" in ").append(movedModels.size()).append(" of ").append(parsedModels.size())
+                .append(" models\n```\n\n")
+                .append("| hinge moved (blocks) | pieces |\n|---|---|\n");
+        for (int i = 0; i < bandEdges.length; i++) {
+            String label = i == 0 ? "0 (pivot is already the hinge)"
+                    : bandEdges[i] == Double.MAX_VALUE ? "> 0.50"
+                    : "<= " + String.format(Locale.ROOT, "%.3f", bandEdges[i]);
+            report.append("| ").append(label).append(" | ").append(bands[i]).append(" |\n");
+        }
+        report.append("\nMean distance over the segments: ")
+                .append(String.format(Locale.ROOT, "%.4f", candidates == 0 ? 0.0 : total / candidates))
+                .append(" blocks. Worst: ").append(String.format(Locale.ROOT, "%.3f", worst))
+                .append(" (`").append(worstRow).append("`). Of the moved pieces, ")
+                .append(movedPivotInside).append(" have their pivot inside their own geometry - the ")
+                .append("cap's shape, and the shape a rotation about the pivot slides. ")
+                .append(restsOnNothing).append(" of ").append(segments)
+                .append(" segments rest on nothing with geometry and keep their pivot exactly. ")
+                .append(overLever).append(" hinges ended further from the pivot than the piece's own ")
+                .append("lever, which the bound makes impossible and is therefore a defect in this ")
+                .append("count rather than a reading.\n\n")
+                .append("No piece is dropped or added by this change: the anchor is measured after the ")
+                .append("selection, is not an input to it, and the classifier's own output is the ")
+                .append("`classifier segments` count above. The one thing the change moves is where each ")
+                .append("of these pieces turns.\n\n")
+                .append("| model | piece | hinge moved | pivot inside own geometry |\n")
+                .append("|---|---|---|---|\n");
+        for (String row : rows) {
+            report.append(row).append('\n');
+        }
+        report.append("\n(first ").append(rows.size()).append(" moved pieces; the full set is counted ")
+                .append("in the bands above)\n");
+        write("ysm-anchor-corpus.md", report.toString());
+
+        assertTrue(candidates > 1000, "the sweep must see the corpus, saw " + candidates + " segments");
+        assertTrue(moved > 0, "no piece in the corpus has a hinge off its pivot, which cannot be true");
+    }
+
     private static Vector3f midpoint(Vector3f a, Vector3f b) {
         if (a == null) {
             return b == null ? null : new Vector3f(b);
@@ -2038,5 +2269,427 @@ class DefectCalibrationCorpusSweepTest {
 
     private static String fmt(Vector3f v) {
         return v == null ? "-" : String.format(Locale.ROOT, "(%.3f,%.3f,%.3f)", v.x, v.y, v.z);
+    }
+
+    // ------------------------------------------------------------------
+    // The resting piece: how many pieces are carried by their support, and whether any
+    // structural rule separates them from the pieces that hang
+    // ------------------------------------------------------------------
+
+    /** Model-space vertical, the frame the deltas act in. */
+    private static final Vector3f CORPUS_DOWN = new Vector3f(0.0F, -1.0F, 0.0F);
+    private static final Vector3f CORPUS_UP = new Vector3f(0.0F, 1.0F, 0.0F);
+
+    /**
+     * How many simulated pieces of the corpus are <b>carried</b> by the geometry they touch rather
+     * than hanging from it, and - the question that decides whether anything can ship - whether any
+     * <b>structural</b> rule separates the two.
+     *
+     * <p>Four candidate separators are measured on every piece the production classifier would
+     * simulate, all of them from the model's own geometry and none of them tuned on a named model:
+     *
+     * <ul>
+     *   <li><b>sign</b> - the shipped contact anchor is below the piece's own centre of mass
+     *       ({@code press < 90 deg}): gravity presses it onto the contact;</li>
+     *   <li><b>normal</b> - the support's outward normal at the contact faces up
+     *       ({@code < 45 deg}): the piece is sitting on top of something;</li>
+     *   <li><b>mostly above</b> - fewer than half of the piece's own vertices are under the anchor,
+     *       i.e. the piece's mass lies over the contact;</li>
+     *   <li><b>touching</b> - the piece's nearest approach to its support is inside
+     *       {@code CONTACT_PATCH_TOLERANCE}, i.e. it is in contact at all.</li>
+     * </ul>
+     *
+     * <p>The report prints the distributions, how far the four agree, how many pieces sit within ten
+     * degrees of the sign rule's own knife edge, and - for each model - how many pieces each rule
+     * would stop swinging, split by whether the piece is a <b>chain member</b> (a piece that hangs off
+     * another simulated piece: a hair tip or a tail link, the pieces whose swing a viewer watches) and
+     * by whether it is the cap's own shape (a pivot inside the piece's own geometry).
+     */
+    @Test
+    void theRestingPiecesOverTheCorpus() throws Exception {
+        String root = System.getenv("YSMEF_YSM_CORPUS_ROOT");
+        assumeTrue(root != null && !root.isEmpty(), "set YSMEF_YSM_CORPUS_ROOT to sweep the model corpus");
+        List<Path> files = new ArrayList<>();
+        try (Stream<Path> walk = Files.walk(Paths.get(root))) {
+            walk.filter(Files::isRegularFile)
+                    .filter(p -> p.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".ysm"))
+                    .forEach(files::add);
+        }
+        files.sort(Comparator.comparing(Path::toString));
+
+        long parsed = 0;
+        long skipped = 0;
+        long segments = 0;
+        long noSupport = 0;
+        long withSupport = 0;
+        long touching = 0;
+        long restingSign = 0;
+        long restingNormal = 0;
+        long restingMostlyAbove = 0;
+        long ambiguous = 0;
+        long restingChainMembers = 0;
+        long restingCapLike = 0;
+        long restingBodySupport = 0;
+        long restingBodyCapLike = 0;
+        Set<String> restingBodyModels = new java.util.LinkedHashSet<>();
+        List<String> bodyRows = new ArrayList<>();
+        long signAgreesNormal = 0;
+        long signAgreesAbove = 0;
+        long signAgreesTouching = 0;
+        long allFourAgree = 0;
+        long[] pressBins = new long[13];
+        Set<String> models = new java.util.LinkedHashSet<>();
+        Set<String> restingModels = new java.util.LinkedHashSet<>();
+        List<String> frozenRows = new ArrayList<>();
+        List<String> highlight = new ArrayList<>();
+
+        for (Path file : files) {
+            String modelName = file.getFileName().toString();
+            YSMGeoModel model;
+            float scaleW;
+            float scaleH;
+            try {
+                YsmBinaryReader.BinaryModel binary = YsmBinaryReader.read(
+                        YsmFileCrypto.decryptYsmFile(Files.readAllBytes(file)));
+                model = YSMGeoModel.fromBinary(binary);
+                scaleW = binary.widthScale;
+                scaleH = binary.heightScale;
+            } catch (Throwable t) {
+                skipped++;
+                continue;
+            }
+            parsed++;
+            models.add(modelName);
+            if (parsed % 100 == 0) {
+                System.out.println("[resting sweep] parsed=" + parsed + " segments=" + segments
+                        + " resting=" + restingSign);
+            }
+            List<YSMGeoModel.Bone> bones = new ArrayList<>(model.bonesByName.values());
+            Map<String, Matrix4f> worlds = new HashMap<>();
+            Map<String, List<Vector3f>> baked = new LinkedHashMap<>();
+            for (YSMGeoModel.Bone bone : bones) {
+                if (bone.quads.isEmpty()) {
+                    continue;
+                }
+                List<Vector3f> vertices = new ArrayList<>(bone.quads.size() * 4);
+                Matrix4f world = worldOf(bone, worlds, 0);
+                for (YSMGeoModel.Quad quad : bone.quads) {
+                    for (Vector3f corner : quad.positions) {
+                        if (corner == null) {
+                            continue;
+                        }
+                        Vector3f p = new Vector3f(corner).mulPosition(world);
+                        vertices.add(new Vector3f(p.x * scaleW, p.y * scaleH, p.z * scaleW));
+                    }
+                }
+                baked.put(bone.name, vertices);
+            }
+            Map<String, Integer> boneIndexByName = new HashMap<>();
+            for (int i = 0; i < bones.size(); i++) {
+                boneIndexByName.put(bones.get(i).name, i);
+            }
+            YSMRuntimeModel.BoneRt[] bonesRt = new YSMRuntimeModel.BoneRt[bones.size()];
+            Map<Integer, float[]> geometryByBone = new HashMap<>();
+            Map<Integer, int[]> partsByBone = new HashMap<>();
+            Map<Integer, List<Vector3f>> verticesByBoneIndex = new HashMap<>();
+            for (int i = 0; i < bones.size(); i++) {
+                YSMGeoModel.Bone bone = bones.get(i);
+                YSMRuntimeModel.BoneRt rt = new YSMRuntimeModel.BoneRt();
+                rt.name = bone.name;
+                rt.parent = bone.parent == null ? -1 : boneIndexByName.getOrDefault(bone.parent.name, -1);
+                rt.joint = YSMJointMapper.resolveJointId(bone, model);
+                rt.mapped = YSMJointMapper.isDirectlyMapped(bone);
+                bonesRt[i] = rt;
+                List<Vector3f> vertices = baked.get(bone.name);
+                if (vertices != null && !vertices.isEmpty()) {
+                    Vector3f centre = centroidOf(vertices);
+                    geometryByBone.put(i, new float[]{centre.x, centre.y, centre.z, vertices.size()});
+                    partsByBone.put(i, new int[]{0});
+                    verticesByBoneIndex.put(i, vertices);
+                }
+            }
+            java.util.function.IntPredicate ownsGeometry =
+                    index -> YsmPhysicsParts.ownsItsGeometry(index, geometryByBone, partsByBone);
+            Set<Integer> classified = new java.util.HashSet<>(YsmPhysicsParts.selectBones(
+                    bonesRt, ownsGeometry, YsmPhysicsTuning.maxChains(), new int[1]));
+
+            long modelResting = 0;
+            long modelDropped = 0;
+            List<String> modelFrozen = new ArrayList<>();
+            for (int boneIdx = 0; boneIdx < bones.size(); boneIdx++) {
+                if (!classified.contains(boneIdx)) {
+                    continue;
+                }
+                YSMGeoModel.Bone bone = bones.get(boneIdx);
+                List<Vector3f> vertices = baked.get(bone.name);
+                if (vertices == null || vertices.size() < 4) {
+                    continue;
+                }
+                Vector3f pivot = pivotOf(bone, worlds, scaleW, scaleH);
+                if (pivot == null) {
+                    continue;
+                }
+                Vector3f centroid = centroidOf(vertices);
+                float lever = centroid == null ? 0.0F : new Vector3f(centroid).sub(pivot).length();
+                Vector3f rest = centroid == null ? null : new Vector3f(centroid).sub(pivot);
+                if (rest == null || lever < 0.01F || YsmPhysicsParts.wrapsPivot(vertices, pivot)
+                        || YsmPhysicsParts.risesOffPivot(vertices, pivot, rest, lever)
+                        || YsmPhysicsParts.poseBelongsToEpicFight(bonesRt[boneIdx])) {
+                    modelDropped++;
+                    continue;
+                }
+                segments++;
+                List<Vector3f> restsOn = YsmPhysicsParts.restsOnGeometry(bonesRt, boneIdx,
+                        verticesByBoneIndex);
+                if (restsOn == null || restsOn.isEmpty()) {
+                    noSupport++;
+                    continue;
+                }
+                withSupport++;
+                // The piece's own nearest approach to what it rests on, and the patch of its own
+                // vertices that are within the shipped tolerance of it.
+                float gap = Float.MAX_VALUE;
+                for (Vector3f vertex : vertices) {
+                    gap = Math.min(gap, nearestDistanceOf(vertex, restsOn));
+                }
+                if (!Float.isFinite(gap)) {
+                    noSupport++;
+                    withSupport--;
+                    continue;
+                }
+                List<Vector3f> patch = new ArrayList<>();
+                for (Vector3f vertex : vertices) {
+                    if (nearestDistanceOf(vertex, restsOn) <= gap
+                            + YsmPhysicsParts.CONTACT_PATCH_TOLERANCE) {
+                        patch.add(vertex);
+                    }
+                }
+                Vector3f anchor = YsmPhysicsParts.contactAnchor(vertices, restsOn, pivot, lever);
+                Vector3f nearestRest = nearestVertexOf(anchor, restsOn);
+                float press = angleDegreesBetween(new Vector3f(anchor).sub(centroid), CORPUS_DOWN);
+                float normal = nearestRest == null ? Float.NaN
+                        : angleDegreesBetween(new Vector3f(anchor).sub(nearestRest), CORPUS_UP);
+                int below = 0;
+                for (Vector3f vertex : vertices) {
+                    if (vertex.y <= anchor.y) {
+                        below++;
+                    }
+                }
+                float belowShare = (float) below / vertices.size();
+                boolean inContact = gap <= YsmPhysicsParts.CONTACT_PATCH_TOLERANCE;
+                boolean sign = press < 90.0F;
+                boolean normalUp = Float.isFinite(normal) && normal < 45.0F;
+                boolean mostlyAbove = belowShare < 0.5F;
+                boolean chainMember = false;
+                for (int at = bonesRt[boneIdx].parent, guard = 0;
+                     at >= 0 && guard++ <= bonesRt.length; at = bonesRt[at].parent) {
+                    if (classified.contains(at)) {
+                        chainMember = true;
+                        break;
+                    }
+                }
+                // Which bone the support belongs to, and whether that bone is itself simulated. The
+                // narrowed rule is the sign AND a support the simulation does not move: a piece
+                // carried by the body rather than a link hanging off the link above it.
+                int supportBone = -1;
+                for (int at = bonesRt[boneIdx].parent, guard = 0;
+                     at >= 0 && guard++ <= bonesRt.length; at = bonesRt[at].parent) {
+                    if (verticesByBoneIndex.containsKey(at)) {
+                        supportBone = at;
+                        break;
+                    }
+                }
+                boolean supportSimulated = supportBone >= 0 && classified.contains(supportBone);
+                if (inContact) {
+                    touching++;
+                }
+                int bin = Math.min(12, Math.max(0, (int) (press / 15.0F)));
+                pressBins[bin]++;
+                if (Math.abs(press - 90.0F) <= 10.0F) {
+                    ambiguous++;
+                }
+                if (sign) {
+                    restingSign++;
+                    restingModels.add(modelName);
+                    modelResting++;
+                    modelFrozen.add(bone.name);
+                    if (chainMember) {
+                        restingChainMembers++;
+                    }
+                    if (pivotInsideOwnBox(vertices, pivot)) {
+                        restingCapLike++;
+                    }
+                    if (frozenRows.size() < 40) {
+                        frozenRows.add(String.format(Locale.ROOT,
+                                "| `%s` | `%s` | %.1f | %.3f | %.2f | %s | %s | %s |",
+                                modelName, bone.name, press, gap, belowShare,
+                                Float.isFinite(normal) ? String.format(Locale.ROOT, "%.0f", normal) : "-",
+                                chainMember ? "yes" : "no",
+                                pivotInsideOwnBox(vertices, pivot) ? "yes" : "no"));
+                    }
+                    if (!supportSimulated) {
+                        restingBodySupport++;
+                        restingBodyModels.add(modelName);
+                        if (pivotInsideOwnBox(vertices, pivot)) {
+                            restingBodyCapLike++;
+                        }
+                        if (bodyRows.size() < 40) {
+                            bodyRows.add(String.format(Locale.ROOT,
+                                    "| `%s` | `%s` | %.1f | %.3f | `%s` | %s | %s |",
+                                    modelName, bone.name, press, gap,
+                                    supportBone < 0 ? "-" : bonesRt[supportBone].name,
+                                    chainMember ? "yes" : "no",
+                                    pivotInsideOwnBox(vertices, pivot) ? "yes" : "no"));
+                        }
+                    }
+                }
+                if (normalUp) {
+                    restingNormal++;
+                }
+                if (mostlyAbove) {
+                    restingMostlyAbove++;
+                }
+                if (sign == normalUp) {
+                    signAgreesNormal++;
+                }
+                if (sign == mostlyAbove) {
+                    signAgreesAbove++;
+                }
+                if (sign == inContact) {
+                    signAgreesTouching++;
+                }
+                if (sign == normalUp && sign == mostlyAbove && sign == inContact) {
+                    allFourAgree++;
+                }
+            }
+            if (modelName.contains("taisho_maid") || modelName.contains("EKU(1.0")) {
+                highlight.add(String.format(Locale.ROOT,
+                        "| `%s` | %d | %d | %d | %d | %s |",
+                        modelName, classified.size(), modelDropped, modelFrozen.size(),
+                        modelResting, modelFrozen.isEmpty() ? "-" : String.join(", ", modelFrozen)));
+            }
+        }
+
+        StringBuilder report = new StringBuilder();
+        report.append("# The resting piece over the corpus\n\n")
+                .append("Every bone the production classifier would simulate (the same loader and the ")
+                .append("same `selectBones` call as the other sweeps in this class), measured against ")
+                .append("the first ancestor above it that carries geometry. `press` is the angle ")
+                .append("between the model's own downward direction and the line from the piece's ")
+                .append("centre of mass to the shipped contact anchor: **0 deg is a piece resting on ")
+                .append("its support, 180 deg a piece hanging from it**.\n\n")
+                .append("```\nparsed=").append(parsed).append(" skipped=").append(skipped)
+                .append(" | simulated=").append(segments)
+                .append(" | with a support above them=").append(withSupport)
+                .append(" | in contact (gap <= tolerance)=").append(touching)
+                .append(" | no support=").append(noSupport).append("\n```\n\n")
+                .append("## Do the candidate rules separate?\n\n")
+                .append("| rule | pieces it calls carried |\n|---|---|\n")
+                .append("| sign: anchor below the centre of mass | ").append(restingSign).append(" |\n")
+                .append("| normal: support faces up (<45 deg) | ").append(restingNormal).append(" |\n")
+                .append("| mostly above: under half the vertices below the anchor | ")
+                .append(restingMostlyAbove).append(" |\n")
+                .append("| touching: in contact inside the tolerance | ").append(touching).append(" |\n\n")
+                .append("```\nsign == normal: ").append(signAgreesNormal).append(" of ").append(segments)
+                .append("   sign == mostly above: ").append(signAgreesAbove)
+                .append("   sign == touching: ").append(signAgreesTouching)
+                .append("   all four agree: ").append(allFourAgree)
+                .append("\npieces within 10 deg of the sign rule's 90 deg edge: ").append(ambiguous)
+                .append("\n```\n\n")
+                .append("### The press distribution (15 degree bins, 0..180)\n\n```\n");
+        for (int bin = 0; bin < pressBins.length; bin++) {
+            report.append(String.format(Locale.ROOT, "%3d-%3d deg  %8d\n", bin * 15, bin * 15 + 15,
+                    pressBins[bin]));
+        }
+        report.append("```\n\n")
+                .append("Of the pieces the sign rule would stop swinging: ").append(restingSign)
+                .append(" in ").append(restingModels.size()).append(" of ").append(models.size())
+                .append(" models; ").append(restingChainMembers)
+                .append(" of them are chain members (a piece hanging off another simulated piece - a ")
+                .append("hair tip or a tail link, the pieces whose swing a viewer actually watches); ")
+                .append(restingCapLike).append(" have the reported cap's own shape (a pivot inside ")
+                .append("the piece's own geometry).\n\n")
+                .append("Narrowed to pieces whose support is a bone the simulation does <b>not</b> ")
+                .append("move - carried by the body rather than hanging off the link above them - the ")
+                .append("same rule takes ").append(restingBodySupport).append(" pieces in ")
+                .append(restingBodyModels.size()).append(" models, ")
+                .append(restingBodyCapLike).append(" of them cap-shaped.\n\n")
+                .append("The two models the brief names (`wine_fox/01_taisho_maid`, `EKU(1.0.ysm`) ")
+                .append("are installed models, not corpus packages: their own numbers are in ")
+                .append("`build/reports/ysm-resting-piece.md`, read from the install with the same ")
+                .append("classifier.\n\n")
+                .append("## First 40 pieces the narrowed rule (support not simulated) would freeze\n\n")
+                .append("| model | bone | press | gap | support | chain member | pivot inside own ")
+                .append("geometry |\n|---|---|---|---|---|---|---|\n");
+        for (String row : bodyRows) {
+            report.append(row).append('\n');
+        }
+        report.append("\n## First 40 pieces the sign rule would freeze\n\n")
+                .append("| model | bone | press | gap | below share | normal | chain member | ")
+                .append("pivot inside own geometry |\n")
+                .append("|---|---|---|---|---|---|---|---|\n");
+        for (String row : frozenRows) {
+            report.append(row).append('\n');
+        }
+        Path out = Paths.get("build", "reports", "ysm-resting-piece-corpus.md");
+        Files.createDirectories(out.getParent());
+        Files.writeString(out, report.toString(), StandardCharsets.UTF_8);
+        System.out.println("[resting sweep] parsed=" + parsed + " simulated=" + segments
+                + " sign=" + restingSign + " in " + restingModels.size() + "/" + models.size()
+                + " models, chain members=" + restingChainMembers + ", cap-like=" + restingCapLike
+                + ", ambiguous=" + ambiguous + " | narrowed to a support the simulation does not move="
+                + restingBodySupport + " in " + restingBodyModels.size() + " models, cap-like="
+                + restingBodyCapLike);
+        // What the sweep is for, asserted rather than only printed: the pieces exist, the sign rule
+        // takes a real share of them, and - the finding - the candidate rules do not agree on the
+        // corpus, so none of them separates a piece that is carried from one that hangs.
+        assertTrue(segments > 1000, "the corpus sweep read almost no simulated pieces");
+        assertTrue(restingSign > 0 && restingSign < segments,
+                "the sign rule must take some pieces and not all of them");
+        assertTrue(restingBodySupport > 0, "the narrowed rule must take some pieces");
+        assertTrue(allFourAgree < segments / 2,
+                "the candidate rules agree on most pieces, which would make one of them a separator");
+        assertTrue(ambiguous > 0,
+                "no piece sits near the rule's decision line, which would make it a clean cut");
+    }
+
+    /** How far a point is from the nearest vertex of a cloud. */
+    private static float nearestDistanceOf(Vector3f point, List<Vector3f> cloud) {
+        float best = Float.MAX_VALUE;
+        for (Vector3f other : cloud) {
+            if (other == null) {
+                continue;
+            }
+            best = Math.min(best, point.distance(other));
+        }
+        return best;
+    }
+
+    /** The cloud's vertex nearest a point, or null when it has none. */
+    private static Vector3f nearestVertexOf(Vector3f point, List<Vector3f> cloud) {
+        Vector3f best = null;
+        float bestDistance = Float.MAX_VALUE;
+        for (Vector3f other : cloud) {
+            if (other == null) {
+                continue;
+            }
+            float distance = point.distance(other);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best = other;
+            }
+        }
+        return best;
+    }
+
+    /** The angle between two directions, in degrees; 0 when either is degenerate. */
+    private static float angleDegreesBetween(Vector3f a, Vector3f b) {
+        float lengthA = a.length();
+        float lengthB = b.length();
+        if (!(lengthA > 1.0E-8F) || !(lengthB > 1.0E-8F)) {
+            return 0.0F;
+        }
+        float cosine = Math.max(-1.0F, Math.min(1.0F, a.dot(b) / (lengthA * lengthB)));
+        return (float) Math.toDegrees(Math.acos(cosine));
     }
 }
