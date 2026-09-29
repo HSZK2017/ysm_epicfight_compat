@@ -41,8 +41,9 @@ public class S2CVersionCheckPacket {
                 // will never pass isConnectionValid on this side. The handshake
                 // stays compatible (we still reply), but the user must know the
                 // sync is off instead of silently rendering bipeds forever.
-                if (!MISMATCH_LOGGED) {
-                    MISMATCH_LOGGED = true;
+                // Reported once per connection, not once per JVM: a second
+                // mismatched server must not be silent.
+                if (NetworkHandler.markVersionMismatchReported(context.getNetworkManager())) {
                     YSMEpicFightCompat.LOGGER.warn(
                             "YSM-EF Compat: server model-sync protocol version '{}' does not match ours ('{}'); "
                                     + "YSM model selections will not sync from this server",
@@ -57,6 +58,4 @@ public class S2CVersionCheckPacket {
         NetworkHandler.CHANNEL.reply(new C2SVersionCheckPacket(), context);
         context.setPacketHandled(true);
     }
-
-    private static volatile boolean MISMATCH_LOGGED = false;
 }

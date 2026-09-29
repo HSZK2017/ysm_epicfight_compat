@@ -15,8 +15,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * Suppresses YSM's custom projectile models (arrows, tridents, ...) while the
  * shooting player is in Epic Fight battle mode. The un-obfuscated target
  * (CustomProjectileRenderer#renderProjectile) exists with this exact signature
- * in the official YSM 2.6.5 release, OpenYSM and ModernYSM alike; forcing a
- * true result skips the custom model so the vanilla projectile renders.
+ * in OpenYSM and ModernYSM. It does NOT exist in the official 2.6.5 release,
+ * which has no readable class under com/elfmcys/yesstevemodel/client/; that
+ * build is covered by YsmProjectileRenderMixin. Forcing a true result skips the
+ * custom model so the vanilla projectile renders.
  *
  * The obfuscated-build counterpart is YsmProjectileRenderMixin. This injection
  * is non-critical (require = 0).

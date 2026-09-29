@@ -33,3 +33,7 @@ Thumbs.db
 # Test-run output at the project root (ForgeGradle test task)
 logs/
 *.spring-bak
+
+# Measurement probes (T8/T11/T12) write their tables here during a test run. They are regenerated
+# output, not fixtures - the fixtures live in src/test/resources - so they do not belong in a diff.
+tmp_verify/

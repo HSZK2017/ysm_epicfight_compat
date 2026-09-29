@@ -309,6 +309,12 @@ public class EFMeshJsonWriter {
                         index = positions.size() / 3;
                         // Epic Fight's mesh JSON is authored in Blender space and the
                         // loader applies (x, y, z)_mc -> (x, -z, y); convert accordingly.
+                        // Do NOT reuse this map for a physics pivot. The loader applies the INVERSE
+                        // of it to every position on load, so at runtime mesh.positions() is the
+                        // authored chain scaled once with no turn left in it, and a pivot must be
+                        // S(bindWorld * p) with no turn either. Applying this map to a pivot was tried
+                        // once: it shattered legs and fragmented long hair in game. The reasoning and
+                        // the revert are recorded on YsmPhysicsParts#pivotInMeshSpace.
                         positions.add(px);
                         positions.add(-pz);
                         positions.add(py);

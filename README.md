@@ -117,10 +117,12 @@
 |---|---|---|---|
 | **ModernYSM** | 存在 `rip.ysm.gpu.*` | **联动 ModernYSM** `UseGpuRenderer`/`UseCompatibilityRenderer`（反射实时读取，含其运行时自动禁用） | `ModernYsm*Mixin`（新签名：`onRenderPlayerPre(Player,...)Z` 等，返回 false） |
 | **OpenYSM** | 存在未混淆 `client.event.ReplacePlayerRenderEvent`（无 `rip.ysm.gpu.*`） | 本模组 `enableGpuRender` 配置 + **模型选择界面勾选框**（追加到配置界面 performance 分组） | `OpenYsm*Mixin`（旧事件签名：`onRenderPlayerPre(RenderPlayerEvent$Pre)V` 等） |
-| **官方 2.6.5** | 同上（未混淆 GUI/事件类） | 同上 | 同上 |
+| **官方 2.6.5** | 存在混淆类（`O0o...` 等）。**官方发行版就是"完全混淆构建"**：该 jar 中 `com/elfmcys/yesstevemodel/client/`、`geckolib3/`、`molang/` 下**没有任何可读类**（955 个类里唯一可读的包是 `mixin/`，22 个），所以下面一行不是另一种构建，而是同一件事 | 本模组 `enableGpuRender` 配置 + **模型选择界面勾选框**（追加到配置界面 performance 分组） | `Ysm*Mixin`（混淆目标，软跳过） |
+| **完全混淆构建** | 同上（与官方 2.6.5 同一构建） | 同上 | 同上 |
 | **完全混淆构建** | 存在混淆类（`O0o...` 等） | 同上 | `Ysm*Mixin`（混淆目标，软跳过） |
 
-- 所有抑制 mixin 均为字符串目标 + `require=0` 软注入：只对签名实际存在的分支生效，任何分支下都不会崩溃；官方/OpenYSM 与 ModernYSM 的共享类（`CustomProjectileRenderer` 等，签名一致）由 `YsmUnobf*Mixin` 一并覆盖。
+- 所有抑制 mixin 均为 `require=0` 软注入：只对签名实际存在的分支生效，任何分支下都不会崩溃。目标形式有两种——`OpenYsm*`/`ModernYsm*`/`YsmUnobf*`/`YsmExtraPlayerOverlayMixin`/`YsmAnimationTransitionGuardMixin` 等用**字符串目标**（那些类不在编译类路径上），而 9 个混淆发行版目标用**类字面量**（混淆类在 `libs/ysm-2.6.5.jar` 里，因此可编译）；`RenderSystemAccessorMixin` 是原版 `RenderSystem` 的 `@Accessor`，没有 `require` 元素也不该有。混淆发行版与 OpenYSM/ModernYSM 的共享类（`CustomProjectileRenderer` 等，签名一致）由 `YsmUnobf*Mixin` 覆盖。
+- **排障须知**：`require=0` 的"没匹配上"**不打任何日志**（只有目标**类**整体缺失才会 WARN，目标**方法/描述符**不匹配时 Mixin 完全静默）。因此"哪个分支的抑制生效了"只能从行为判断；升级 YSM 或 Epic Fight 后若出现重复渲染或换装失效，先怀疑这里。
 - 抑制内容：第三人称玩家渲染、第一人称手臂、背景手、投射物、鱼钩、载具、载具预览——战斗模式下全部让位给原版/EF 渲染。
 - ModernYSM 场景下配置界面不重复添加复选框（其自带 `UseGpuRenderer` 勾选项）。
 
@@ -136,7 +138,7 @@
 
 ### 事件与 Mixin
 
-主配置 `ysm_epicfight_compat.mixins.json`（31 个客户端 mixin）：`ModernYsm*`（3）、`OpenYsm*`（4，含配置界面）、`YsmUnobf*`（4）、混淆版 `Ysm*`（8）、`PPlayerRendererMixin`、`RenderSystemAccessorMixin`（着色器光照方向）、`SkinnedMeshCpuRenderMixin`（EF drawPosed 回退拦截 → 本模组 CPU 蒙皮路径）、`YsmExtraPlayerOverlayMixin`（战斗模式抑制纸娃娃，见配置 `disableExtraPlayerInBattleMode`）；可选配置 `ysm_epicfight_compat.eftlm.mixins.json`（TLM 女仆渲染挂钩）。
+主配置 `ysm_epicfight_compat.mixins.json`（**32** 个客户端 mixin + 1 个 common）：`ModernYsm*`（3）、`OpenYsm*`（4，含配置界面）、`YsmUnobf*`（4）、混淆版 `Ysm*`（8）、`PPlayerRendererMixin`、`RenderSystemAccessorMixin`（着色器光照方向）、`SkinnedMeshCpuRenderMixin`（EF drawPosed 回退拦截 → 本模组 CPU 蒙皮路径）、`RenderItemBaseMixin`、`EpicFightRenderLivingEventMixin`、`DiscreteInputActionTriggerMixin`、`MouseHandlerMixin`、`YsmRouletteConfigExpressionMixin`、`YsmAnimationTransitionGuardMixin`、`YsmLivingMovementPredicateMixin`、`YsmArmaturePoseMixin`、`YsmExtraPlayerOverlayMixin`（战斗模式抑制纸娃娃，见配置 `disableExtraPlayerInBattleMode`）；common 段为 `AnimationManagerValidationMixin`（服务端动画注册表校验豁免，见下）；可选配置 `ysm_epicfight_compat.eftlm.mixins.json`（TLM 女仆渲染挂钩，`required: false`，TLM 缺席时安全）。
 
 ### 多人联机模型同步 (`com.ysmef.compat.network`)
 
@@ -189,8 +191,10 @@
 | `-Dysm_ef_compat.force_cpu_render=true` | 强制跳过 EF 计算着色器、始终走本模组 CPU 蒙皮路径（在支持计算着色器的硬件上验证回退链） |
 | `-Dysm_ef_compat.disable_gpu=true` | 禁用 GPU 蒙皮路径（回退到 EF 计算着色器 / 本模组 CPU 蒙皮） |
 | `-Dysm_ef_compat.disable_iris_compute_path=true` | 禁用优化 Iris 计算路径（A/B 验证用，回退 EF 自带 Iris 路径） |
+| `-Dysm_ef_compat.enable_iris_compute_path=true` | **不再被读取**：优化 Iris 路径自 2026-09-20 起默认开启。该开关已在代码中移除（`ENABLED` 只看 disable 那个）；启动参数里留着它不会有任何效果，也不会报错 |
 | `-Dysm_ef_compat.diag=true` | 开启诊断日志（渲染路径跳过原因、逐帧计时） |
-| `-Dysm_ef_compat.max_package_bytes=...` | `.ysm` 包/模型源文件大小上限（默认 512 MiB，防御畸形大文件） |
+
+上表所有开关的取值语义统一（`SystemFlags.enabled`）：`-D名` 或 `-D名=true` 为开，**`-D名=false` 为关**——早期实现用 `getProperty(名) != null` 判断"存在即开"，于是写 `=false` 反而把功能打开（对 `disable_*` 类开关则是仍保持关闭），四个开关都有这个坑，现已统一并加单测钉住。`0`/`no`/`off`（不区分大小写、忽略首尾空格）同样读作关。| `-Dysm_ef_compat.max_package_bytes=...` | `.ysm` 包/模型源文件大小上限（默认 512 MiB，防御畸形大文件） |
 | `-Dysm_ef_compat.max_decompressed_bytes=...` | `.ysm` 解压后二进制载荷大小上限（默认 512 MiB，防御解压炸弹） |
 
 ---
@@ -231,13 +235,14 @@
 ## 已知限制
 
 1. **渲染路径回退链**：GPU 蒙皮需 GL 4.3+（Android 需 OpenGL ES 3.1，ES 路径已去除桌面专属 GL 调用，真机验证待 Android 环境）；不满足时依次回退 EF 计算着色器 → 本模组 CPU 蒙皮（桌面 GL 3.3+ / OpenGL ES 3.0+，无缺面）→ EF drawPosed（三角化已修复，渲染完整）。macOS（GL 4.1 无计算着色器）走 CPU 蒙皮
-2. **Iris/Oculus 光影包**：光影包激活时 GPU/CPU 直连路径让位 EF 计算路径，由本模组优化 Iris 路径（`YsmIrisComputePath`）接管（关节-only 上传、无 MAX_JOINTS 上限），不可用时回退 EF 自带 Iris 路径；计算着色器不可用时由三角化已修复的 drawPosed 兜底
+2. **Iris/Oculus 光影包**：光影包激活时 GPU/CPU 直连路径让位 EF 计算路径，由本模组的优化 Iris 路径（关节-only 上传、无 MAX_JOINTS 上限）接管——**自 2026-09-20 起默认开启**。它曾长期不可达（无任何外部引用），第一次真正绘制时暴露出一个**重传门控缺项**：part 段只在"增量出现/消失"时才重传，而二次运动是每帧变化的数值 → part 段只上传过一次并冻结（实测 `[physics]` 报 "59 of 59 bone(s) moving" 而画面无位移）。缺陷已修复并实机验证：9 个模型（单个 51–597 部件、最高 103,998 顶点）全部 `partCount` 一致、物理可见、零 ERROR、零 draw failed。**该验证的边界**：一台机器、一种光影，且"超 MAX_JOINTS(1000) 容量"这一能力未被触达（本次最大 597 部件 + 约 20 关节，未越界），描边/GUI 通道亦未行使。不适用时用 `-Dysm_ef_compat.disable_iris_compute_path=true` 退回 EF 自带 Iris 路径（它同样带增量）；计算着色器不可用时由三角化已修复的 drawPosed 兜底
 3. **懒转换首用延迟**：模型首次渲染若缓存未命中，后台转换期间短暂回退 EF biped（几帧）；异步纹理上传同理（纹理出现前 1-2 帧为缺失纹理）
 4. **多人联机同步要求专用服务器安装本模组**（服务端仅做 NBT 读取与广播）；未安装时回退 EF biped
 5. **远程玩家模型需本地可用**：模型包必须在 `config/yes_steve_model/{builtin,custom,auth}`；会话中途新下载的模型需 F3+T 或 `/ysm model reload` 触发重新生成
-6. **混淆目标依赖版本**：混淆构建变体的 mixin 目标为 YSM 2.6.5 特定名（官方/OpenYSM/ModernYSM 由未混淆/新签名 mixin 覆盖，无需维护）；`mods.toml` 已把 Epic Fight 限制在 `[20.14.17,20.15)`、YSM 限制在 `[2.6,2.7)`，升级依赖需按描述符重新定位并更新契约
+6. **混淆目标依赖版本**：官方 2.6.5（＝完全混淆构建）的可读类只有 `mixin/` 包，其 `client.*` 目标全部为 2.6.5 特定混淆名，由 `Ysm*Mixin` 覆盖；OpenYSM/ModernYSM 走未混淆/新签名的 `OpenYsm*`/`ModernYsm*`/`YsmUnobf*` 家族。`mods.toml` 已把 Epic Fight 限制在 `[20.14.17,20.15)`、YSM 限制在 `[2.6,2.7)`，升级依赖需按描述符重新定位并更新契约
 7. **贴图格式**：PNG/JPEG 直读；WebP/AVIF 经 YSM ImageStream 反射解码（OpenYSM/ModernYSM 内置，官方 2.6.5 缺失时跳过并告警）；BMP 不支持
 8. **战斗模式默认可见性**：以冻结默认环境静态求值 parallel scale 通道决定变体可见性，个别条件化变体可能首帧可见后被运行时覆盖
 9. **缓存健壮性**：manifest 记录输出哈希，缓存恢复前逐文件校验；损坏只重转该模型；所有输出原子写
 10. **安全上限**：`.ysm` 源文件与解压后载荷默认各限 512 MiB（`-Dysm_ef_compat.max_package_bytes` / `-Dysm_ef_compat.max_decompressed_bytes` 可覆盖），超大但受信任的模型需显式调高；二进制解析对 bone/cube/face 等段落计数同样设上限
 11. **轮盘映射迁移**：v1.9.0 起新增每模型映射 sidecar（`config/ysm_epicfight_compat/extra_animation_mappings/`），旧聚合文件 `extra_animation_mappings.json` 仍会被兼容读取，但不再写入
+12. **布料（位置约束）求解器已实现但未接线**：`YsmMeshCloth` → `YsmClothSolver` → `YsmClothTuning` 这条"把裙摆当粒子网格约束"的链路在源码里完整存在（含 8 次约束松弛、身体体积排斥、钉住粒子的蒙皮放置），但**渲染路径没有任何地方调用它**——`YsmMeshCloth` 在整个 `src` 中唯一的出现是 `YSMReloadTrigger` 里的 `clear()`。当前所有二次运动（头发/尾巴/裙摆）都走 `YsmMeshSecondaryMotion` 的摆锤求解器。因此配置里的 `secondaryMotionMaxParticles`、`secondaryMotionIterations`、`secondaryMotionBodyRadius` 以及 `secondaryMotionGravity`（布料重力）当下**不产生可见效果**；`secondaryMotionGravity` 的注释已按此更正。接线还是删除需要一次带游戏内观察的决定，本轮只把状态写明。

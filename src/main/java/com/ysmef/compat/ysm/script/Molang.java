@@ -1,6 +1,7 @@
 package com.ysmef.compat.ysm.script;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -675,35 +676,39 @@ public final class Molang {
                             if (!env.wantsMixedArguments()) {
                                 return env.callStringFunction(path, sargs);
                             }
-                            double[] values = MIXED_SLOTS.get();
-                            if (values.length < slotArgs.length) {
-                                values = new double[slotArgs.length];
-                                MIXED_SLOTS.set(values);
+                            ArgPool pool = ARG_POOL.get();
+                            double[] values = pool.acquire(slotArgs.length);
+                            try {
+                                for (int i = 0; i < slotArgs.length; i++) {
+                                    // A null slot was a string literal, and its number is meaningless:
+                                    // the argument at that position is in `strings` instead.
+                                    values[i] = slotArgs[i] == null ? 0.0 : slotArgs[i].eval(env);
+                                }
+                                return component < 0
+                                        ? env.callMixedFunction(path, sargs, values, slotArgs.length)
+                                        : env.callVectorFunction(path, sargs, values, slotArgs.length, component);
+                            } finally {
+                                pool.release();
                             }
-                            for (int i = 0; i < slotArgs.length; i++) {
-                                // A null slot was a string literal, and its number is meaningless:
-                                // the argument at that position is in `strings` instead.
-                                values[i] = slotArgs[i] == null ? 0.0 : slotArgs[i].eval(env);
-                            }
-                            return component < 0
-                                    ? env.callMixedFunction(path, sargs, values, slotArgs.length)
-                                    : env.callVectorFunction(path, sargs, values, slotArgs.length, component);
                         };
                     }
                     Expr[] exprArgs = args.toArray(new Expr[0]);
                     return env -> {
-                        // reusable argument slots: no per-call allocation on the hot path
-                        double[] values = ARG_SLOTS.get();
-                        if (values.length < exprArgs.length) {
-                            values = new double[exprArgs.length];
-                            ARG_SLOTS.set(values);
+                        // Argument slots are pooled by nesting level: no per-call allocation
+                        // on the hot path, and a nested call in an argument cannot overwrite
+                        // the arguments already staged here (see ArgPool).
+                        ArgPool pool = ARG_POOL.get();
+                        double[] values = pool.acquire(exprArgs.length);
+                        try {
+                            for (int i = 0; i < exprArgs.length; i++) {
+                                values[i] = exprArgs[i].eval(env);
+                            }
+                            return component < 0
+                                    ? env.callFunction(path, values, exprArgs.length)
+                                    : env.callVectorFunction(path, NO_STRINGS, values, exprArgs.length, component);
+                        } finally {
+                            pool.release();
                         }
-                        for (int i = 0; i < exprArgs.length; i++) {
-                            values[i] = exprArgs[i].eval(env);
-                        }
-                        return component < 0
-                                ? env.callFunction(path, values, exprArgs.length)
-                                : env.callVectorFunction(path, NO_STRINGS, values, exprArgs.length, component);
                     };
                 }
                 return new VarExpr(path);
@@ -772,11 +777,51 @@ public final class Molang {
         return -1.0e18 - idOf(value) * 4096.0;
     }
 
-    /** Per-thread scratch for function arguments (the eval threads are stable). */
-    private static final ThreadLocal<double[]> ARG_SLOTS = ThreadLocal.withInitial(() -> new double[4]);
+    /**
+     * Per-thread staging for function arguments, pooled by nesting level.
+     *
+     * <p>One scratch array per thread is not enough. Arguments are staged before the
+     * call is made, and evaluating argument {@code i} can run another call, which
+     * starts filling at index 0 and overwrites the slots {@code 0..i-1} this call has
+     * already filled - so the outer call receives a mixture of its own earlier
+     * arguments and the inner call's. Measured against the single shared array this
+     * replaced: {@code math.max(5, math.min(1, 2))} answered 1 instead of 5,
+     * {@code math.max(9, math.abs(-3))} answered 3 instead of 9, and
+     * {@code ysm.outer(1, 'x', ysm.inner('y', 2))} lost argument 0 (0.0 instead of
+     * 1.0) - all silently, because nothing in those expressions is malformed.
+     *
+     * <p>Each nesting level therefore borrows its own array, so a nested call writes
+     * into a different array than the call that contains it. Arrays are pooled and
+     * reused across frames, so the hot path still allocates nothing once a level has
+     * been used once. Depth is bounded by the parser's own nesting limit
+     * ({@code Parser.MAX_PARSE_DEPTH}), and a thread is never inside two evaluations
+     * of one expression at the same time, so one pool per thread needs no locking.
+     */
+    private static final class ArgPool {
+        private double[][] byDepth = new double[4][];
+        private int depth;
 
-    /** The same scratch idea for calls that mix string literals with numbers. */
-    private static final ThreadLocal<double[]> MIXED_SLOTS = ThreadLocal.withInitial(() -> new double[8]);
+        /** The staging array of the current level, with room for at least {@code count} slots. */
+        double[] acquire(int count) {
+            if (depth == byDepth.length) {
+                byDepth = Arrays.copyOf(byDepth, depth * 2);
+            }
+            double[] slots = byDepth[depth];
+            if (slots == null || slots.length < count) {
+                slots = new double[Math.max(count, 8)];
+                byDepth[depth] = slots;
+            }
+            depth++;
+            return slots;
+        }
+
+        /** Release the current level. Always paired with {@link #acquire} in a finally. */
+        void release() {
+            depth--;
+        }
+    }
+
+    private static final ThreadLocal<ArgPool> ARG_POOL = ThreadLocal.withInitial(ArgPool::new);
 
     /** No string arguments at all, for a vector call written with numbers only. */
     private static final String[] NO_STRINGS = new String[0];

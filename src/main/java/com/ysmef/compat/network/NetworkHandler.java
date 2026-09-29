@@ -49,14 +49,47 @@ public final class NetworkHandler {
     private static final AttributeKey<String> CHANNEL_VERSION_KEY =
             AttributeKey.valueOf("ysm_epicfight_compat_model_sync");
 
+    private static final AttributeKey<Boolean> MISMATCH_LOGGED_KEY =
+            AttributeKey.valueOf("ysm_epicfight_compat_version_mismatch_logged");
+
     private NetworkHandler() {}
 
     /**
-     * Store the negotiated protocol version on the connection; returns false
-     * when the version was already set (first handshake wins, like YSM).
+     * Store the negotiated protocol version on the connection; returns false when the stored value
+     * was already there.
+     *
+     * <p>First handshake wins, like YSM's {@code setChannelVersion} - with one exception. Our own
+     * version is allowed to replace anything else that got there first, because otherwise a wrong
+     * value keeps the slot for the connection's lifetime: every model packet is gated on
+     * {@link #isConnectionValid}, which compares against {@link #VERSION}, and the periodic retry
+     * cannot replace a non-null attribute. The connection would simply never sync, with one warning
+     * line to explain it.
      */
     public static boolean setChannelVersion(Connection connection, String version) {
-        return connection.channel().attr(CHANNEL_VERSION_KEY).compareAndSet(null, version);
+        io.netty.util.Attribute<String> pinned = connection.channel().attr(CHANNEL_VERSION_KEY);
+        if (pinned.compareAndSet(null, version)) {
+            return true;
+        }
+        String current = pinned.get();
+        if (VERSION.equals(version) && !VERSION.equals(current)) {
+            pinned.set(version);
+            YSMEpicFightCompat.LOGGER.warn(
+                    "YSM-EF Compat: replaced the model-sync protocol version pinned on this connection "
+                            + "('{}') with ours ('{}')", current, version);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Whether this connection has not yet reported a protocol-version mismatch; true on the first
+     * call and false afterwards.
+     *
+     * <p>Per connection rather than per JVM: the old flag was a static boolean that stayed true for
+     * the rest of the session, so the second server whose version did not match was silent.
+     */
+    public static boolean markVersionMismatchReported(Connection connection) {
+        return connection.channel().attr(MISMATCH_LOGGED_KEY).compareAndSet(null, Boolean.TRUE);
     }
 
     /**

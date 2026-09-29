@@ -115,10 +115,52 @@ public class YSMCompatClientEvents {
         // mis-attribution between the OpenYSM and ModernYSM lineages possible.
         com.ysmef.compat.ysm.YsmFork.reportAtStartup();
         com.ysmef.compat.gpu.YsmGpuRenderEnable.reportToggleLinkage();
+        // Load the three skinning paths on purpose, and report which answered.
+        //
+        // Registration happens in each path's static initializer, so until now "which paths exist"
+        // depended on what happened to touch each class first: the CPU path was loaded only by the
+        // drawPosed mixin (so not at all with Epic Fight's use_compute_shader on), the GPU path only
+        // because the CPU path called a static method on it (so it went with it), and the Iris path
+        // had no caller at all and was unreachable in every configuration. The user-visible half of
+        // that is silent: with GPU skinning off, enableGpuRender and -Dysm_ef_compat.force_cpu_render
+        // do nothing and say nothing.
+        //
+        // enqueueWork puts this on the client/main thread, which is the render thread, and after
+        // setup, so the paths are live before the first frame that can draw a converted mesh.
+        event.enqueueWork(YSMCompatClientEvents::registerRenderPaths);
         // Let other mods' appearance takeovers claim a player; this mod steps aside
         // for as long as they do (see LookOwners).
         com.ysmef.compat.compat.LookOwners.registerBuiltIn();
         event.enqueueWork(com.ysmef.compat.realcamera.YsmRealCameraBridge::initApiFunction);
+    }
+
+    /**
+     * Force the three skinning paths to load, then state which of them the draw path will find.
+     *
+     * <p>Loading is the registration (each path registers itself from its own static initializer);
+     * the calls below exist for no other reason, which is why each path spells that out at its own
+     * {@code ensureRegistered}. The log line is the point of doing it here rather than leaving it to
+     * the call graph: "the fallback chain is not actually there" is otherwise invisible, and it is
+     * the difference between a config toggle working and doing nothing.
+     */
+    private static void registerRenderPaths() {
+        com.ysmef.compat.gpu.YsmGpuRenderPath.ensureRegistered();
+        com.ysmef.compat.cpu.YsmCpuRenderPath.ensureRegistered();
+        com.ysmef.compat.gpu.YsmIrisComputePath.ensureRegistered();
+        boolean gpu = com.ysmef.compat.model.RenderBridgeRegistry.gpu() != null;
+        boolean cpu = com.ysmef.compat.model.RenderBridgeRegistry.cpu() != null;
+        boolean iris = com.ysmef.compat.model.RenderBridgeRegistry.iris() != null;
+        if (gpu && cpu && iris) {
+            YSMEpicFightCompat.LOGGER.info(
+                    "YSM-EF Compat: skinning paths registered (gpu=true, cpu=true, irisCompute=true)");
+        } else {
+            // Not a warning: a missing path is only a problem if the config asks for it, and the
+            // draw path falls back. But it must be visible, because that fallback is silent.
+            YSMEpicFightCompat.LOGGER.warn(
+                    "YSM-EF Compat: skinning paths registered (gpu={}, cpu={}, irisCompute={}); a false here "
+                            + "means the corresponding path cannot be used however the config is set",
+                    gpu, cpu, iris);
+        }
     }
 
     /**

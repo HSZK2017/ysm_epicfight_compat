@@ -710,14 +710,29 @@ public final class YsmExtraFrameWriter {
         tables.ysmWorldsJoml[joint] = toJoml(tables.ysmWorlds[joint]);
     }
 
+    /** The base forms this model's bone table declares (see BoneAlternateForms). */
+    private static Set<String> baseForms(SampleBone[] bones) {
+        String[] names = new String[bones.length];
+        for (int i = 0; i < bones.length; i++) {
+            names[i] = bones[i].bone.name;
+        }
+        return BoneAlternateForms.baseFormsPresent(names);
+    }
+
     private static Map<Integer, List<Vector3f>> collectGeometryByJoint(SampleBone[] bones, YsmModelPackage pkg) {
+        // Alternate forms are decided against this model's own names, not per name (see
+        // BoneAlternateForms): a trailing digit marks a variant only when the base form is another
+        // bone HERE. Testing the name alone discarded whole skeletons - 兽耳酱x1.ysm names every bone
+        // "X_T4_1", "X_yiqun1", ... with no base form anywhere - after which the pivots below fell
+        // back to the reference biped's, the same fault YsmBindArmature had.
+        Set<String> baseForms = baseForms(bones);
         Map<Integer, List<Vector3f>> byJoint = new HashMap<>();
         for (SampleBone sample : bones) {
             if (!sample.direct) {
                 continue;
             }
             String name = sample.bone.name;
-            if (!name.isEmpty() && Character.isDigit(name.charAt(name.length() - 1))) {
+            if (BoneAlternateForms.isAlternateForm(name, baseForms)) {
                 continue;
             }
             Matrix4f bind = sample.bind;
@@ -840,6 +855,7 @@ public final class YsmExtraFrameWriter {
     }
 
     private static RepresentativeSelection selectRepresentatives(SampleBone[] bones, ScriptAnim anim) {
+        Set<String> baseForms = baseForms(bones);
         RepresentativeSelection selection = new RepresentativeSelection();
         for (int joint = 0; joint < JOINT_COUNT; joint++) {
             int best = -1;
@@ -859,7 +875,7 @@ public final class YsmExtraFrameWriter {
                     score += 4;
                 }
                 String name = bones[i].bone.name;
-                if (name.isEmpty() || !Character.isDigit(name.charAt(name.length() - 1))) {
+                if (!BoneAlternateForms.isAlternateForm(name, baseForms)) {
                     score += 2;
                 }
                 if (score > bestScore) {

@@ -259,12 +259,23 @@ public final class YsmIrisMesh {
         GL15.glBufferSubData(GL43.GL_SHADER_STORAGE_BUFFER, 0L, joints);
 
         // parts: refresh the staging every frame (cheap CPU), upload only on change
+        //
+        // "on change" has to include "a transform is present at all", which is what `anyTransform`
+        // tracks, and that was missing here: the flags below only notice a delta appearing or
+        // disappearing (null <-> non-null), never a value that keeps moving. Secondary motion moves
+        // every frame, so with the old condition the part section was uploaded once - on the frame the
+        // deltas first appeared, when they are still near identity - and never again, and the model
+        // rendered frozen parts while [physics] reported 59 of 59 bones moving. The GPU path has
+        // exactly this term (YsmGpuRenderPath: `uploadParts = !partSectionValid || anyTransform ||
+        // hiddenChanged || identityChanged`), which is why physics was visible there and not here.
         boolean dirty = !this.partSectionValid || this.lastJointCount != jointCount;
+        boolean anyTransform = false;
         FloatBuffer parts = this.partStaging;
         for (int p = 0; p < this.partCount; p++) {
             OpenMatrix4f delta = mesh.getPartTransform(p);
             parts.position(p * MAT4_FLOATS);
             if (delta != null) {
+                anyTransform = true;
                 if (this.cachedPartIdentity[p]) {
                     this.cachedPartIdentity[p] = false;
                     dirty = true;
@@ -279,7 +290,7 @@ public final class YsmIrisMesh {
                 OpenMatrix4f.IDENTITY.store(parts);
             }
         }
-        if (dirty) {
+        if (dirty || anyTransform) {
             parts.position(0);
             parts.limit(this.partCount * MAT4_FLOATS);
             GL15.glBufferSubData(GL43.GL_SHADER_STORAGE_BUFFER, (long) jointCount * MAT4_BYTES, parts);

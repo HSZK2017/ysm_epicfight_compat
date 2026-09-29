@@ -1,6 +1,9 @@
 package com.ysmef.compat.network;
 
+import com.ysmef.compat.YSMEpicFightCompat;
+
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -31,19 +34,63 @@ public final class ModelSyncClient {
      */
     private static final SyncedModel NO_MODEL = new SyncedModel("", "");
 
+    /**
+     * Cap on the registry, and the length a name may have.
+     *
+     * <p>The entries are written from packets a server we do not control sends, and before this the
+     * map had no bound at all and no content check: a server could grow it until the client ran out
+     * of memory, using UUIDs that need not belong to any player (nothing evicts those - only leaving
+     * the world clears the map). A few thousand entries is far above any real player count and
+     * bounded by construction.
+     */
+    private static final int MAX_SYNCED_MODELS = 4096;
+    private static final int MAX_NAME_LENGTH = 128;
+
+    /** One log line per kind of rejection; a hostile server must not be able to spam the log. */
+    private static final Set<String> REPORTED = ConcurrentHashMap.newKeySet();
+
     private ModelSyncClient() {}
 
     /**
      * Apply a broadcast selection: an empty model id or the disabled flag
      * stores the no-model sentinel (the player renders with the Epic Fight
      * biped, and the client never serializes the full player NBT for them).
+     *
+     * <p>An entry with an implausible name, or one that would exceed the cap, is dropped rather than
+     * stored; see {@link #MAX_SYNCED_MODELS}.
      */
     public static void applySyncedModel(UUID uuid, String modelId, String textureName, boolean disabled) {
-        if (disabled || modelId == null || modelId.isEmpty()) {
-            SYNCED.put(uuid, NO_MODEL);
+        if (uuid == null) {
             return;
         }
-        SYNCED.put(uuid, new SyncedModel(modelId, textureName == null ? "" : textureName));
+        if (disabled || modelId == null || modelId.isEmpty()) {
+            store(uuid, NO_MODEL);
+            return;
+        }
+        if (modelId.length() > MAX_NAME_LENGTH
+                || (textureName != null && textureName.length() > MAX_NAME_LENGTH)) {
+            if (REPORTED.add("length")) {
+                YSMEpicFightCompat.LOGGER.warn(
+                        "YSM-EF Compat: ignoring a model-sync entry with an implausible name (modelId {} chars, "
+                                + "texture {} chars, max {})", modelId.length(),
+                        textureName == null ? 0 : textureName.length(), MAX_NAME_LENGTH);
+            }
+            return;
+        }
+        store(uuid, new SyncedModel(modelId, textureName == null ? "" : textureName));
+    }
+
+    /** Store one entry, refusing to grow the map past the cap for a UUID it does not yet hold. */
+    private static void store(UUID uuid, SyncedModel model) {
+        if (!SYNCED.containsKey(uuid) && SYNCED.size() >= MAX_SYNCED_MODELS) {
+            if (REPORTED.add("cap")) {
+                YSMEpicFightCompat.LOGGER.warn(
+                        "YSM-EF Compat: model-sync registry is full ({} entries); further entries are ignored "
+                                + "until the world is left", MAX_SYNCED_MODELS);
+            }
+            return;
+        }
+        SYNCED.put(uuid, model);
     }
 
     /**

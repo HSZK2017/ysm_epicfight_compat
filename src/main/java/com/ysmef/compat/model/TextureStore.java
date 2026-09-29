@@ -599,6 +599,11 @@ public final class TextureStore {
             java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
             return java.util.HexFormat.of().formatHex(digest.digest(Files.readAllBytes(cacheFile))).equals(hash);
         } catch (Exception e) {
+            // "The cache file could not be hashed" answers the same as "the hash differs" - the
+            // texture is re-decoded, which is the right recovery - but an unreadable cache directory
+            // then looks exactly like a normal cache miss on every texture, forever.
+            YSMEpicFightCompat.LOGGER.debug(
+                    "YSM-EF Compat: could not verify a cached texture, re-processing it: {}", e.toString());
             return false;
         }
     }
@@ -841,7 +846,6 @@ public final class TextureStore {
             }
             if (segment.equals("..") || segment.equals(".")) {
                 sb.append('_');
-                stripped = true;
             } else {
                 sb.append(segment);
             }

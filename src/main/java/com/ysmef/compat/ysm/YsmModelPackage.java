@@ -1,5 +1,6 @@
 package com.ysmef.compat.ysm;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -401,48 +402,64 @@ public final class YsmModelPackage {
             }
 
             if (geometry != null) {
-                Map<String, com.ysmef.compat.ysm.script.ScriptAnim> scriptAnims = new LinkedHashMap<>();
-                // The physics animation is the one exception to the runtime-relevant filter, and it
-                // has to be named here: it is the animation the model's controllers bind as its
-                // physics, and the runtime needs it *as written* - its whole content is the author's
-                // expressions, which a compiled animation no longer has. Without this the converter
-                // kept a bone list and threw away the physics that moves it.
-                //
-                // The candidate set spans the model's own controllers *and* YSM's built-in default
-                // set, because a model that inherits the default controllers never names its physics
-                // animation in a file of its own - which is the common case, not the exception. The
-                // animation is then cross-checked against the bones this model can actually move: a
-                // candidate that drives none of them is not this model's physics, and accepting it
-                // would replace the name-based classification with a list of bones the mesh cannot
-                // move, taking a model that simulated fifty-nine bones down to none.
-                BuiltinControllers builtin = builtinControllers();
-                com.ysmef.compat.model.runtime.YsmPhysicsBinding.Selection physics =
-                        com.ysmef.compat.model.runtime.YsmPhysicsBinding.select(
-                                com.ysmef.compat.model.runtime.YsmPhysicsBinding.Sources.of(
-                                        animationControllers, allScriptAnims,
-                                        builtin.controllers(), builtin.animations(),
-                                        com.ysmef.compat.model.EFMeshJsonWriter.simulatableBoneNames(geometry)));
-                String physicsAnimation = physics.animation();
-                // A physics animation inherited from the built-in set is not among this package's
-                // own files, and the runtime still has to evaluate it: carry the definition along.
-                if (physicsAnimation != null && !allScriptAnims.containsKey(physicsAnimation)) {
-                    com.ysmef.compat.ysm.script.ScriptAnim inherited = builtin.animations().get(physicsAnimation);
-                    if (inherited != null) {
-                        allScriptAnims.put(physicsAnimation, inherited);
-                    }
-                }
-                for (Map.Entry<String, com.ysmef.compat.ysm.script.ScriptAnim> entry : allScriptAnims.entrySet()) {
-                    if (com.ysmef.compat.ysm.script.ScriptJson.isRuntimeRelevant(entry.getKey())
-                            || entry.getKey().equals(physicsAnimation)) {
-                        scriptAnims.put(entry.getKey(), entry.getValue());
-                    }
-                }
-                return new YsmModelPackage(modelId, geometry, textures, java.util.Collections.emptyMap(), scriptAnims,
-                        allScriptAnims, extraAnimations, animationControllers,
-                        widthScale, heightScale, defaultTexture, -1L);
+                return assemble(modelId, geometry, textures, java.util.Collections.emptyMap(), allScriptAnims,
+                        extraAnimations, animationControllers, widthScale, heightScale, defaultTexture, -1L);
             }
         }
         return null;
+    }
+
+    /**
+     * The tail both folder packages and legacy containers share: pick the model's physics
+     * animation, then keep the runtime-relevant animations plus that one.
+     *
+     * <p>The physics animation is the one exception to the runtime-relevant filter, and it
+     * has to be named here: it is the animation the model's controllers bind as its
+     * physics, and the runtime needs it *as written* - its whole content is the author's
+     * expressions, which a compiled animation no longer has. Without this the converter
+     * kept a bone list and threw away the physics that moves it.
+     *
+     * <p>The candidate set spans the model's own controllers *and* YSM's built-in default
+     * set, because a model that inherits the default controllers never names its physics
+     * animation in a file of its own - which is the common case, not the exception. The
+     * animation is then cross-checked against the bones this model can actually move: a
+     * candidate that drives none of them is not this model's physics, and accepting it
+     * would replace the name-based classification with a list of bones the mesh cannot
+     * move, taking a model that simulated fifty-nine bones down to none.
+     */
+    private static YsmModelPackage assemble(String modelId, YSMGeoModel geometry, Map<String, byte[]> textures,
+                                            Map<String, int[]> textureInfo,
+                                            Map<String, com.ysmef.compat.ysm.script.ScriptAnim> allScriptAnims,
+                                            Map<String, String> extraAnimations,
+                                            Map<String, List<String>> animationControllers,
+                                            float widthScale, float heightScale, String defaultTexture,
+                                            long contentFingerprint) {
+        Map<String, com.ysmef.compat.ysm.script.ScriptAnim> scriptAnims = new LinkedHashMap<>();
+        BuiltinControllers builtin = builtinControllers();
+        com.ysmef.compat.model.runtime.YsmPhysicsBinding.Selection physics =
+                com.ysmef.compat.model.runtime.YsmPhysicsBinding.select(
+                        com.ysmef.compat.model.runtime.YsmPhysicsBinding.Sources.of(
+                                animationControllers, allScriptAnims,
+                                builtin.controllers(), builtin.animations(),
+                                com.ysmef.compat.model.EFMeshJsonWriter.simulatableBoneNames(geometry)));
+        String physicsAnimation = physics.animation();
+        // A physics animation inherited from the built-in set is not among this package's
+        // own files, and the runtime still has to evaluate it: carry the definition along.
+        if (physicsAnimation != null && !allScriptAnims.containsKey(physicsAnimation)) {
+            com.ysmef.compat.ysm.script.ScriptAnim inherited = builtin.animations().get(physicsAnimation);
+            if (inherited != null) {
+                allScriptAnims.put(physicsAnimation, inherited);
+            }
+        }
+        for (Map.Entry<String, com.ysmef.compat.ysm.script.ScriptAnim> entry : allScriptAnims.entrySet()) {
+            if (com.ysmef.compat.ysm.script.ScriptJson.isRuntimeRelevant(entry.getKey())
+                    || entry.getKey().equals(physicsAnimation)) {
+                scriptAnims.put(entry.getKey(), entry.getValue());
+            }
+        }
+        return new YsmModelPackage(modelId, geometry, textures, textureInfo, scriptAnims,
+                allScriptAnims, extraAnimations, animationControllers,
+                widthScale, heightScale, defaultTexture, contentFingerprint);
     }
 
     /**
@@ -454,23 +471,44 @@ public final class YsmModelPackage {
     private static void loadScriptAnims(Path animPath, Map<String, com.ysmef.compat.ysm.script.ScriptAnim> out,
                                         boolean overwrite) {
         try {
-            JsonObject root = JsonParser.parseString(readStringBounded(animPath)).getAsJsonObject();
-            JsonObject anims = root.has("animations") ? root.getAsJsonObject("animations") : null;
-            if (anims == null) {
-                return;
-            }
-            for (Map.Entry<String, JsonElement> entry : anims.entrySet()) {
-                if (overwrite || !out.containsKey(entry.getKey())) {
-                    out.put(entry.getKey(), com.ysmef.compat.ysm.script.ScriptJson.fromBedrock(
-                            entry.getKey(), entry.getValue().getAsJsonObject()));
-                }
-            }
+            mergeScriptAnims(readStringBounded(animPath), out, overwrite);
         } catch (Exception e) {
             // One broken animation file must not abort the whole package, but it
             // must not be invisible either (it silently dropped every remaining
             // animation of the file before).
             com.ysmef.compat.YSMEpicFightCompat.LOGGER.warn(
                     "YSM-EF Compat: failed to parse animation file '{}': {}", animPath.getFileName(), e.toString());
+        }
+    }
+
+    /**
+     * The same for an animation file that lives inside a container rather than on disk - a legacy
+     * .ysm package has no path to name in a log, only the entry name it was stored under.
+     */
+    private static void loadScriptAnims(String fileName, byte[] data,
+                                        Map<String, com.ysmef.compat.ysm.script.ScriptAnim> out,
+                                        boolean overwrite) {
+        try {
+            mergeScriptAnims(new String(data, StandardCharsets.UTF_8), out, overwrite);
+        } catch (Exception e) {
+            com.ysmef.compat.YSMEpicFightCompat.LOGGER.warn(
+                    "YSM-EF Compat: failed to parse animation file '{}': {}", fileName, e.toString());
+        }
+    }
+
+    /** Merge every animation of one parsed Bedrock animation file into {@code out}. */
+    private static void mergeScriptAnims(String json, Map<String, com.ysmef.compat.ysm.script.ScriptAnim> out,
+                                         boolean overwrite) {
+        JsonObject root = JsonParser.parseString(json).getAsJsonObject();
+        JsonObject anims = root.has("animations") ? root.getAsJsonObject("animations") : null;
+        if (anims == null) {
+            return;
+        }
+        for (Map.Entry<String, JsonElement> entry : anims.entrySet()) {
+            if (overwrite || !out.containsKey(entry.getKey())) {
+                out.put(entry.getKey(), com.ysmef.compat.ysm.script.ScriptJson.fromBedrock(
+                        entry.getKey(), entry.getValue().getAsJsonObject()));
+            }
         }
     }
 
@@ -750,7 +788,18 @@ public final class YsmModelPackage {
             if (!isRegularFileInside(ysmFile, ysmRoot)) {
                 continue;
             }
-            byte[] decrypted = YsmFileCrypto.decryptYsmFile(readAllBytesBounded(ysmFile));
+            byte[] raw = readAllBytesBounded(ysmFile);
+            // Two container generations answer to the ".ysm" extension and they hold two different
+            // model representations: version 3 is a binary model package, versions 1 and 2 are a
+            // folder package in a file (main.json + arm.json + flat textures + animation files).
+            // Dispatching on the container header - instead of letting the binary reader fail on a
+            // file it cannot read - is what YSM itself does, and it is the only way the legacy
+            // generation can ever load.
+            int container = YsmFileCrypto.containerVersion(raw);
+            if (container == YsmFileCrypto.CONTAINER_LEGACY_I || container == YsmFileCrypto.CONTAINER_LEGACY_II) {
+                return loadLegacyContainer(modelId, root, YsmFileCrypto.decryptLegacyYsmFile(raw));
+            }
+            byte[] decrypted = YsmFileCrypto.decryptYsmFile(raw);
             YsmBinaryReader.BinaryModel binary = YsmBinaryReader.read(decrypted);
             YSMGeoModel geometry = YSMGeoModel.fromBinary(binary);
             // Compute the content fingerprint here while the decrypted payload
@@ -762,6 +811,156 @@ public final class YsmModelPackage {
                     binary.widthScale, binary.heightScale, binary.defaultTexture, contentFingerprint);
         }
         return null;
+    }
+
+    /**
+     * The animation files of YSM's flat legacy package layout, in YSM's own read order
+     * ({@code YSMFolderDeserializer#parseLegacyFormat}); the entry name minus
+     * {@code ".animation.json"} is the animation type key ("main", "arm", "extra", ...).
+     */
+    private static final String[] LEGACY_ANIMATION_FILES = {
+            "main.animation.json", "arm.animation.json", "extra.animation.json", "tac.animation.json",
+            "carryon.animation.json", "slashblade.animation.json", "tlm.animation.json"};
+
+    /** Texture entry excluded from the main texture set: it belongs to the arrow projectile. */
+    private static final String LEGACY_ARROW_TEXTURE = "arrow.png";
+
+    /**
+     * Build a package from a decoded legacy container (container versions 1/2).
+     *
+     * <p>The layout is YSM's <i>legacy folder</i> layout, read from memory instead of from a
+     * directory - {@code YSMFolderDeserializer#parseLegacyFormat} over the file map, with the
+     * geometry from {@code main.json} and {@code arm.json}, every top-level {@code .png} as a
+     * texture, the fixed animation-file set above, and the wheel animation names from
+     * {@code info.json} or from the geometry's inline {@code ysm_extra_info}.
+     *
+     * <p>Deliberately name-driven, exactly like YSM: these containers carry whatever else their
+     * authors packed into them (.bbmodel sources, zips of older versions, notes, textures of other
+     * variants), and none of that belongs to the model.
+     *
+     * <p>There are no animation <i>controllers</i> in this layout - the flat generation predates
+     * them - so the physics binding falls back to YSM's built-in default controller set, exactly as
+     * it does for a folder package that declares none.
+     */
+    private static YsmModelPackage loadLegacyContainer(String modelId, String root, Map<String, byte[]> files) {
+        byte[] mainData = files.get("main.json");
+        byte[] armData = files.get("arm.json");
+        if (mainData == null || armData == null) {
+            com.ysmef.compat.YSMEpicFightCompat.LOGGER.warn(
+                    "YSM-EF Compat: legacy package '{}' has no {}.json; a legacy package must carry both "
+                            + "main.json and arm.json", modelId, mainData == null ? "main" : "arm");
+            return null;
+        }
+        YSMGeoModel geometry = YSMGeoModel.parse(new String(mainData, StandardCharsets.UTF_8));
+        if (geometry == null) {
+            com.ysmef.compat.YSMEpicFightCompat.LOGGER.warn(
+                    "YSM-EF Compat: legacy package '{}' has no minecraft:geometry in main.json", modelId);
+            return null;
+        }
+
+        // Top-level *.png only, arrow.png excluded. The map keeps the container's own entry
+        // order, which is what decides the default texture - the same order YSM sees, because it
+        // reads the same map.
+        Map<String, byte[]> textures = new LinkedHashMap<>();
+        for (Map.Entry<String, byte[]> entry : files.entrySet()) {
+            String name = entry.getKey();
+            if (name.indexOf('/') >= 0 || !name.endsWith(".png") || name.equals(LEGACY_ARROW_TEXTURE)) {
+                continue;
+            }
+            textures.put(extractFileName(name), entry.getValue());
+        }
+        if (textures.isEmpty()) {
+            com.ysmef.compat.YSMEpicFightCompat.LOGGER.warn(
+                    "YSM-EF Compat: legacy package '{}' carries no top-level texture", modelId);
+            return null;
+        }
+
+        Map<String, com.ysmef.compat.ysm.script.ScriptAnim> allScriptAnims = new LinkedHashMap<>();
+        for (String animationFile : LEGACY_ANIMATION_FILES) {
+            byte[] data = files.get(animationFile);
+            if (data == null) {
+                continue;
+            }
+            String animationKey = animationFile.substring(0, animationFile.length() - ".animation.json".length());
+            // Same precedence as the folder path: the "extra" file wins on a name collision.
+            loadScriptAnims(animationFile, data, allScriptAnims, "extra".equals(animationKey));
+        }
+
+        return assemble(modelId, geometry, textures, java.util.Collections.emptyMap(), allScriptAnims,
+                legacyExtraAnimations(files, mainData), java.util.Collections.emptyMap(),
+                0.7f, 0.7f, textures.keySet().iterator().next(),
+                contentFingerprintOfLegacy(root, modelId, files));
+    }
+
+    /**
+     * The wheel-selectable animation names of a legacy package: {@code extra_animation_names} is a
+     * list of display names whose index is the animation name {@code extra<i>}.
+     *
+     * <p>Two places declare it and the precedence is YSM's: {@code info.json} (read with
+     * {@code overwrite = true}) wins over the {@code ysm_extra_info} block inside the geometry's
+     * {@code description} (read with {@code overwrite = false}, so it only fills what is still
+     * empty). 75 of the 170 legacy packages in the local corpus declare their names only in the
+     * geometry - reading just one of the two sources would silently drop the wheel animations of
+     * those models.
+     *
+     * <p>Package-private rather than private so the precedence can be tested without an install.
+     */
+    static Map<String, String> legacyExtraAnimations(Map<String, byte[]> files, byte[] mainData) {
+        Map<String, String> extraAnimations = new LinkedHashMap<>();
+        byte[] infoData = files.get("info.json");
+        if (infoData != null) {
+            try {
+                applyLegacyExtraAnimationNames(
+                        JsonParser.parseString(new String(infoData, StandardCharsets.UTF_8)).getAsJsonObject(),
+                        extraAnimations, true);
+            } catch (Exception e) {
+                com.ysmef.compat.YSMEpicFightCompat.LOGGER.warn(
+                        "YSM-EF Compat: failed to parse a legacy package's info.json: {}", e.toString());
+            }
+        }
+        try {
+            applyLegacyExtraAnimationNames(legacyGeometryExtraInfo(mainData), extraAnimations, false);
+        } catch (Exception e) {
+            com.ysmef.compat.YSMEpicFightCompat.LOGGER.warn(
+                    "YSM-EF Compat: failed to read a legacy package's ysm_extra_info: {}", e.toString());
+        }
+        return extraAnimations;
+    }
+
+    /**
+     * The {@code description.ysm_extra_info} block of a legacy geometry file, or null when it has
+     * none. Read here rather than carried on {@link YSMGeoModel}: the geometry model is an input of
+     * the conversion fingerprint, and this metadata plays no part in the mesh.
+     */
+    private static JsonObject legacyGeometryExtraInfo(byte[] mainData) {
+        JsonObject root = JsonParser.parseString(new String(mainData, StandardCharsets.UTF_8)).getAsJsonObject();
+        JsonElement geometries = root.get("minecraft:geometry");
+        if (geometries == null || !geometries.isJsonArray() || geometries.getAsJsonArray().isEmpty()) {
+            return null;
+        }
+        JsonElement description = geometries.getAsJsonArray().get(0).getAsJsonObject().get("description");
+        if (description == null || !description.isJsonObject()) {
+            return null;
+        }
+        JsonElement extraInfo = description.getAsJsonObject().get("ysm_extra_info");
+        return extraInfo != null && extraInfo.isJsonObject() ? extraInfo.getAsJsonObject() : null;
+    }
+
+    /** Apply one source's {@code extra_animation_names} list; see {@link #legacyExtraAnimations}. */
+    private static void applyLegacyExtraAnimationNames(JsonObject source, Map<String, String> out,
+                                                       boolean overwrite) {
+        if (source == null || !source.has("extra_animation_names")
+                || !source.get("extra_animation_names").isJsonArray()) {
+            return;
+        }
+        if (!overwrite && !out.isEmpty()) {
+            return;
+        }
+        out.clear();
+        JsonArray names = source.getAsJsonArray("extra_animation_names");
+        for (int i = 0; i < names.size(); i++) {
+            out.put("extra" + i, names.get(i).getAsString());
+        }
     }
 
     /**
@@ -872,6 +1071,26 @@ public final class YsmModelPackage {
     }
 
     /**
+     * The same idea for a legacy container: FNV-1a 64 over the container's files, sorted by name so
+     * the value cannot depend on the packer's entry order. Returned by the package loader and by
+     * {@link #contentFingerprint(String)} so a legacy package's manifest entry matches whichever of
+     * the two computed it.
+     */
+    private static long contentFingerprintOfLegacy(String root, String modelId, Map<String, byte[]> files) {
+        long hash = 0xcbf29ce484222325L;
+        hash = fnv1a(hash, root + '/' + modelId);
+        List<String> names = new ArrayList<>(files.keySet());
+        Collections.sort(names);
+        for (String name : names) {
+            byte[] data = files.get(name);
+            hash = fnv1a(hash, name);
+            hash = fnv1a(hash, Long.toString(data.length));
+            hash = fnv1aBytes(hash, data);
+        }
+        return hash;
+    }
+
+    /**
      * Content-based fingerprint of the model's source files (FNV-1a 64 over
      * relative paths and file contents; binary .ysm packages are decrypted
      * first, so re-encryption with a fresh key/iv still yields the same value).
@@ -896,8 +1115,14 @@ public final class YsmModelPackage {
                 Path base = rootPath.resolve(relative).normalize();
                 if (modelId.endsWith(".ysm")) {
                     if (isRegularFileInside(base, rootPath)) {
-                        return contentFingerprintOfBinary(root, modelId,
-                                YsmFileCrypto.decryptYsmFile(readAllBytesBounded(base)));
+                        byte[] raw = readAllBytesBounded(base);
+                        int container = YsmFileCrypto.containerVersion(raw);
+                        if (container == YsmFileCrypto.CONTAINER_LEGACY_I
+                                || container == YsmFileCrypto.CONTAINER_LEGACY_II) {
+                            return contentFingerprintOfLegacy(root, modelId,
+                                    YsmFileCrypto.decryptLegacyYsmFile(raw));
+                        }
+                        return contentFingerprintOfBinary(root, modelId, YsmFileCrypto.decryptYsmFile(raw));
                     }
                     continue;
                 }

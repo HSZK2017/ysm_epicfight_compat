@@ -15,8 +15,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * Suppresses YSM's custom fishing hook model while the owner is in Epic Fight
  * battle mode (same return-value convention as YsmUnobfProjectileRenderMixin).
  * The un-obfuscated target (CustomFishingHookRenderer#tryRenderCustomHook)
- * exists with this exact signature in the official YSM 2.6.5 release, OpenYSM
- * and ModernYSM alike.
+ * exists with this exact signature in OpenYSM and ModernYSM. It does NOT exist
+ * in the official 2.6.5 release, which has no readable class under
+ * com/elfmcys/yesstevemodel/client/; that build is covered by
+ * YsmFishingHookRenderMixin.
  *
  * The obfuscated-build counterpart is YsmFishingHookRenderMixin. This
  * injection is non-critical (require = 0).

@@ -8,11 +8,12 @@ package com.ysmef.compat;
  * per-frame timings) are OFF by default: during normal gameplay they only
  * cost render-thread time (log4j formatting + append per skipped draw, which
  * toggles between reasons every few frames with TLM maids / GUI previews).
- * Set the "ysm_ef_compat.diag" system property to enable them again.
+ * Set the "ysm_ef_compat.diag" system property to enable them again; as with every flag here,
+ * {@code =false} turns it off rather than on (see {@link SystemFlags}).
  */
 public final class YsmDiag {
 
-    private static final boolean ENABLED = System.getProperty("ysm_ef_compat.diag") != null;
+    private static final boolean ENABLED = SystemFlags.enabled("ysm_ef_compat.diag");
 
     private YsmDiag() {}
 

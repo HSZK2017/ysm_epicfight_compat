@@ -14,8 +14,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * Suppresses YSM's custom vehicle models (boats, minecarts, ...) while a
  * passenger is in Epic Fight battle mode (same return-value convention as
  * YsmUnobfProjectileRenderMixin). The un-obfuscated target
- * (CustomVehicleRenderer#renderVehicle) exists with this exact signature in the
- * official YSM 2.6.5 release, OpenYSM and ModernYSM alike.
+ * (CustomVehicleRenderer#renderVehicle) exists with this exact signature in
+ * OpenYSM and ModernYSM. It does NOT exist in the official 2.6.5 release, whose
+ * jar has no readable class under com/elfmcys/yesstevemodel/client/ at all; that
+ * build is covered by YsmVehicleRenderMixin.
  *
  * The obfuscated-build counterpart is YsmVehicleRenderMixin. This injection is
  * non-critical (require = 0).

@@ -54,6 +54,11 @@ import java.util.function.IntPredicate;
  * in {@code buildSegment}, so a part list that names such a bone - an author's physics
  * animation naming a mapped bone, or a bone that carries no quads at all - yields no
  * segment for it rather than a segment with a lever pointing at someone else's geometry.
+ * Two further tests ask whether the pivot is a point the piece could hang from at all:
+ * {@link #wrapsPivot} (its geometry closes <i>around</i> the pivot) and
+ * {@link #risesOffPivot} (its geometry stands <i>above</i> a pivot that is not on it). Both
+ * are the same defect - a rotation about a point the piece is not attached to - and both keep
+ * the piece rigid on its joint instead.
  *
  * <h2>The moment arm</h2>
  *
@@ -94,6 +99,555 @@ public final class YsmPhysicsParts {
 
     /** A lever shorter than this is a bone sitting on its own pivot; it cannot swing. */
     private static final float MIN_LEVER = 0.01F;
+
+    /**
+     * The same number, for the leg diagnostic: a piece that was dropped for having no lever has to be
+     * able to say so with the threshold the rule used, rather than with a copy of it that can drift.
+     */
+    static float minimumLever() {
+        return MIN_LEVER;
+    }
+
+    /**
+     * The spread, largest eigenvalue over smallest, below which a bone's own geometry is read as
+     * surrounding its pivot rather than hanging from it. See {@link #directionSpread}.
+     *
+     * <p>2.6, and it is a <b>gate</b>, not the rule: the measurement that chose it is in
+     * {@link #wrapsPivot}, and it is on the corpus report
+     * {@code build/reports/ysm-physics-wrap-corpus.md} (test {@code DefectCalibrationCorpusSweepTest}).
+     * On the shipped skirt band {@code X_yiqun1} the spread is 2.313, on the panel below it
+     * ({@code X_qunzi1}) 2.786, and on that model's hair, fringe and ear bones 2.16 - 85.
+     */
+    private static final float WRAPS_PIVOT_MAX_SPREAD = 2.6F;
+
+    /**
+     * How far from the body's left-right axis a bone's pivot must sit, as a share of the half-width of
+     * its own geometry, before the geometry is read as a band <b>worn around</b> that axis.
+     *
+     * <p>One half: the pivot is at or beyond the middle of the piece's half-width, i.e. out at its
+     * rim. {@code X_yiqun1} measures 0.70, the panel below it 0.15, and every other physics bone of
+     * that model 0.00.
+     */
+    private static final float WRAPS_PIVOT_MIN_AXIS_OFFSET = 0.5F;
+
+    /**
+     * How far a piece's own x span may be off-centre from the body's left-right axis, as a share of
+     * its half-width, for it to count as worn around the body rather than as a limb, a held item or
+     * a decoration that merely crosses the axis.
+     *
+     * <p>Thirty per cent. This is the condition that keeps the rule on garments: a trouser leg or a
+     * hand that partly crosses the mirror plane is lopsided by far more than this about it, while a
+     * skirt, a belt or an armour ring is modelled symmetrically.
+     */
+    private static final float WRAPS_PIVOT_MAX_AXIS_ASYMMETRY = 0.30F;
+
+    /**
+     * The least upward tilt of a piece's own geometry away from its pivot, as the up-component of the
+     * unit direction from the pivot to that geometry's centroid, before the piece is read as one the
+     * pivot <b>cannot be hanging from</b>. See {@link #risesFromPivot}.
+     *
+     * <p>Ten per cent, i.e. about 5.7 degrees above horizontal, and it is a <b>direction</b> margin
+     * rather than a distance: what the rule reads is the sign of the up-component of a unit vector,
+     * so the number is dimensionless and a two-block thigh and a two-centimetre charm are judged by
+     * the same constant. It is not zero for two reasons, both measured rather than assumed:
+     *
+     * <ul>
+     *   <li><b>A sign is not a direction.</b> The up-component of a piece whose centroid sits level
+     *       with its pivot is float noise, and the sign of that noise is a coin flip: a piece would
+     *       then be simulated or not depending on which way its last vertex rounded. The margin has
+     *       to be comfortably above the noise of a sum of a few thousand floats, and 0.10 of the
+     *       lever is some ten orders of magnitude above it.</li>
+     *   <li><b>It is not where the two populations separate, and the measurement says so.</b> Over the
+     *       906-package corpus the up-components do <i>not</i> form two clusters with an empty band
+     *       between them: 18,377 of 44,576 candidate bones (41 per cent) have a centroid above their
+     *       pivot, the band -0.05..+0.30 holds 4,174 of them, and the affected-model count falls only
+     *       from 731 at margin 0 to 723 at margin 0.50. The margin's job is therefore only to keep the
+     *       sign of a level piece out of the decision - 0.10 is the smallest round number that is
+     *       comfortably above float noise and below every piece the numbers in {@link #risesOffPivot}
+     *       are about (the reported thigh measures +0.996, the maid's tail tip +0.949). The rule's
+     *       precision comes from the second condition, not from this number.</li>
+     * </ul>
+     *
+     * <p>What it deliberately is <b>not</b>: a distance in blocks. The neighbouring candidate - "the
+     * pivot is more than N blocks outside its own geometry" - was measured at 0.048 blocks on the
+     * reported piece against 0.037 on the worst piece of the known-good model
+     * ({@code wine_fox/01_taisho_maid}), a factor of 1.3, and a rule whose margin is 1.3x on the
+     * models it was calibrated against is a rule fitted to one file. The direction separates the same
+     * two pieces by a wide margin on both models.
+     */
+    private static final float RISES_FROM_PIVOT_MIN_UP_SHARE = 0.10F;
+
+    /**
+     * Whether a piece's own geometry <b>rises from</b> its pivot: the first half of
+     * {@link #risesOffPivot}, which is the rule that ships.
+     *
+     * <p>This is the direction test on its own, and it is kept as its own method because it is the
+     * half that has a threshold: the corpus calibration sweeps it, the leg diagnostic prints the
+     * number it reads, and the second half - containment - is a boolean with nothing to tune. Read
+     * {@link #risesOffPivot} for why the pair is the rule and this alone is not.
+     *
+     * <h2>The defect this exists for</h2>
+     *
+     * <p>{@code RightLegclothes2} of the reported {@code EKU(1.0.ysm}: its authored pivot is carried
+     * through the bone's {@code T(p) R T(-p)} chain to {@code (0.022, 0.068, 0.004)} - <b>at the
+     * ankle</b> - while the geometry that part draws spans y 0.456..0.934, i.e. the thigh. The pivot
+     * is 0.388 blocks below the piece it is supposed to hinge, on a piece 0.478 blocks long, and the
+     * direction from that pivot to the piece's own centre of mass therefore points <b>up</b>: 174.8
+     * degrees from straight down on the deployed build, where every correctly hinged piece of the same
+     * model points down ({@code RightLegclothes1}, the other half of the same thigh and the same
+     * joint, measures 5.9). The solver has one spring per piece and no notion of "this pivot is not
+     * on this geometry": it swings each half of that thigh toward the world's vertical from its own
+     * rest, in opposite senses, each pinned at its 30 degree allowance - which is the thigh lying
+     * nearly horizontal and the pair splaying like 八.
+     *
+     * <h2>What the rule reads, and why it is the up-component and not the height</h2>
+     *
+     * <p>The piece's own {@code rest} is {@code centroid - pivot}, already measured in
+     * {@link #buildSegment} from that piece's own geometry and nothing else. A piece that hangs from
+     * its pivot has its mass below that pivot, so the direction points down and the up-component is
+     * negative. A piece whose geometry is entirely above its pivot cannot be hanging from it, and the
+     * length of the lever says nothing about that: it is the <i>direction</i> that is wrong, which is
+     * why this is a share of the lever rather than a distance.
+     *
+     * @param rest  the direction from the piece's pivot to its own geometry's centroid, bind space
+     * @param lever {@code |rest|}, blocks
+     */
+    static boolean risesFromPivot(Vector3f rest, float lever) {
+        return risesFromPivot(rest, lever, RISES_FROM_PIVOT_MIN_UP_SHARE);
+    }
+
+    /**
+     * The margin the rule above ships, so a report or a test can name the number production uses
+     * instead of repeating it - a second copy of a threshold is how a calibration report ends up
+     * describing a rule nobody runs.
+     */
+    static float risesFromPivotMargin() {
+        return RISES_FROM_PIVOT_MIN_UP_SHARE;
+    }
+
+    /**
+     * The same test at an explicit margin, so the corpus calibration can sweep the threshold and a
+     * test can pin both sides of it without a second copy of the arithmetic.
+     */
+    static boolean risesFromPivot(Vector3f rest, float lever, float minUpShare) {
+        if (rest == null || !YsmDynamicBoneSolver.isFinite(rest)
+                || !Float.isFinite(lever) || lever <= 0.0F) {
+            return false;
+        }
+        return rest.y > lever * minUpShare;
+    }
+
+    /**
+     * How far outside a piece's own geometry its pivot has to sit before the pivot is read as
+     * <b>not a point on the piece</b>. See {@link #pivotOnGeometry}.
+     *
+     * <p>One tenth of a millimetre, and it is float noise on a box's faces rather than a margin: the
+     * question is containment - is this pivot on the piece at all - and the answer is allowed to be
+     * "yes" only when the pivot is inside the box the piece occupies, to within rounding. It is
+     * deliberately <b>not</b> a tuned distance. An earlier round measured "the pivot is more than N
+     * blocks outside its own geometry" and could not place N: the reported model's shin piece measures
+     * 0.048 blocks against 0.037 on the worst piece of the known-good model, a factor of 1.3, which is
+     * a rule fitted to one file. Containment has no N: a pivot inside the piece is on it, one outside
+     * is not, and the distance does not enter.
+     */
+    private static final float PIVOT_ON_GEOMETRY_SLACK = 1.0E-4F;
+
+    /**
+     * Whether a pivot is still <b>on</b> the piece it belongs to: inside the bounding box of that
+     * piece's own geometry (to within {@link #PIVOT_ON_GEOMETRY_SLACK}).
+     *
+     * <p>This is the second half of {@link #risesOffPivot}, and the reason the first half alone is not
+     * the rule. Measured over the corpus, a piece whose centre of mass sits above its pivot is common
+     * and usually harmless: ears, a hat, hair ornaments and a fox's tail tip all stand up from a pivot
+     * that is still <i>on</i> them, and a hinge on the piece turns it correctly however it is
+     * oriented. What cannot be hinged is a pivot that is not on the piece at all - the reported thigh
+     * piece's pivot is 0.388 blocks below its own geometry, at the ankle - and containment is the
+     * boolean that separates the two.
+     *
+     * <p>The bounding box is deliberately the <i>loose</i> version of "on the piece": a pivot inside
+     * the box of a concave piece, or in the empty corner of an L, reads as on the piece and the piece
+     * keeps its simulation. The error is in the safe direction - a piece that should have been left
+     * rigid merely keeps swinging - and it is why this test is paired with the direction one rather
+     * than used alone.
+     */
+    static boolean pivotOnGeometry(List<Vector3f> vertices, Vector3f pivot) {
+        if (vertices == null || pivot == null || !YsmDynamicBoneSolver.isFinite(pivot)) {
+            return false;
+        }
+        float minX = Float.MAX_VALUE;
+        float minY = Float.MAX_VALUE;
+        float minZ = Float.MAX_VALUE;
+        float maxX = -Float.MAX_VALUE;
+        float maxY = -Float.MAX_VALUE;
+        float maxZ = -Float.MAX_VALUE;
+        int used = 0;
+        for (Vector3f vertex : vertices) {
+            if (vertex == null || !YsmDynamicBoneSolver.isFinite(vertex)) {
+                continue;
+            }
+            minX = Math.min(minX, vertex.x);
+            minY = Math.min(minY, vertex.y);
+            minZ = Math.min(minZ, vertex.z);
+            maxX = Math.max(maxX, vertex.x);
+            maxY = Math.max(maxY, vertex.y);
+            maxZ = Math.max(maxZ, vertex.z);
+            used++;
+        }
+        if (used < MIN_VERTICES) {
+            // Too little geometry to say the pivot is on it: answered "no", so the caller keeps the
+            // piece simulated rather than dropping it on a measurement that could not be made.
+            return false;
+        }
+        return pivot.x >= minX - PIVOT_ON_GEOMETRY_SLACK && pivot.x <= maxX + PIVOT_ON_GEOMETRY_SLACK
+                && pivot.y >= minY - PIVOT_ON_GEOMETRY_SLACK && pivot.y <= maxY + PIVOT_ON_GEOMETRY_SLACK
+                && pivot.z >= minZ - PIVOT_ON_GEOMETRY_SLACK && pivot.z <= maxZ + PIVOT_ON_GEOMETRY_SLACK;
+    }
+
+    /**
+     * How far outside its own geometry a pivot sits, in blocks: the distance from the pivot to the
+     * bounding box of that geometry, 0 when the pivot is inside it. Reported by the rule's log line,
+     * because "the pivot is off the piece" and "the pivot is a whole limb off the piece" are the same
+     * decision and very different pictures.
+     */
+    static double pivotGapFromGeometry(List<Vector3f> vertices, Vector3f pivot) {
+        if (vertices == null || pivot == null || !YsmDynamicBoneSolver.isFinite(pivot)) {
+            return Double.NaN;
+        }
+        float minX = Float.MAX_VALUE;
+        float minY = Float.MAX_VALUE;
+        float minZ = Float.MAX_VALUE;
+        float maxX = -Float.MAX_VALUE;
+        float maxY = -Float.MAX_VALUE;
+        float maxZ = -Float.MAX_VALUE;
+        int used = 0;
+        for (Vector3f vertex : vertices) {
+            if (vertex == null || !YsmDynamicBoneSolver.isFinite(vertex)) {
+                continue;
+            }
+            minX = Math.min(minX, vertex.x);
+            minY = Math.min(minY, vertex.y);
+            minZ = Math.min(minZ, vertex.z);
+            maxX = Math.max(maxX, vertex.x);
+            maxY = Math.max(maxY, vertex.y);
+            maxZ = Math.max(maxZ, vertex.z);
+            used++;
+        }
+        if (used < MIN_VERTICES) {
+            return Double.NaN;
+        }
+        double dx = Math.max(0.0D, Math.max(minX - pivot.x, pivot.x - maxX));
+        double dy = Math.max(0.0D, Math.max(minY - pivot.y, pivot.y - maxY));
+        double dz = Math.max(0.0D, Math.max(minZ - pivot.z, pivot.z - maxZ));
+        return Math.sqrt(dx * dx + dy * dy + dz * dz);
+    }
+
+    /**
+     * The rule as it ships: <b>the piece's geometry rises off a pivot that is not on it, so it cannot
+     * be hanging from that pivot</b> - the vertical twin of {@link #wrapsPivot}, and the same defect
+     * class, a rotation about a point the piece is not attached to.
+     *
+     * <p>Two conditions, and each is there because the other alone is wrong on a measured model:
+     *
+     * <ol>
+     *   <li><b>The direction</b> ({@link #risesFromPivot}): the piece's own {@code rest} points upward
+     *       by more than {@link #RISES_FROM_PIVOT_MIN_UP_SHARE} of its lever. A piece that hangs from
+     *       its pivot has its mass below it.</li>
+     *   <li><b>The containment</b> ({@link #pivotOnGeometry}): the pivot is <i>not</i> inside the piece
+     *       it draws. A pivot on the piece is a hinge; the piece turns correctly about it whatever
+     *       direction it is drawn in.</li>
+     * </ol>
+     *
+     * <h2>Why the direction alone is not enough, and what it costs</h2>
+     *
+     * <p>Measured on {@code wine_fox/01_taisho_maid} - a model the user has accepted - the direction
+     * test alone drops four of her fifty-nine simulated pieces: {@code Tail6}, {@code Tail7} (up-shares
+     * 0.999 and 0.913) and {@code Tail5} (0.949), the tip of her tail, and {@code BaseHair} (0.101).
+     * All four have their pivot <b>inside</b> their own geometry - gaps of exactly 0.000 blocks - so
+     * all four are hinged correctly and merely drawn upward, and freezing them would take the tip off a
+     * tail this mod is meant to swing. On the reported {@code EKU(1.0.ysm} the direction test drops
+     * thirteen of eighty-nine, of which nine are the same kind of thing: both ears, a hat, hairpins and
+     * ornaments, every one of them pivoted on itself. The four pieces it drops whose pivot is off them
+     * are exactly the four the defect is made of - {@code RightLegclothes2} (gap 0.388 blocks,
+     * displacement 0.322), {@code LeftLowerclothes1} (0.053, 0.199), {@code LeftLowerclothes2}
+     * (0.048, 0.115), {@code RightLowerclothes2} (0.048, 0.119) - and those are the two models'
+     * numbers that matter: what the rule drops on the reported model is the defect, and what it drops
+     * on the accepted one is nothing.
+     *
+     * <p>Over the corpus's 906 packages (736 parseable) the second condition halves the blast radius:
+     * of the 21,607 bones the production classifier would simulate, the direction test alone drops
+     * 2,267 in 536 models (10.5 per cent), and the shipped pair drops <b>1,098</b> in <b>349</b> models
+     * (5.1 per cent) - every one of them a piece whose pivot is off the geometry it moves, and none of
+     * them already dropped by {@link #wrapsPivot}. Of the 1,098, 779 have pivots five centimetres or
+     * more outside their own geometry and 78 sit under five millimetres outside it (the residual cost
+     * of a containment test at zero, recorded in {@code build/reports/ysm-hang-rule-corpus.md}).
+     *
+     * <p>A piece this test rejects yields no segment, so its geometry stays rigid on its joint and is
+     * drawn exactly where the pose puts it - the same answer the reference implementation gives for a
+     * piece whose pivot is not on it. A child's parent link resolves to the nearest <i>surviving</i>
+     * segment (see {@code resolveParent}), so a strand whose top piece is dropped hangs off the joint
+     * instead of tearing.
+     *
+     * @param vertices the piece's own drawn geometry, in mesh bind space
+     * @param pivot    its authored pivot, in the same space
+     * @param rest     {@code centroid - pivot}, the same space
+     * @param lever    {@code |rest|}, blocks
+     */
+    static boolean risesOffPivot(List<Vector3f> vertices, Vector3f pivot, Vector3f rest, float lever) {
+        if (vertices == null || vertices.size() < MIN_VERTICES || pivot == null
+                || !YsmDynamicBoneSolver.isFinite(pivot)) {
+            // No geometry to say the pivot is off: the piece keeps its simulation. "Cannot tell" must
+            // never be read as "drop it" - the failure mode of a wrong drop is a piece of a garment
+            // that stops moving with nothing in the log to explain it.
+            return false;
+        }
+        return risesFromPivot(rest, lever) && !pivotOnGeometry(vertices, pivot);
+    }
+
+    /**
+     * Whether a bone's own geometry <b>sits about</b> its pivot instead of hanging from it: a skirt
+     * band round the hips, a belt, a scalp - a piece whose pivot is a point on its rim, so that any
+     * rotation about that pivot slides the piece off the body it is worn on.
+     *
+     * <h2>The defect this exists for</h2>
+     *
+     * <p>{@code X_yiqun1} of the shipped {@code 兽耳酱x1} / {@code NagaU_Kemomimi} is an outer skirt
+     * band: 1512 vertex slots spanning x -0.214..0.214, y 0.582..0.972, z -0.196..0.193, with its
+     * authored pivot carried through the same {@code T(p) R T(-p)} chain the mesh was baked with to
+     * <b>(+0.150, 0.727, -0.025)</b> - on the band's own edge, 0.150 blocks off the centre of
+     * (0.000, 0.752, -0.010). {@link #buildSegment} therefore measures {@code rest = centroid -
+     * pivot = (-0.150, +0.026, +0.014)}, a direction that is 0.98 horizontal, and the solver's spring
+     * - whose target direction is a blend of that rest and the world's downward - holds the band at
+     * a permanent ~22 degrees of tilt. The game's own log says so: {@code X_yiqun1 ...
+     * axis=(0.59,0.0,0.81), rest=(-0.79,0.17,0.58), moved 0.079 blocks}, stable across frames
+     * 240/480/720/960, and it moves the hem about 0.2 blocks.
+     *
+     * <h2>The rule, and the measurement that shaped it</h2>
+     *
+     * <p>The isotropy of the directions from the pivot to the vertices - large for a strand, near 1
+     * for a shell - was measured first, as the natural reading of "closes around its pivot", and it
+     * <b>does not separate this band from the pieces that must keep swinging</b>: {@code X_yiqun1}
+     * scores 2.313, the panel below it ({@code X_qunzi1}, which hangs correctly from its own top and
+     * must stay simulated) 2.786, the model's hair 7.34, its fringe 5.35 and its ears 2.16. Any
+     * threshold that drops the band at 2.313 also drops the ears at 2.160, and the margin to the
+     * panel is 0.47. Eight further readings of the same idea (octant coverage, the pivot's place
+     * inside the geometry's bounding box, the reference implementation's "reaches back past the
+     * pivot", the local and global centre offsets, the offset-covariance eigenvalue ratio) were
+     * measured against the same fifteen bones and all of them either missed the band or hit a piece
+     * that must swing; the numbers are in the corpus report. What does separate it is the property
+     * the reader can see: <b>the piece is a band round the body's own left-right axis, and the pivot
+     * is out at its rim</b>. So the rule is:
+     *
+     * <ol>
+     *   <li>the piece's own x span is centred on the model's mirror plane
+     *       (x = 0) within {@link #WRAPS_PIVOT_MAX_AXIS_ASYMMETRY} of its half-width, so it is worn
+     *       around the trunk rather than being a limb or a decoration that crosses the axis;</li>
+     *   <li>the pivot sits at least {@link #WRAPS_PIVOT_MIN_AXIS_OFFSET} of that half-width away from
+     *       the axis - it is on the rim, not on the axis; and</li>
+     *   <li>the geometry's unit directions from the pivot have a spread below
+     *       {@link #WRAPS_PIVOT_MAX_SPREAD}, so the piece surrounds the pivot rather than hanging off
+     *       one side of it. This gate is what keeps the rule off the strand-like bones that satisfy
+     *       the first two by accident.</li>
+     * </ol>
+     *
+     * <p>Calibrated over the 906-model corpus (730 packages parseable): it drops <b>78 of the 42933
+     * bones</b> that carry geometry, tier 0, a joint and no direct mapping (0.18 per cent, in 64 of
+     * 724 models), of which <b>28 of the 21121 bones the production classifier would actually
+     * simulate</b> (0.13 per cent), in 21 models. On the skirt model it selects {@code X_yiqun1} and
+     * its three duplicates and nothing else: {@code X_qunzi1}, {@code X_Hair1}, the fringe, the
+     * braid and both ears keep their segments.
+     *
+     * <p>A bone that fails this test is dropped from the simulation - the same answer the reference
+     * implementation gives for a scalp or a band - so its geometry stays rigid on its joint. Its
+     * children are unaffected in structure: the parent link resolves to the nearest <i>surviving</i>
+     * segment (see {@code resolveParent}), and on the shipped skirt the bones below the band are
+     * siblings of it rather than its children, so nothing about them changes.
+     *
+     * @param vertices the bone's own drawn geometry, in mesh bind space
+     * @param pivot    its authored pivot, in the same space
+     */
+    static boolean wrapsPivot(List<Vector3f> vertices, Vector3f pivot) {
+        return bandAxisOffset(vertices, pivot) >= WRAPS_PIVOT_MIN_AXIS_OFFSET
+                && directionSpread(vertices, pivot) < WRAPS_PIVOT_MAX_SPREAD;
+    }
+
+    /**
+     * How far the pivot sits from the body's left-right axis (x = 0), as a share of the half-width of
+     * the bone's own geometry, for a piece that is <i>centred</i> on that axis. Zero for a piece that
+     * is not centred on the axis at all, or that has no usable width - the safe answer, because it
+     * means "this is not a band round the body".
+     *
+     * <p>Measured in the mesh's bind space, whose x is the model's own x (the writer bakes the model
+     * space and scales it, x by {@code width_scale}), so x = 0 is the model's mirror plane.
+     */
+    static float bandAxisOffset(List<Vector3f> vertices, Vector3f pivot) {
+        if (vertices == null || pivot == null || vertices.size() < MIN_VERTICES) {
+            return 0.0F;
+        }
+        float minX = Float.MAX_VALUE;
+        float maxX = -Float.MAX_VALUE;
+        int used = 0;
+        for (Vector3f vertex : vertices) {
+            if (vertex == null || !YsmDynamicBoneSolver.isFinite(vertex)) {
+                continue;
+            }
+            minX = Math.min(minX, vertex.x);
+            maxX = Math.max(maxX, vertex.x);
+            used++;
+        }
+        float halfWidth = (maxX - minX) * 0.5F;
+        if (used < MIN_VERTICES || !(halfWidth > 1.0E-5F)) {
+            return 0.0F;
+        }
+        if (Math.abs(minX + maxX) > halfWidth * WRAPS_PIVOT_MAX_AXIS_ASYMMETRY) {
+            return 0.0F;
+        }
+        return Math.abs(pivot.x) / halfWidth;
+    }
+
+    /**
+     * How concentrated the directions from a pivot to a set of vertices are, as the ratio of the
+     * largest to the smallest eigenvalue of their unit-direction covariance: <b>1</b> when the
+     * geometry surrounds the pivot evenly (a sphere of directions), large when every vertex lies the
+     * same way from it (a strand).
+     *
+     * <p>The unit directions are used, not the offsets, and that is the whole of the measure's
+     * independence from size: a two-block braid and a ten-centimetre tuft of the same shape have the
+     * same spread, so one threshold serves both. Vertices sitting exactly on the pivot carry no
+     * direction and are skipped; a set too small to have a shape at all answers
+     * {@link Float#MAX_VALUE}, so "cannot tell" is never read as "wraps".
+     *
+     * <p>The covariance is symmetric and 3x3, so its eigenvalues come from a cyclic Jacobi rotation
+     * - a dozen lines, no library, no iteration to a tolerance the render thread has to pay for -
+     * and the ratio is finite unless the directions are exactly coplanar (then the smallest
+     * eigenvalue is 0 and the answer is capped at {@link #MAX_SPREAD}).
+     */
+    static float directionSpread(List<Vector3f> vertices, Vector3f pivot) {
+        if (vertices == null || pivot == null || vertices.size() < MIN_VERTICES) {
+            return Float.MAX_VALUE;
+        }
+        double xx = 0.0D;
+        double xy = 0.0D;
+        double xz = 0.0D;
+        double yy = 0.0D;
+        double yz = 0.0D;
+        double zz = 0.0D;
+        int used = 0;
+        for (Vector3f vertex : vertices) {
+            if (vertex == null || !YsmDynamicBoneSolver.isFinite(vertex)) {
+                continue;
+            }
+            float dx = vertex.x - pivot.x;
+            float dy = vertex.y - pivot.y;
+            float dz = vertex.z - pivot.z;
+            double length = Math.sqrt((double) dx * dx + (double) dy * dy + (double) dz * dz);
+            if (length < 1.0E-6D) {
+                continue;
+            }
+            double ux = dx / length;
+            double uy = dy / length;
+            double uz = dz / length;
+            xx += ux * ux;
+            xy += ux * uy;
+            xz += ux * uz;
+            yy += uy * uy;
+            yz += uy * uz;
+            zz += uz * uz;
+            used++;
+        }
+        if (used < MIN_VERTICES) {
+            return Float.MAX_VALUE;
+        }
+        double[][] matrix = {
+                {xx / used, xy / used, xz / used},
+                {xy / used, yy / used, yz / used},
+                {xz / used, yz / used, zz / used}};
+        double[] eigenvalues = jacobiEigenvalues(matrix);
+        double largest = Math.max(eigenvalues[0], Math.max(eigenvalues[1], eigenvalues[2]));
+        double smallest = Math.min(eigenvalues[0], Math.min(eigenvalues[1], eigenvalues[2]));
+        if (!(largest > 0.0D)) {
+            return Float.MAX_VALUE;
+        }
+        if (smallest <= 1.0E-9D) {
+            return MAX_SPREAD;
+        }
+        return (float) Math.min(MAX_SPREAD, largest / smallest);
+    }
+
+    /** The spread of a set of unit directions that is exactly coplanar, or one that is a single point. */
+    private static final float MAX_SPREAD = 1.0E6F;
+
+    /**
+     * The eigenvalues of a symmetric 3x3 matrix, by cyclic Jacobi rotations.
+     *
+     * <p>Eigenvalues only, and returned in place: the axes are not wanted, only the spread's
+     * largest-over-smallest ratio, and a decomposition that also had to keep the rotation matrix
+     * would be more code and more to get wrong for nothing. Package-private so the calibration sweep
+     * can read the same eigenvalues the rule is built from instead of re-deriving them.
+     */
+    static double[] jacobiEigenvalues(double[][] matrix) {
+        return jacobiEigen(matrix, null);
+    }
+
+    /**
+     * The same rotation with the axes kept: {@code vectors}, when given, receives the columns of the
+     * accumulated rotation, so column {@code i} is the eigenvector of the returned eigenvalue
+     * {@code i} - the pair {@link #longAxisOf} needs to name the direction a piece is drawn along.
+     *
+     * <p>The accumulation is the same rotation applied to the identity that the sweep applies to the
+     * matrix, and it is written as one more column sweep inside the same loop rather than as a second
+     * pass, so the two cannot drift apart.
+     */
+    static double[] jacobiEigen(double[][] matrix, double[][] vectors) {
+        if (vectors != null) {
+            for (int i = 0; i < 3; i++) {
+                for (int j = 0; j < 3; j++) {
+                    vectors[i][j] = i == j ? 1.0D : 0.0D;
+                }
+            }
+        }
+        for (int sweep = 0; sweep < 12; sweep++) {
+            double off = Math.abs(matrix[0][1]) + Math.abs(matrix[0][2]) + Math.abs(matrix[1][2]);
+            if (off < 1.0E-12D) {
+                break;
+            }
+            for (int p = 0; p < 2; p++) {
+                for (int q = p + 1; q < 3; q++) {
+                    double apq = matrix[p][q];
+                    if (Math.abs(apq) < 1.0E-15D) {
+                        continue;
+                    }
+                    double theta = (matrix[q][q] - matrix[p][p]) / (2.0D * apq);
+                    double t = Math.signum(theta) / (Math.abs(theta) + Math.sqrt(theta * theta + 1.0D));
+                    if (theta == 0.0D) {
+                        t = 1.0D;
+                    }
+                    double c = 1.0D / Math.sqrt(t * t + 1.0D);
+                    double s = t * c;
+                    for (int k = 0; k < 3; k++) {
+                        double akp = matrix[k][p];
+                        double akq = matrix[k][q];
+                        matrix[k][p] = c * akp - s * akq;
+                        matrix[k][q] = s * akp + c * akq;
+                    }
+                    for (int k = 0; k < 3; k++) {
+                        double apk = matrix[p][k];
+                        double aqk = matrix[q][k];
+                        matrix[p][k] = c * apk - s * aqk;
+                        matrix[q][k] = s * apk + c * aqk;
+                    }
+                    if (vectors != null) {
+                        for (int k = 0; k < 3; k++) {
+                            double vkp = vectors[k][p];
+                            double vkq = vectors[k][q];
+                            vectors[k][p] = c * vkp - s * vkq;
+                            vectors[k][q] = s * vkp + c * vkq;
+                        }
+                    }
+                }
+            }
+        }
+        return new double[]{matrix[0][0], matrix[1][1], matrix[2][2]};
+    }
 
     /** The torso joint id, whose pieces hang where the legs are. */
     private static final int JOINT_TORSO = 7;
@@ -148,17 +702,33 @@ public final class YsmPhysicsParts {
     public record Segment(int boneIndex, String boneName, int joint, Vector3f bindPivot,
                           Vector3f bindRest, float lever, float radius, float mass,
                           float frequency, float coefficient, float maxAngle, int parent,
-                          int[] parts, boolean authored, int[] neighbours) {
+                          int[] parts, boolean authored, int[] neighbours,
+                          Category category) {
+
+        /**
+         * The same segment without a family: the name is asked instead.
+         *
+         * <p>For callers that build a segment by hand - a test that wants one piece with a given lever
+         * should not have to invent a skeleton for it. The frame path always goes through
+         * {@link YsmPhysicsParts#build}, which fills the family from the container rule, so nothing a
+         * player sees depends on this convenience.
+         */
+        public Segment(int boneIndex, String boneName, int joint, Vector3f bindPivot,
+                       Vector3f bindRest, float lever, float radius, float mass,
+                       float frequency, float coefficient, float maxAngle, int parent,
+                       int[] parts, boolean authored, int[] neighbours) {
+            this(boneIndex, boneName, joint, bindPivot, bindRest, lever, radius, mass, frequency,
+                    coefficient, maxAngle, parent, parts, authored, neighbours,
+                    categoryOf(boneName));
+        }
 
         /**
          * How much this piece's spring follows the world's downward direction rather than the posed
          * rest direction, 0..1 - the solver's {@code verticalFollow}. Read live, so the config's own
          * scaling applies without rebuilding the classification.
-         *
-         * <p>See {@link #categoryOf} for the numbers and for why a piece gets one.
          */
         public float verticalFollow() {
-            return categoryOf(boneName).weight * (float) YsmPhysicsTuning.gravityFollowScale();
+            return category.weight * (float) YsmPhysicsTuning.gravityFollowScale();
         }
     }
 
@@ -200,7 +770,14 @@ public final class YsmPhysicsParts {
      * would not also catch the hair around it. Ordering is what keeps a ponytail from being treated
      * as a tail.
      */
-    private enum Category {
+    /**
+     * The families a hanging piece can belong to, and how far each follows the world's vertical.
+     *
+     * <p>Which family a bone lands in is decided by {@link #classifyBone}, and the record carries the
+     * answer rather than the bone's name, so the decision is made once per model at classification
+     * time and cannot drift between frames.
+     */
+    enum Category {
         /** Skirts, dresses, capes and anything else worn: hangs toward the ground. */
         CLOTH(0.92F),
         /** Tails, braids and tufts that are part of the body. */
@@ -235,14 +812,107 @@ public final class YsmPhysicsParts {
     };
 
     /**
-     * Which family a bone's name reads as, and therefore what it is pulled toward.
+     * Which family a bone belongs to, read from its own name <i>or from the container it hangs in</i>.
      *
-     * <p>Name-driven, with everything that implies: a model whose bones are named in a language the
-     * hints do not cover falls to {@link Category#UNKNOWN} and behaves exactly as it did before the
-     * weight existed - the pose is its whole target. That is the deliberate failure direction. A
-     * wrong guess the other way, "this is cloth" for something that is not, would hand a body part
-     * to gravity, and the accepted-cost comparison is between a piece that does not droop and a
-     * piece that leaves the body.
+     * <h2>Why the container, and not more names</h2>
+     *
+     * <p>The name route alone failed on the first model a user ran it against, and it failed in the
+     * worst way: the hairdo and the tail were classified correctly while every one of the skirt's
+     * twenty-four panels came out {@code follow=0.00}, so "cloth hangs toward the ground" was never
+     * applied to any cloth on that model. The panels are called {@code FM}, {@code FL1},
+     * {@code RB3} - short labels for front-middle, front-left, right-back and so on - and no
+     * vocabulary of English cloth words will ever cover the next model's labels either. What those
+     * panels <i>do</i> say is where they hang: {@code FM <- FrontClothe <- clothe <- UpBody},
+     * {@code RB3 <- RB2 <- RB <- RightClothe}. The author has already stated, structurally and in a
+     * form that survives any naming scheme, "this bone is part of the clothing".
+     *
+     * <p>So the rule is: a bone's own name first, and then the name of the container it hangs inside.
+     * The chain is walked to a fixed depth rather than to the root, and the depth is the whole
+     * precision of the rule. A container delimits a <b>region</b> - everything under
+     * {@code FrontClothe} is that panel - so the two links a real rig uses
+     * ({@code FM}, {@code FM1}, {@code FM2} under {@code FrontClothe}) are exactly what is wanted,
+     * while a hair bone twelve links up from {@code UpBody} shares no ancestor with a garment that
+     * means anything. Taking the nearest named ancestor instead of a fixed depth would be worse than
+     * either: a skirt's panels hang off the same trunk the legs and the tail do, so "nearest named
+     * ancestor" eventually reaches something that reads as cloth and would turn a leg into a skirt.
+     *
+     * <p>The failure direction is unchanged and still deliberate: unrecognised means the pose decides
+     * (weight 0), never a guess, because a body part handed to gravity is visible while a piece that
+     * does not droop is merely unimproved.
+     *
+     * @param model    the model whose bone table gives the parent links
+     * @param boneIndex the bone to classify
+     */
+    static Category classifyBone(YSMRuntimeModel model, int boneIndex) {
+        return model == null ? Category.UNKNOWN : classifyBone(model.bones, boneIndex);
+    }
+
+    /**
+     * The same, over a bone table rather than a whole model.
+     *
+     * <p>Both entry points exist because both callers have exactly one of the two: a rebuilt model
+     * when the segments are built, and a bare table in the tests that classify a model's bones
+     * without a mesh - which is the shape the acceptance fixtures already use.
+     */
+    static Category classifyBone(YSMRuntimeModel.BoneRt[] bones, int boneIndex) {
+        if (bones == null || boneIndex < 0 || boneIndex >= bones.length) {
+            return Category.UNKNOWN;
+        }
+        String name = bones[boneIndex] == null ? null : bones[boneIndex].name;
+        Category own = categoryOf(name);
+        if (own != Category.UNKNOWN) {
+            return own;
+        }
+        // Walk up to the first ancestor that reads as ANY family, which is the region this bone hangs
+        // inside. The stop is the rule's whole precision: a named region ends the question, so a
+        // garment two or three links up is reached while the trunk that every region shares - the
+        // body, the head - never is. Reading every ancestor instead of stopping at the first named
+        // one would make "cloth" a property of the whole skeleton, because eventually every bone's
+        // chain reaches UpBody.
+        int ancestor = parentOfBone(bones, boneIndex);
+        for (int link = 0; link < CONTAINER_LOOKUP_LINKS && ancestor >= 0; link++) {
+            Category container = categoryOf(bones[ancestor].name);
+            if (container != Category.UNKNOWN) {
+                return container;
+            }
+            ancestor = parentOfBone(bones, ancestor);
+        }
+        return Category.UNKNOWN;
+    }
+
+    /**
+     * How many links up the container rule reads before giving up.
+     *
+     * <p>Eight, and it is a guard rather than the rule's precision. Reaching the end of a chain costs
+     * nothing - what a bone hangs <i>inside</i> is a fact about the model - so a deep panel is
+     * classified by its container however many layers the author drew. A limit of three would
+     * classify the first three layers of a four-layer panel and leave the deepest bone on the pose,
+     * which is a panel that moves from the waist down to the knee and is rigid below it; the model
+     * this was fixed against draws three layers, but nothing in the format stops the next one drawing
+     * five, and a rule that has to be re-tuned per model is the name table again in another costume.
+     *
+     * <p>The guard itself is against a cyclic or absurdly deep parent table, which is model data read
+     * from a file. It is not a modelling decision and should not be read as one.
+     */
+    private static final int CONTAINER_LOOKUP_LINKS = 8;
+
+    /** The parent index of a bone, or -1 when it has none or the link is not usable. */
+    private static int parentOfBone(YSMRuntimeModel.BoneRt[] bones, int boneIndex) {
+        int parent = bones[boneIndex] == null ? -1 : bones[boneIndex].parent;
+        return parent >= 0 && parent < bones.length && parent != boneIndex ? parent : -1;
+    }
+
+    /**
+     * Which family a bone's <i>own name</i> reads as.
+     *
+     * <p>Name-driven, and only ever a fallback for the structural rule in {@link #classifyBone} -
+     * which is the order that matters: the panels this was written for carry names no vocabulary
+     * covers, and a name table is exactly what the model authors keep outrunning. Its role is the
+     * bones whose name is the whole statement, a bone called {@code LongHair} or {@code Skirt} on a
+     * rig with no containers at all.
+     *
+     * <p>A name it does not recognise is {@link Category#UNKNOWN}, never a guess: a body part handed
+     * to gravity is visible, while a piece that does not droop is merely unimproved.
      */
     static Category categoryOf(String boneName) {
         if (boneName == null || boneName.isEmpty()) {
@@ -408,7 +1078,8 @@ public final class YsmPhysicsParts {
             segments[i] = new Segment(draft.boneIndex(), draft.boneName(), draft.joint(),
                     draft.bindPivot(), draft.bindRest(), draft.lever(), draft.radius(), draft.mass(),
                     draft.frequency(), draft.coefficient(), limit, parent,
-                    draft.parts(), draft.authored(), NO_NEIGHBOURS);
+                    draft.parts(), draft.authored(), NO_NEIGHBOURS,
+                    classifyBone(model, draft.boneIndex()));
         }
         wireNeighbours(segments);
         return new Model(segments, authored ? Source.AUTHORED : Source.BONE_NAMES, dropped[0]);
@@ -416,6 +1087,21 @@ public final class YsmPhysicsParts {
 
     /** No neighbours, for a segment whose piece is the only thing it hangs with. */
     private static final int[] NO_NEIGHBOURS = new int[0];
+
+    /**
+     * Model/bone keys already reported as wrapping their pivot, so a model reload does not repeat the
+     * line. Cleared with the rest of the per-mesh state by {@link #clear()}.
+     */
+    private static final java.util.Set<String> WRAPPED_PIVOT_LOGGED =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * Model/bone keys already reported as rising from their pivot (see {@link #risesFromPivot}), so a
+     * model reload does not repeat the line. Cleared with the rest of the per-mesh state by
+     * {@link #clear()}.
+     */
+    private static final java.util.Set<String> RISES_FROM_PIVOT_LOGGED =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     /**
      * Apply the cap to a declared part list, a whole piece at a time.
@@ -650,7 +1336,8 @@ public final class YsmPhysicsParts {
                     segments[i].joint(), segments[i].bindPivot(), segments[i].bindRest(),
                     segments[i].lever(), segments[i].radius(), segments[i].mass(),
                     segments[i].frequency(), segments[i].coefficient(), segments[i].maxAngle(),
-                    segments[i].parent(), segments[i].parts(), segments[i].authored(), neighbours);
+                    segments[i].parent(), segments[i].parts(), segments[i].authored(), neighbours,
+                    segments[i].category());
         }
     }
 
@@ -1025,6 +1712,43 @@ public final class YsmPhysicsParts {
             // would hand the solver a zero-length lever to divide by.
             return null;
         }
+        if (wrapsPivot(vertices.get(boneIndex), pivot)) {
+            // The geometry closes around the pivot rather than hanging from it, so every rotation
+            // about that pivot slides the piece off the body: see wrapsPivot. Reported once per
+            // model and bone, because the only other trace of it is the piece not moving.
+            if (WRAPPED_PIVOT_LOGGED.add(model.modelId + '/' + bone.name)) {
+                com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
+                        "YSM-EF Compat: [physics] model '{}': bone '{}' sits about its pivot rather than hanging from it "
+                                + "(geometry spread {}), so it stays rigid on its joint and only what hangs below it swings",
+                        model.modelId, bone.name,
+                        Math.round(directionSpread(vertices.get(boneIndex), pivot) * 100.0F) / 100.0F);
+            }
+            return null;
+        }
+        if (risesOffPivot(vertices.get(boneIndex), pivot, rest, lever)) {
+            // The geometry stands above a pivot that is not on it, so the direction this piece would be
+            // swung about is not the direction it is attached in: see risesOffPivot. Its pivot is a
+            // whole limb away from the geometry it draws (on the reported model, an ankle pivot under a
+            // thigh), and a spring pulling that geometry toward the world's vertical lays it out beside
+            // the limb. Reported once per model and bone, because the only other trace of it is a piece
+            // drawn where the pose never put it.
+            if (RISES_FROM_PIVOT_LOGGED.add(model.modelId + '/' + bone.name)) {
+                com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
+                        "YSM-EF Compat: [physics] model '{}': bone '{}' has its own geometry above its pivot rather "
+                                + "than hanging from it (rest {} blocks up of a {} block lever, {} deg above horizontal; "
+                                + "pivot ({},{},{}) is {} blocks outside that geometry, whose y spans {}..{}), so it "
+                                + "stays rigid on its joint",
+                        model.modelId, bone.name,
+                        Math.round(rest.y * 1000.0F) / 1000.0F, Math.round(lever * 1000.0F) / 1000.0F,
+                        Math.round(Math.toDegrees(Math.asin(Math.min(1.0F, rest.y / lever))) * 10.0F) / 10.0F,
+                        Math.round(pivot.x * 1000.0F) / 1000.0F, Math.round(pivot.y * 1000.0F) / 1000.0F,
+                        Math.round(pivot.z * 1000.0F) / 1000.0F,
+                        Math.round(pivotGapFromGeometry(vertices.get(boneIndex), pivot) * 1000.0F) / 1000.0F,
+                        Math.round(minY(vertices.get(boneIndex)) * 1000.0F) / 1000.0F,
+                        Math.round(maxY(vertices.get(boneIndex)) * 1000.0F) / 1000.0F);
+            }
+            return null;
+        }
 
         YsmPhysicsBinding.Part binding = bindings.get(bone.name);
         float frequency = binding != null ? (float) binding.frequency() : fallbackFrequency;
@@ -1055,8 +1779,15 @@ public final class YsmPhysicsParts {
      * which is what a part delta has to rotate about. The pivot is scaled the way the
      * vertices were ({@code width_scale} on x and z, {@code height_scale} on y), because
      * the runtime JSON stores the raw authored pivot while the mesh carries the scaled one.
+     * That scale is the whole of the difference: {@code mesh.positions()} is this same
+     * composed chain with the writer's turn and the loader's inverse turn already cancelled,
+     * so no frame turn belongs here either - see {@link #pivotInMeshSpace}.
+     *
+     * <p>Package-private because the leg diagnostic needs it for pieces this class <i>dropped</i>:
+     * those have no {@code Segment}, and a diagnostic that rebuilt their pivot its own way would be
+     * explaining a decision nobody made.
      */
-    private static Vector3f bindPivot(YSMRuntimeModel model, YSMRuntimeModel.BoneRt bone) {
+    static Vector3f bindPivot(YSMRuntimeModel model, YSMRuntimeModel.BoneRt bone) {
         float scaleX = model.widthScale;
         float scaleY = model.heightScale;
         if (!Float.isFinite(scaleX) || scaleX <= 0.0F) {
@@ -1072,19 +1803,46 @@ public final class YsmPhysicsParts {
      * A bone's pivot in the mesh's own space - the space the writer bakes the vertices in, and the
      * space a part transform acts in.
      *
-     * <p>The scale goes on last, and that order is the whole of this method. The writer places a
-     * vertex as {@code scale x (bindWorld x corner)}: the bone chain acts in the model's own
-     * unscaled units and the model is scaled once, at the end, about the origin. Scaling the pivot
-     * <i>before</i> the chain - {@code bindWorld x (scale x pivot)} - names a different point
-     * whenever any bone on the way has a rest rotation, because such a bone's own
-     * {@code T(p)RT(-p)} carries a translation that is then scaled while it should not be.
+     * <p><b>The frame, and why this method is two steps and not three.</b> The bone chain acts in the
+     * model's own authored units, so {@code bindWorld} composes there. That authored frame is
+     * <i>not</i> the frame the delta acts in, and the difference is not a turn that is missing here:
+     * it is a turn that has already been undone before the physics ever sees the vertices. The writer
+     * stores every corner of {@link com.ysmef.compat.model.EFMeshJsonWriter} as
+     * {@code (x, y, z) -> (x * widthScale, -z * widthScale, y * heightScale)} - the Blender, Z-up
+     * frame Epic Fight's meshes are authored in, scaled once about the origin - and Epic Fight's
+     * loader ({@code JsonAssetLoader}, {@code BLENDER_TO_MINECRAFT_COORD}, applied to every position
+     * as the mesh is read) applies that map's inverse to every one of them. Composed, the two are the
+     * authored chain scaled once with <b>no turn left in it</b>, and {@code mesh.positions()} - the
+     * array a part delta multiplies - is that composition's output. So the pivot is the composed
+     * chain, then the scale, and nothing else. The scale goes on last because the writer scales once,
+     * at the end, about the origin.
      *
-     * <p>What that costs is not a wrong angle but a wrong <i>centre</i>: the delta is
-     * {@code T(P)R T(-P)}, so the point it holds still is P. If P is not the point the geometry
-     * hangs from, the attachment moves - by {@code (R - I) x error}, which grows with the swing -
-     * and the piece leaves the garment it belongs to. On the shipped maid the error is 5.6 cm, and
-     * mirrored on the left side of the model, so the two sides of the skirt pull in opposite
-     * directions: the same defect read twice, as a tear at the waistband.
+     * <p><b>The turn must not be re-added, and a distance metric is not grounds for adding it.</b>
+     * An earlier revision applied the stored map to the pivot as well, {@code (x, y, z) -> (x, -z, y)},
+     * because doing so drove the mean distance from a bone's pivot to the centroid of its own geometry
+     * from 1.672 to 0.074 blocks over 223 bones on {@code EKU(1.0.ysm} and read as a 22x improvement.
+     * Both the metric and the change were wrong. The "before" number was measured with the pivot in
+     * the mesh's frame and the geometry's centroid taken from the numbers as they are stored in the
+     * JSON - i.e. in the file's frame - so the two sides were never in one frame; a rigid turn
+     * preserves all distances, so comparing a mesh-frame pivot with a file-frame centroid, or a
+     * file-frame pivot with a mesh-frame centroid, is the same measurement wearing two labels, and the
+     * one that "improves" is the one whose pivot has been moved into the frame the centroid was
+     * already in. A pivot also does not belong at a geometry's centroid: it belongs at the bone's own
+     * origin, normally one end of the geometry, so a long limb's ~1.7-block origin-to-centroid distance
+     * is the expected value and driving it toward zero means the point moved off the joint. Grounded in
+     * the turned revision's own in-game test, models came apart - legs shattered and long hair broke
+     * into separated fragments - and the turn was reverted.
+     *
+     * <p>The calibration that replaced it reads the pivot against its own geometry's bounding box in
+     * the drawn frame, where both sides are in one frame and the pivot is expected to land: on
+     * {@code EKU(1.0.ysm} the pivot named here is inside that box for 172 of 223 bones, and the
+     * corner-turned candidate is inside it for 4. Any future frame decision has to be grounded in the
+     * stored converted artifacts and calibrated against a known-good model, not against a metric.
+     *
+     * <p>What stays in the authored frame: everything the animation pipeline owns.
+     * {@code YSMRuntimeModel.bindWorld}, {@code YSMPlayerAnimator}'s deltas and
+     * {@code YsmMeshCloth.nearestMappedBoneTo} compare authored pivots with authored pivots, which is
+     * this class's only caller that must NOT be turned, and is not.
      */
     static Vector3f pivotInMeshSpace(Matrix4f bindWorld, float px, float py, float pz,
                                      float scaleX, float scaleY) {
@@ -1095,6 +1853,18 @@ public final class YsmPhysicsParts {
         if (bindWorld != null) {
             bindWorld.transformPosition(pivot);
         }
+        // No frame turn here - deliberately, and this must not be re-added on the strength of a
+        // metric alone. An earlier revision applied the writer's corner transform
+        // ((x, y, z) -> (x, -z, y)) to this pivot, justified by a measurement that drove the
+        // distance from a bone's pivot to the centroid of its own geometry from 1.672 to 0.074
+        // blocks over 223 bones and looked like a 22x improvement. Both the metric and the change
+        // were wrong: a pivot belongs at the bone's OWN ORIGIN - its rotation centre, normally one
+        // end of the geometry - not at the geometry's centroid, so a long limb's ~1.7-block
+        // origin-to-centroid distance is the expected value and driving it to zero means the
+        // transform moved the origin onto the centroid. The user's in-game test then showed models
+        // torn apart: legs shattered and long hair broken into separated fragments. Reverted.
+        // Any future frame decision must be grounded in the stored converted artifacts (authored
+        // package vs the mesh JSON actually written) and calibrated against a known-good model.
         pivot.mul(scaleX, scaleY, scaleX);
         return YsmDynamicBoneSolver.isFinite(pivot) ? pivot : null;
     }
@@ -1105,6 +1875,159 @@ public final class YsmPhysicsParts {
             return null;
         }
         return new Vector3f(entry[0], entry[1], entry[2]);
+    }
+
+    /** The lowest y of a set of vertices, or {@link Float#NaN} when there is nothing to measure. */
+    static float minY(List<Vector3f> vertices) {
+        return extentY(vertices, true);
+    }
+
+    /** The highest y of a set of vertices, or {@link Float#NaN} when there is nothing to measure. */
+    static float maxY(List<Vector3f> vertices) {
+        return extentY(vertices, false);
+    }
+
+    private static float extentY(List<Vector3f> vertices, boolean lowest) {
+        if (vertices == null || vertices.isEmpty()) {
+            return Float.NaN;
+        }
+        float best = lowest ? Float.MAX_VALUE : -Float.MAX_VALUE;
+        int used = 0;
+        for (Vector3f vertex : vertices) {
+            if (vertex == null || !YsmDynamicBoneSolver.isFinite(vertex)) {
+                continue;
+            }
+            best = lowest ? Math.min(best, vertex.y) : Math.max(best, vertex.y);
+            used++;
+        }
+        return used == 0 ? Float.NaN : best;
+    }
+
+    /**
+     * The direction a piece's own geometry is <b>longest</b> along, in bind space: the principal axis
+     * of the vertices about their centroid, or null when the shape has no single long axis.
+     *
+     * <h2>Why the diagnostic needs it and the rule does not</h2>
+     *
+     * <p>{@code rest} says which way the piece's mass sits from its pivot; it does not say which way
+     * the piece is <i>drawn</i>, and on the reported thigh those are two different statements: the
+     * piece is drawn along the leg while its own delta turns it about the ankle. "The thigh lies
+     * nearly horizontal" is a claim about the drawn long axis, so the diagnostic measures that axis
+     * and carries it through the joint's pose ({@code pose x toOrigin}) and then through the piece's
+     * own delta - the three numbers that separate "the delta laid it out" from "the pose already
+     * had it at 48 degrees".
+     *
+     * <p>The covariance of the offsets from the centroid is symmetric and 3x3, so its principal axis
+     * comes from the same cyclic Jacobi rotation as {@link #directionSpread}'s eigenvalues, with the
+     * rotation accumulated this time. The axis of a well-conditioned shape is stable; the axis of a
+     * shape whose two largest extents are within {@link #MIN_AXIS_SEPARATION} of each other is not,
+     * and this answers null there rather than a direction that a float's last bit chose. A cube, a
+     * flat square panel and a piece whose vertices are all on one point all answer null, and that is
+     * the intended reading: they have no long axis to be drawn along.
+     *
+     * @return a unit axis, sign-arbitrary (a line has no direction), or null
+     */
+    static Vector3f longAxisOf(List<Vector3f> vertices) {
+        if (vertices == null) {
+            return null;
+        }
+        int used = 0;
+        double cx = 0.0D;
+        double cy = 0.0D;
+        double cz = 0.0D;
+        for (Vector3f vertex : vertices) {
+            if (vertex == null || !YsmDynamicBoneSolver.isFinite(vertex)) {
+                continue;
+            }
+            cx += vertex.x;
+            cy += vertex.y;
+            cz += vertex.z;
+            used++;
+        }
+        if (used < MIN_VERTICES) {
+            return null;
+        }
+        cx /= used;
+        cy /= used;
+        cz /= used;
+        double xx = 0.0D;
+        double xy = 0.0D;
+        double xz = 0.0D;
+        double yy = 0.0D;
+        double yz = 0.0D;
+        double zz = 0.0D;
+        for (Vector3f vertex : vertices) {
+            if (vertex == null || !YsmDynamicBoneSolver.isFinite(vertex)) {
+                continue;
+            }
+            double dx = vertex.x - cx;
+            double dy = vertex.y - cy;
+            double dz = vertex.z - cz;
+            xx += dx * dx;
+            xy += dx * dy;
+            xz += dx * dz;
+            yy += dy * dy;
+            yz += dy * dz;
+            zz += dz * dz;
+        }
+        double[][] matrix = {
+                {xx / used, xy / used, xz / used},
+                {xy / used, yy / used, yz / used},
+                {xz / used, yz / used, zz / used}};
+        double[][] vectors = new double[3][3];
+        double[] eigenvalues = jacobiEigen(matrix, vectors);
+        int longest = 0;
+        for (int i = 1; i < 3; i++) {
+            if (eigenvalues[i] > eigenvalues[longest]) {
+                longest = i;
+            }
+        }
+        double largest = eigenvalues[longest];
+        double secondLargest = Double.NEGATIVE_INFINITY;
+        for (int i = 0; i < 3; i++) {
+            if (i != longest) {
+                secondLargest = Math.max(secondLargest, eigenvalues[i]);
+            }
+        }
+        if (!(largest > 0.0D) || !(secondLargest > 0.0D)
+                || largest < secondLargest * MIN_AXIS_SEPARATION) {
+            return null;
+        }
+        Vector3f axis = new Vector3f((float) vectors[0][longest], (float) vectors[1][longest],
+                (float) vectors[2][longest]);
+        if (!YsmDynamicBoneSolver.isFinite(axis) || axis.lengthSquared() < 1.0E-8F) {
+            return null;
+        }
+        return axis.normalize();
+    }
+
+    /**
+     * How much longer the piece must be along its principal axis than across it, as the ratio of the
+     * largest eigenvalue of the offsets' covariance to the next, before {@link #longAxisOf} answers a
+     * direction at all. 1.05, i.e. the axis has to be at least five per cent better conditioned than
+     * the alternative - just enough that the answer is a property of the shape rather than of the
+     * last bit of a float sum. It is not a claim about how elongated a piece must be to be simulated:
+     * nothing about the simulation reads this number.
+     */
+    private static final double MIN_AXIS_SEPARATION = 1.05D;
+
+    /**
+     * The angle between a direction and the model's vertical, in degrees, 0 (straight up or straight
+     * down) to 90 (horizontal) - or {@link Double#NaN} when the direction has no length.
+     *
+     * <p>Measured as a <b>line</b> against the vertical, because the axis of a piece's geometry has no
+     * direction of its own and its sign is an artefact of the eigenvector's sign convention. A piece
+     * that hangs straight down and one that stands straight up both read 0.
+     */
+    static double angleFromVertical(Vector3f direction) {
+        if (direction == null || !YsmDynamicBoneSolver.isFinite(direction)) {
+            return Double.NaN;
+        }
+        double length = Math.sqrt(direction.lengthSquared());
+        if (length < 1.0E-9D) {
+            return Double.NaN;
+        }
+        return Math.toDegrees(Math.acos(Math.max(0.0D, Math.min(1.0D, Math.abs(direction.y) / length))));
     }
 
     /**
@@ -1204,7 +2127,16 @@ public final class YsmPhysicsParts {
     private static final Map<YSMMesh, Map<Integer, List<Vector3f>>> VERTICES =
             java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
 
-    private static Map<Integer, List<Vector3f>> verticesByBone(YSMMesh mesh, YSMRuntimeModel model) {
+    /**
+     * mesh -&gt; bone -&gt; vertices, the same set every lever and radius here is measured from.
+     *
+     * <p>Package-private rather than private because the leg diagnostic
+     * ({@code YsmMeshSecondaryMotion#logLegRegion}) reads a piece's own geometry to name the axis it
+     * is drawn along, and it must read the same vertices - hidden default-variant bones excluded -
+     * that the segment's pivot and rest were measured from, or the number it prints would be about a
+     * different piece.
+     */
+    static Map<Integer, List<Vector3f>> verticesByBone(YSMMesh mesh, YSMRuntimeModel model) {
         Map<Integer, List<Vector3f>> cached = VERTICES.get(mesh);
         if (cached != null) {
             return cached;
@@ -1255,6 +2187,8 @@ public final class YsmPhysicsParts {
     public static void clear() {
         PART_ORDINALS.clear();
         VERTICES.clear();
+        WRAPPED_PIVOT_LOGGED.clear();
+        RISES_FROM_PIVOT_LOGGED.clear();
     }
 
     /**

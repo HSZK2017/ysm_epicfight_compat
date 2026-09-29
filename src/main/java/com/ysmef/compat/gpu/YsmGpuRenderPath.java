@@ -37,12 +37,16 @@ import java.util.concurrent.ConcurrentHashMap;
  * Direct GPU skinning path for converted YSM-EF meshes (ported from ModernYSM's
  * GpuRenderPath, adapted to Epic Fight's SkinnedMesh data model).
  *
- * Every frame the CPU composes one combined matrix per mesh part
- * (entity pose x joint pose x toOrigin x YSM bind-space delta - the exact same
- * product Epic Fight's compute path builds in VanillaComputeShaderSetup), fills
- * the bone SSBO, and issues a single glDrawArrays through the bone-skinning
- * shader. Hidden parts are culled in the vertex shader (BoneData.isHidden), so
- * the whole model stays one draw call.
+ * <b>What the CPU does per frame:</b> it composes one matrix per <i>joint</i> (entities pose x
+ * toOrigin) and uploads those alone, plus a part section that is uploaded only when it changes -
+ * a hidden flag flipping, a part's transform leaving identity - rather than every frame. The
+ * per-part product the vertex shader needs (joint x part delta) is composed on the GPU. So the
+ * per-frame CPU cost is bounded by the joint count, not by joints x parts, and a battle-mode model
+ * whose parts are all at identity uploads a few kilobytes instead of the whole bone buffer.
+ *
+ * <p>(This javadoc used to describe the opposite - a per-part composition and a full SSBO fill every
+ * frame. The body has done the cheaper thing for a while; the README's performance section was the
+ * accurate one.)
  *
  * The per-frame CPU cost is a matrix composition per part (no vertex loop), the
  * vertex skinning moves fully to the GPU and the EF per-frame pose buffer
@@ -90,6 +94,24 @@ public final class YsmGpuRenderPath {
                 return YsmGpuRenderPath.isYsmPreviewMode();
             }
         });
+    }
+
+    /**
+     * Load this class, which is what registers the path.
+     *
+     * <p>The registration itself is in the static initializer above, so a path exists only once
+     * something touches its class - and "something" used to be an accident of the call graph. That
+     * is not good enough for a path whose availability a user is configuring: with Epic Fight's
+     * {@code use_compute_shader} enabled, {@code drawPosed} is never called, so the mixin that loads
+     * the CPU path never fires, and this class used to be loaded only because that one called a
+     * static method on it. {@code enableGpuRender} then did nothing at all, silently.
+     *
+     * <p>The body is deliberately empty: loading the class is the whole effect. This method exists
+     * so the client-side wiring can say that in code rather than with a comment over a stray
+     * reference, and so the next reader can find out why the load matters from here.
+     */
+    public static void ensureRegistered() {
+        // Loading this class runs the static initializer above.
     }
 
     private static final float[] projScratch = new float[16];

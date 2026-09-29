@@ -1,8 +1,10 @@
 package com.ysmef.compat.model.runtime;
 
+import org.joml.Matrix4f;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
+import yesman.epicfight.api.utils.math.OpenMatrix4f;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -51,8 +53,8 @@ class YsmDynamicBoneSolverTest {
 
         @Override
         public boolean resolve(Vector3f point, Vector3f velocity, float pointRadius, int index) {
-            return YsmBodyColliders.pushOutOfSphere(point, velocity, pointRadius,
-                    centre.x, centre.y, centre.z, radius);
+            return YsmBodyColliders.pushOutOfCapsule(point, velocity, pointRadius,
+                    centre.x, centre.y, centre.z, centre.x, centre.y, centre.z, radius);
         }
 
         @Override
@@ -889,7 +891,8 @@ class YsmDynamicBoneSolverTest {
         Vector3f point = new Vector3f(2.0F, 0.0F, 0.0F);
         Vector3f velocity = new Vector3f(-1.0F, 0.0F, 0.0F);
 
-        assertFalse(YsmBodyColliders.pushOutOfSphere(point, velocity, 0.1F, 0.0F, 0.0F, 0.0F, 0.4F));
+        assertFalse(YsmBodyColliders.pushOutOfCapsule(point, velocity, 0.1F,
+                    0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.4F));
         assertEquals(2.0F, point.x, 1.0E-6F);
         assertEquals(-1.0F, velocity.x, 1.0E-6F);
     }
@@ -900,7 +903,8 @@ class YsmDynamicBoneSolverTest {
         Vector3f point = new Vector3f(0.2F, 0.0F, 0.0F);
         Vector3f velocity = new Vector3f(-3.0F, 0.0F, 0.0F);
 
-        assertTrue(YsmBodyColliders.pushOutOfSphere(point, velocity, 0.1F, 0.0F, 0.0F, 0.0F, 0.4F));
+        assertTrue(YsmBodyColliders.pushOutOfCapsule(point, velocity, 0.1F,
+                    0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.4F));
 
         assertEquals(0.5F, point.x, 1.0E-5F, "centre 0 + (0.4 + 0.1) along the push direction");
         assertEquals(0.0F, velocity.x, 1.0E-5F, "the inward velocity is removed, with no bounce");
@@ -912,7 +916,8 @@ class YsmDynamicBoneSolverTest {
         Vector3f point = new Vector3f(0.2F, 0.0F, 0.0F);
         Vector3f velocity = new Vector3f(-3.0F, 0.0F, 4.0F);
 
-        assertTrue(YsmBodyColliders.pushOutOfSphere(point, velocity, 0.1F, 0.0F, 0.0F, 0.0F, 0.4F));
+        assertTrue(YsmBodyColliders.pushOutOfCapsule(point, velocity, 0.1F,
+                    0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.4F));
 
         assertEquals(0.0F, velocity.x, 1.0E-5F);
         assertEquals(4.0F, velocity.z, 1.0E-5F, "sliding along the surface must not be damped away");
@@ -923,7 +928,8 @@ class YsmDynamicBoneSolverTest {
     void aPointAtTheDeadCentreIsPushedToTheSurface() {
         Vector3f point = new Vector3f(0.0F, 0.0F, 0.0F);
 
-        assertTrue(YsmBodyColliders.pushOutOfSphere(point, null, 0.1F, 0.0F, 0.0F, 0.0F, 0.4F));
+        assertTrue(YsmBodyColliders.pushOutOfCapsule(point, null, 0.1F,
+                    0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.4F));
 
         assertEquals(0.5F, point.length(), 1.0E-5F);
         assertTrue(Float.isFinite(point.x) && Float.isFinite(point.y) && Float.isFinite(point.z));
@@ -1898,6 +1904,265 @@ class YsmDynamicBoneSolverTest {
                     "a piece already pointing down must stay down at weight " + weight
                             + "; it drifted " + offVertical + " degrees");
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Round 20: a piece the pose has not moved is pulled by its spring
+    // alone, so a standing character is drawn exactly as authored
+    // ------------------------------------------------------------------
+
+    /**
+     * <b>The defect, as a number.</b> The gravity-follow weight says how much of the world's
+     * vertical a piece follows <i>rather than the pose</i>, and the world's vertical is only a
+     * different answer from the pose's when the pose has moved. Applying it to a piece the pose has
+     * left where the mesh was authored therefore rotates that piece off the drawing and holds it
+     * there: the shipped {@code 兽耳酱x1} hem is a flared band authored 22.95 degrees off vertical, and
+     * the plain blend held it 22.16 degrees away from that - 39 millimetres of movement while the
+     * character stands still, which is a rotation, not a translation, and is what the in-game report
+     * called a skewed hem.
+     *
+     * <p>The test drives the solver through its real path with the pose's rotation of the piece's
+     * joint as the input, and asserts the property directly: an unchanged pose leaves the piece
+     * where it is, at the weights and levers the shipped models use - including the flared case,
+     * which is the one the weight used to rotate. The bound is half a degree rather than zero
+     * because gravity's own torque is still there and cannot be zero for a piece whose centre of
+     * mass is not already below its pivot; what the plain blend added on top of that was
+     * {@code (1 - weight) * angle(rest, down)}, which is 1.84 degrees for this piece, and the point
+     * is that the piece no longer inherits it.
+     */
+    @Test
+    void aPoseThatDidNotMoveThePieceLeavesItWhereItWasAuthored() {
+        // The direction the authored mesh hangs in, and the lever, of the pieces the shipped maid
+        // and skirt models carry: a fringe, a lock of hair, the flared hem, and a tail.
+        float[] authoredOffDown = {38.43F, 36.30F, 22.95F, 116.0F};
+        float[] levers = {0.105F, 0.322F, 0.102F, 0.079F};
+        float[] weights = {HAIR_FOLLOW, HAIR_FOLLOW, CLOTH_FOLLOW, TAIL_FOLLOW};
+        for (int i = 0; i < authoredOffDown.length; i++) {
+            Vector3f rest = leaningDir(authoredOffDown[i]);
+            for (float weight : new float[]{weights[i], 0.3F, 1.0F}) {
+                YsmDynamicBoneSolver.SegmentState state = settledWithJointRotation(
+                        rest, levers[i], ROOT_LIMIT, weight, new Quaternionf(), 6.0F);
+                float twist = (float) Math.toDegrees(
+                        YsmDynamicBoneSolver.angleBetween(rest, state.direction));
+                assertTrue(twist < 0.5F,
+                        "a piece the pose left at its authored direction (" + authoredOffDown[i]
+                                + " degrees off vertical, lever " + levers[i] + ", weight " + weight
+                                + ") must be drawn there; it settled " + twist + " degrees away");
+            }
+        }
+    }
+
+    /**
+     * The same property stated as the failure it replaces: the old behaviour held the flared hem
+     * more than twenty degrees off its authored direction at a standstill, and this test pins that
+     * the number is gone rather than merely bounded - so a future "improvement" that reintroduces a
+     * weight at rest fails here even if it is small.
+     */
+    @Test
+    void theFlaredHemIsNoLongerRotatedAtAStandstill() {
+        Vector3f rest = leaningDir(22.95F);
+        YsmDynamicBoneSolver.SegmentState atRest = settledWithJointRotation(
+                rest, 0.102F, ROOT_LIMIT, CLOTH_FOLLOW, new Quaternionf(), 6.0F);
+        float stationaryTwist = (float) Math.toDegrees(
+                YsmDynamicBoneSolver.angleBetween(rest, atRest.direction));
+
+        // And the same piece on a body that HAS moved, where the weight is meant to act: the piece
+        // must leave the authored direction by tens of degrees, which is the behaviour the weight
+        // exists for and which the fix must not have removed.
+        YsmDynamicBoneSolver.SegmentState leaning = settledWithJointRotation(
+                rest, 0.102F, ROOT_LIMIT, CLOTH_FOLLOW, aboutX((float) Math.toRadians(60.0)), 6.0F);
+        float leaningTwist = (float) Math.toDegrees(
+                YsmDynamicBoneSolver.angleBetween(rest, leaning.direction));
+
+        assertTrue(stationaryTwist < 0.5F, "a standstill must not rotate the hem; it rotated "
+                + stationaryTwist + " degrees");
+        assertTrue(leaningTwist > 10.0F, "a sixty degree lean must still hand the piece to gravity;"
+                + " it only moved " + leaningTwist + " degrees, so the weight has stopped working");
+        // The ramp itself: the weight comes up over FULL_FOLLOW_LEAN, so a smaller lean leaves the
+        // piece closer to the pose than a larger one does. A monotonic walk, because a scale that
+        // was not monotonic would let a piece snap back as the body leaned further.
+        float previous = -1.0F;
+        for (float leanDegrees : new float[]{0.0F, 15.0F, 30.0F, 45.0F, 60.0F, 80.0F}) {
+            YsmDynamicBoneSolver.SegmentState state = settledWithJointRotation(rest, 0.102F, ROOT_LIMIT,
+                    CLOTH_FOLLOW, aboutX((float) Math.toRadians(leanDegrees)), 6.0F);
+            float twist = (float) Math.toDegrees(
+                    YsmDynamicBoneSolver.angleBetween(rest, state.direction));
+            assertTrue(twist >= previous - 1.0E-3F, "the weight must rise with the lean, so the"
+                    + " piece must move further from the pose at every step: at " + leanDegrees
+                    + " degrees it was at " + twist + " after " + previous);
+            previous = twist;
+        }
+    }
+
+    /**
+     * The problem the parameter's name makes unavoidable - <i>which</i> vertical - answered as a
+     * test, because the wrong choice is not a small error: it is the difference between a hem drawn
+     * as authored and a hem held twenty-two degrees off it.
+     *
+     * <p>The ramp is measured at four points and asserted as a SHRINKING distance from the authored
+     * direction, not as a list of angles: the scale saturates at {@code FULL_FOLLOW_LEAN}, so the
+     * interesting property is that more movement means the piece sits closer to the world's vertical
+     * up to that point - which a test comparing only "none" with "a lot" could not tell from a step.
+     * The angles themselves are driven by a gyroscopic balance as well as by the weight (the torque
+     * the weight produces is perpendicular to the axis the test rotates about), so they are pinned as
+     * an ordering rather than as values: the numbers belong to the model, the ordering to the rule.
+     *
+     * <p>The saturation is pinned on the scale itself rather than through the solver, because past
+     * the saturation the solver's answer keeps changing for a different reason (the piece has been
+     * carried further from its authored direction, so the spring has further to pull it back) and a
+     * loose bound there would pass for the wrong reason.
+     */
+    @Test
+    void theJointRotationDecidesHowFarTheWeightActsAndNeitherExtremeIsBackwards() {
+        Vector3f rest = leaningDir(36.30F);
+        float lever = 0.322F;
+        float[] leans = {0.0F, 20.0F, 35.0F, 50.0F, 60.0F};
+        float previous = Float.MAX_VALUE;
+        for (float leanDegrees : leans) {
+            YsmDynamicBoneSolver.SegmentState state = settledWithJointRotation(rest, lever, ROOT_LIMIT,
+                    HAIR_FOLLOW, movedBy(rest, (float) Math.toRadians(leanDegrees)), 6.0F);
+            float offVertical = degreesOffVertical(state);
+            assertTrue(offVertical < previous,
+                    "each further degree the pose moves the piece must pull it nearer the world's"
+                            + " vertical, up to FULL_FOLLOW_LEAN: at " + leanDegrees + " degrees it"
+                            + " was at " + offVertical + " after " + previous);
+            previous = offVertical;
+        }
+        assertTrue(previous < 25.0F,
+                "at a full follow lean a hair piece keeps a share of the lean, not most of it; got "
+                        + previous + " degrees off vertical");
+
+        // The scale's own two ends: the identity is no weight at all, and every rotation at or past
+        // FULL_FOLLOW_LEAN scales the configured weight by exactly one - so past that point the
+        // mechanism is bit for bit the one the weight's documentation describes, and the weight's own
+        // numbers still mean what they say. A rotation's ANGLE is what is measured, so this holds for
+        // any axis - including one a piece happens to lie along, which is the blind direction the
+        // first version of this rule had.
+        assertEquals(0.0F, YsmDynamicBoneSolver.followScaleFor(new Quaternionf()), 1.0E-6F,
+                "a pose that did not rotate the piece's joint must scale the weight to nothing");
+        for (float leanDegrees : new float[]{60.0F, 90.0F, 180.0F}) {
+            assertEquals(1.0F, YsmDynamicBoneSolver.followScaleFor(
+                            aboutX((float) Math.toRadians(leanDegrees))), 1.0E-3F,
+                    "a pose that turned the joint by " + leanDegrees + " degrees must scale the weight"
+                            + " by exactly one");
+        }
+        assertEquals(0.5F, YsmDynamicBoneSolver.followScaleFor(
+                        aboutX((float) Math.toRadians(30.0))), 1.0E-3F,
+                "and the ramp is linear in the angle, so half of FULL_FOLLOW_LEAN is half the weight");
+
+        // Gravity's torque is scaled by the same rule, which is what makes the standstill exact
+        // rather than merely closer: at the identity the gravity torque is zero, and every rotation
+        // at or past the full lean gets all of it. The two are separate methods so that a reader can
+        // see the two halves of the mechanism agree, and separate calls so that this test can say the
+        // second one still answers.
+        assertEquals(0.0F, YsmDynamicBoneSolver.gravityScaleFor(new Quaternionf()), 1.0E-6F,
+                "gravity must have no say in a piece the pose has not turned");
+        assertEquals(1.0F, YsmDynamicBoneSolver.gravityScaleFor(
+                        aboutX((float) Math.toRadians(60.0))), 1.0E-3F,
+                "and all of it once the pose has turned the joint by FULL_FOLLOW_LEAN");
+    }
+
+    /**
+     * The rotation the caller hands in has to be read in the same frame as the rest direction, and
+     * the cheapest way to get that wrong is to read the wrong part of a matrix. This drives the
+     * public {@code pivotDeltaOf} over the deformation the frame path builds - the pose's joint
+     * transform times the inverse of the authored one - and asserts the identity against a
+     * rotation, which is the pair of answers the weight's scale is made of.
+     */
+    @Test
+    void theJointRotationIsTheDifferenceBetweenThePoseAndTheAuthoredTransform() {
+        Quaternionf out = new Quaternionf();
+        // An authored joint transform and the same one rotated by an arbitrary rotation: the
+        // deformation is pose x inverse(authored), so its rotation must come back as that rotation.
+        float angle = (float) Math.toRadians(37.0);
+        Quaternionf applied = new Quaternionf().fromAxisAngleRad(
+                new Vector3f(0.3F, 0.8F, -0.5F).normalize(), angle);
+        Matrix4f authoredRotation = new Matrix4f().rotate(aboutX(0.4F));
+        OpenMatrix4f authored = toOpen(authoredRotation);
+        OpenMatrix4f posed = toOpen(new Matrix4f().rotate(applied).mul(authoredRotation));
+        OpenMatrix4f deformation = OpenMatrix4f.mul(posed, OpenMatrix4f.invert(authored, null), null);
+
+        YsmMeshSecondaryMotion.pivotDeltaOf(deformation, out);
+        assertEquals((float) Math.toDegrees(angle), (float) Math.toDegrees(out.angle()), 0.5F,
+                "the extracted rotation must be the rotation the pose applied, not the joint's own"
+                        + " authored orientation and not its transpose");
+
+        // And the identity, which is the case the whole fix rests on: a deformation that is the
+        // identity matrix is "the pose left this joint exactly where the rig authors it", and the
+        // pivot delta must read as no rotation at all - not as the joint's authored orientation
+        // (which for this rig would be 0.4 radians) and not as a transpose of it.
+        OpenMatrix4f identity = new OpenMatrix4f();
+        YsmMeshSecondaryMotion.pivotDeltaOf(identity, out);
+        assertEquals(0.0F, out.angle(), 1.0E-3F,
+                "an unchanged pose must read as the identity rotation, got " + out.angle()
+                        + " radians");
+    }
+
+    /**
+     * A rotation about the model's own left-right axis, which is the axis a forward lean uses.
+     *
+     * <p>JOML 1.10.5's four-float overload is {@code (x, y, z, angle)} - the angle last. Called as
+     * {@code (angle, x, y, z)} with {@code x = 1.0} it normalises to the axis {@code (1, 0, 0)} and
+     * reads {@code angle} from the fourth slot, so it happens to be right for this axis and wrong for
+     * every other; the axis overload is used so there is no ordering to get wrong.
+     */
+    private static Quaternionf aboutX(float radians) {
+        return new Quaternionf().fromAxisAngleRad(new Vector3f(1.0F, 0.0F, 0.0F), radians);
+    }
+
+    /**
+     * A segment settled with the pose's rotation of its joint handed in - the round-20 path. The
+     * identity is "the pose left this piece exactly where the mesh was authored", which is the
+     * standing-still case the fix is about.
+     */
+    private static YsmDynamicBoneSolver.SegmentState settledWithJointRotation(
+            Vector3f rest, float lever, float maxAngle, float weight, Quaternionf jointRotation,
+            float seconds) {
+        YsmDynamicBoneSolver.SegmentState state = new YsmDynamicBoneSolver.SegmentState();
+        Quaternionf out = new Quaternionf();
+        Vector3f pivot = new Vector3f();
+        float dt = 1.0F / 60.0F;
+        int frames = Math.round(seconds / dt);
+        for (int i = 0; i <= frames; i++) {
+            YsmDynamicBoneSolver.INSTANCE.update(state, GRAVITY, 0.0F, weight, DOWN,
+                    pivot, rest, lever, AUTHORED_FREQUENCY, AUTHORED_DAMPING, 1.0F, maxAngle,
+                    STILL, YsmDynamicBoneSolver.NO_COLLIDERS, 0.03F, null, 0.0F, 0.0F, dt, out,
+                    jointRotation);
+        }
+        return state;
+    }
+
+    /** The angle of a settled direction from the world's vertical, in degrees. */
+    private static float degreesOffVertical(YsmDynamicBoneSolver.SegmentState state) {
+        return (float) Math.toDegrees(YsmDynamicBoneSolver.angleBetween(DOWN, state.direction));
+    }
+
+    /**
+     * A rotation that moves {@code direction} by exactly {@code radians}: about the axis
+     * perpendicular to it, so the angle between the vector and its image is the angle asked for.
+     *
+     * <p>Rotating about a fixed world axis does NOT do that - the component of the direction along
+     * that axis is left alone, so a "sixty degree rotation" moves a direction 36 degrees off the axis
+     * by less than sixty, and one 36 degrees from the axis by about seventy-five. The scale this test
+     * exists for is a cosine of the angle actually moved, so the rotation has to be built from the
+     * direction rather than from the world.
+     */
+    private static Quaternionf movedBy(Vector3f direction, float radians) {
+        Vector3f axis = new Vector3f(direction).cross(0.0F, 1.0F, 0.0F);
+        if (axis.lengthSquared() < 1.0E-8F) {
+            axis.set(1.0F, 0.0F, 0.0F);
+        }
+        return new Quaternionf().fromAxisAngleRad(axis.normalize(), radians);
+    }
+
+    /** A JOML matrix into Epic Fight's, for the tests that build one by hand. */
+    private static OpenMatrix4f toOpen(Matrix4f m) {
+        OpenMatrix4f out = new OpenMatrix4f();
+        out.m00 = m.m00(); out.m01 = m.m01(); out.m02 = m.m02(); out.m03 = m.m03();
+        out.m10 = m.m10(); out.m11 = m.m11(); out.m12 = m.m12(); out.m13 = m.m13();
+        out.m20 = m.m20(); out.m21 = m.m21(); out.m22 = m.m22(); out.m23 = m.m23();
+        out.m30 = m.m30(); out.m31 = m.m31(); out.m32 = m.m32(); out.m33 = m.m33();
+        return out;
     }
 
     /**

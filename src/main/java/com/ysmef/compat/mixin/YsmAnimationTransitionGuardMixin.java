@@ -10,8 +10,8 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Guards the official YSM 2.6.5 animation transition evaluator against null
- * transition conditions.
+ * Guards YSM's animation transition evaluator against null transition
+ * conditions.
  *
  * YSM's AnimationControllerRuntime#evaluateTransitions iterates
  * currentEntry.getTransitions() and calls transition.right().evalAsBoolean(...)
@@ -23,11 +23,20 @@ import java.util.concurrent.ConcurrentHashMap;
  * Redirecting only this call site makes the broken transition evaluate as
  * false instead of crashing. Other YSM code paths are untouched.
  *
- * The official YSM 2.6.5 release jar is obfuscated on the compile classpath,
- * so the mixin target and the redirected method are specified as strings and
- * the handler uses @Coerce Object parameters + reflection - the same pattern
- * the other OpenYSM/LegacyYSM mixins in this project use for fork-specific
- * classes.
+ * <b>Which builds this reaches:</b> OpenYSM and ModernYSM, where
+ * {@code geckolib3.core.controller.AnimationControllerRuntime} is readable and
+ * {@code evaluateTransitions} exists at that name. It does <b>not</b> reach the
+ * official 2.6.5 release: that jar has no readable class under
+ * {@code com/elfmcys/yesstevemodel/client/} or {@code geckolib3/}, so this string
+ * target cannot match there, and {@code require = 0} means the miss is silent -
+ * the crash this guards against is therefore unguarded on those builds. Adding a
+ * counterpart needs the obfuscated owner name and descriptor, which have to be
+ * re-derived from the jar (the {@code molang} package is obfuscated too).
+ *
+ * The target and the redirected method are strings because the class is not on
+ * the compile classpath, and the handler uses @Coerce Object parameters +
+ * reflection - the same pattern the other fork-specific mixins in this project
+ * use.
  */
 @Mixin(targets = "com.elfmcys.yesstevemodel.geckolib3.core.controller.AnimationControllerRuntime", remap = false)
 public abstract class YsmAnimationTransitionGuardMixin {

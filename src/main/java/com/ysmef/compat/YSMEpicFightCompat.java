@@ -1,6 +1,7 @@
 package com.ysmef.compat;
 
 import com.ysmef.compat.config.YSMCompatConfig;
+import com.ysmef.compat.model.AnimationRegistryGuard;
 import com.ysmef.compat.network.NetworkHandler;
 import net.minecraftforge.fml.common.Mod;
 import yesman.epicfight.api.animation.AnimationManager;
@@ -22,6 +23,11 @@ public class YSMEpicFightCompat {
         // only consults this set for datapack reading; the registry
         // consistency check itself is exempted by AnimationManagerValidationMixin.
         AnimationManager.addNoWarningModId(MODID);
+        // That exemption is a soft injection, so it cannot fail the build when
+        // Epic Fight moves the method - and it produces no diagnostic when it
+        // does not match, either. State the verdict instead: see the method for
+        // what goes wrong when it stops applying (players are kicked on join).
+        AnimationRegistryGuard.reportExemptionTarget();
         LOGGER.info("YSM-EF Compat: Initialized successfully");
     }
 }

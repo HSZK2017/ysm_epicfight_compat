@@ -22,9 +22,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * enabled. The player model is already visible in-world during battle, so the
  * overlay is suppressed by default (config: disableExtraPlayerInBattleMode).
  *
- * <p>This class covers the official YSM 2.6.5 release, OpenYSM and ModernYSM, whose
- * {@code ModelPreviewRenderer} is un-obfuscated. The obfuscated variants of the same
- * mod are covered by {@link YsmObfuscatedExtraPlayerOverlayMixin}, whose target was
+ * <p>This class covers OpenYSM and ModernYSM, whose {@code ModelPreviewRenderer} is
+ * un-obfuscated. It does <b>not</b> cover the official 2.6.5 release: that jar has no
+ * readable class under {@code com/elfmcys/yesstevemodel/client/} at all (its only
+ * readable package is {@code mixin/}), so the injection cannot match there. Those
+ * builds are covered by {@link YsmObfuscatedExtraPlayerOverlayMixin}, whose target was
  * derived by following the paperdoll's call chain rather than by name; the decision
  * itself is shared through {@link YsmExtraPlayerOverlaySupport}.
  */

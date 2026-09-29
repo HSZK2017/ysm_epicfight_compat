@@ -3,7 +3,6 @@ package com.ysmef.compat.model.runtime;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -22,13 +21,16 @@ class YsmPhysicsTuningTest {
     /**
      * The fallbacks, as literals, and that they are the values the config documents.
      *
-     * <p>These five numbers were once asserted against {@code YsmPhysicsSimulator}'s own constants,
-     * and the two are the same numbers: 220 1/s^2, 24, the retired droop's 8, and the 60 and 20
-     * degrees the config comments promise. The simulator class is gone - it was the point-spring
-     * model the pendulum solver replaced, and its constants were the only reason it was still
-     * referenced - so the values are pinned here directly. Pinned as literals rather than derived,
-     * because a test that computed them the way the code does would agree with the code by
-     * construction and catch nothing.
+     * <p>These four numbers were once asserted against {@code YsmPhysicsSimulator}'s own constants,
+     * and the two are the same numbers: 220 1/s^2, 24, and the 60 and 20 degrees the config comments
+     * promise. The simulator class is gone - it was the point-spring model the pendulum solver
+     * replaced, and its constants were the only reason it was still referenced - so the values are
+     * pinned here directly. Pinned as literals rather than derived, because a test that computed them
+     * the way the code does would agree with the code by construction and catch nothing.
+     *
+     * <p>The retired droop value used to be asserted here too. It is not a setting of these dynamics
+     * - the pendulum reads its own gravity key - so pinning it made a key that nothing integrates
+     * look tested. See {@link #theLogLineReportsTheGravityTheDynamicsUse()}.
      */
     @Test
     void theDefaultsAreTheDocumentedValues() {
@@ -36,8 +38,6 @@ class YsmPhysicsTuningTest {
                 "the stiffness key's default, and the authors' ysm.second_order default");
         assertEquals(24.0, YsmPhysicsTuning.DEFAULTS.damping, 1.0E-6,
                 "the damping key's default: 0.81 of critical against 220");
-        assertEquals(8.0, YsmPhysicsTuning.DEFAULTS.gravity, 1.0E-6,
-                "the retired droop key's default, still the fallback for an old config file");
         assertEquals(Math.toRadians(60.0), YsmPhysicsTuning.DEFAULTS.maxAngle, 1.0E-6,
                 "secondaryMotionMaxAngleDegrees");
         assertEquals(Math.toRadians(20.0), YsmPhysicsTuning.DEFAULTS.maxAngleRoot, 1.0E-6,
@@ -71,14 +71,32 @@ class YsmPhysicsTuningTest {
     /** The config's own fallback: an unreadable client config leaves these in place. */
     @Test
     void anExplicitTuningIsKept() {
-        YsmPhysicsTuning custom = new YsmPhysicsTuning(400.0, 12.0, 0.0, 0.5, 0.1);
+        YsmPhysicsTuning custom = new YsmPhysicsTuning(400.0, 12.0, 0.5, 0.1);
 
         assertEquals(400.0, custom.stiffness, 1.0E-6);
         assertEquals(12.0, custom.damping, 1.0E-6);
-        assertEquals(0.0, custom.gravity, 1.0E-6);
         assertEquals(0.5, custom.maxAngle, 1.0E-6);
         assertEquals(0.1, custom.maxAngleRoot, 1.0E-6);
-        assertNotNull(custom.toString(), "the tuning is logged, so it must describe itself");
+    }
+
+    /**
+     * The log line reports the gravity the dynamics integrate, not a stored field.
+     *
+     * <p>It used to print the value of the retired {@code secondaryMotionGravity} key, which the
+     * pendulum never reads - so the one number a user tunes from the log was a number that did
+     * nothing. Asserting the printed value against {@link YsmPhysicsTuning#gravityAcceleration()}
+     * is what keeps the two from drifting apart again; the assertion can fail if the line goes back
+     * to reporting a field of its own.
+     */
+    @Test
+    void theLogLineReportsTheGravityTheDynamicsUse() {
+        YsmPhysicsTuning custom = new YsmPhysicsTuning(400.0, 12.0, 0.5, 0.1);
+        String line = custom.toString();
+
+        assertTrue(line.contains("gravity=" + YsmPhysicsTuning.gravityAcceleration()),
+                "the logged gravity must be the one the pendulum uses (" + YsmPhysicsTuning.gravityAcceleration()
+                        + "), got: " + line);
+        assertTrue(line.contains("stiffness=400.0"), "the line still describes the tuning: " + line);
     }
 
     /**
@@ -104,5 +122,26 @@ class YsmPhysicsTuningTest {
         assertTrue(cap <= 512, "a limit above the config's own range is not this setting");
         assertTrue(!YsmPhysicsTuning.maxChainsIsAutomatic(),
                 "a configured limit is not an automatic one");
+    }
+
+    /**
+     * The chain limit's rule, over values rather than over the config.
+     *
+     * <p>96 is the case that was wrong. It is the default the last build shipped, so every config
+     * file that was generated rather than written carries it, and the rule read it as "unlimited" -
+     * while this key's own config description promised a backstop. A user who writes 96 means 96.
+     */
+    @Test
+    void theChainLimitRuleHonoursAConfiguredCap() {
+        assertEquals(YsmPhysicsTuning.AUTO, YsmPhysicsTuning.maxChainsFor(-1),
+                "-1 is the documented automatic value");
+        assertEquals(YsmPhysicsTuning.AUTO, YsmPhysicsTuning.maxChainsFor(24),
+                "the older build's default was not a decision, and honouring it would truncate garments");
+        assertEquals(96, YsmPhysicsTuning.maxChainsFor(96),
+                "the last build's default sits above the range real models use, so it is a real cap");
+        assertEquals(1, YsmPhysicsTuning.maxChainsFor(1));
+        assertEquals(512, YsmPhysicsTuning.maxChainsFor(512));
+        assertEquals(0, YsmPhysicsTuning.maxChainsFor(0),
+                "0 disables secondary motion; it is not an automatic answer");
     }
 }

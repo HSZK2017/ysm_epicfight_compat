@@ -134,7 +134,20 @@ public final class ModelSyncServer {
         if (!NetworkHandler.isPlayerConnected(recipient)) {
             return;
         }
-        Snapshot snapshot = readSnapshot(target);
+        // readSnapshot serializes the target's whole player NBT, and this is called once per
+        // (recipient, other player) pair when a client finishes its handshake - so on a server whose
+        // players join one after another, that serialization was paid O(n^2) times. LAST already
+        // holds what the periodic diff last saw, so the selection is reused from there; only a player
+        // the diff has not reached yet (the first frames after a join) is read directly.
+        //
+        // The entity id is taken from the live player rather than from the cached snapshot: it
+        // changes on respawn, and the packet carries it for protocol fidelity and diagnostics (the
+        // client keys its registry by UUID).
+        Snapshot snapshot = LAST.get(target.getUUID());
+        if (snapshot == null) {
+            snapshot = readSnapshot(target);
+            LAST.put(target.getUUID(), snapshot);
+        }
         NetworkHandler.sendToClientPlayer(new S2CSetModelAndTexturePacket(
                 target.getId(), target.getUUID(), snapshot.modelId(), snapshot.textureName(),
                 snapshot.modelId().isEmpty()), recipient);

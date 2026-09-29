@@ -71,6 +71,14 @@ final class AcceptanceSupport {
      * the documented order, with the documented types, or the harness refuses to run and says
      * so. A call built by position against an unexpected signature would silently feed the
      * wrong numbers, and that is the one failure mode an acceptance harness must not have.
+     *
+     * <p>And the one shape it deliberately does not accept is an overload carrying parameters
+     * <b>after</b> {@code out}. The turn overloads already put their floats before {@code dt}, and
+     * round 20 added a second pose input after {@code out} - a rotation of the piece's joint, which
+     * is not something this suite has an opinion on. Selecting it was not a silent wrong number: the
+     * harness reported "expects float at position 17 but found Quaternionf" from eight tests, because
+     * a call built by position against the wrong overload is exactly what it refuses to do. The
+     * filter below is what keeps that refusal pointed at the right overload.
      */
     private static final Method UPDATE = resolveUpdate();
 
@@ -88,6 +96,14 @@ final class AcceptanceSupport {
                     || params[params.length - 1] != Quaternionf.class) {
                 continue;
             }
+            // The template ends at `out`, so the overload this harness can drive is the one whose
+            // last two parameters are the time step and the rotation - anything after `out` is a
+            // parameter the harness has no value for, and filling it by position is the mistake this
+            // resolve/step pair exists to prevent. Skipped rather than refused, so that adding a pose
+            // input does not break a suite that never asked about it.
+            if (params.length < 15 || params[params.length - 2] != float.class) {
+                continue;
+            }
             boolean hasGravity = params[1] == float.class;
             // A single, honest preference: an overload with gravity over one without. Which of the
             // two gravity-carrying overloads is found does not matter - {@link #step} binds the
@@ -100,8 +116,9 @@ final class AcceptanceSupport {
             }
         }
         if (best == null) {
-            throw new MissingApi("YsmDynamicBoneSolver has no update(SegmentState, ..., Quaternionf)"
-                    + " overload the acceptance suite can drive; declared update methods were:" + seen);
+            throw new MissingApi("YsmDynamicBoneSolver has no update(SegmentState, ..., float dt,"
+                    + " Quaternionf out) overload the acceptance suite can drive; declared update"
+                    + " methods were:" + seen);
         }
         best.setAccessible(true);
         return best;
@@ -286,6 +303,12 @@ final class AcceptanceSupport {
         // measures the translational dynamics, and zero is what "no turn to report" means. Filling
         // whatever the tail happens to be is also what makes the harness indifferent to which of the
         // two overloads it found - they differ only in where those floats sit.
+        //
+        // The run stops at `dt`, which resolveUpdate has already checked is the second-to-last
+        // parameter: `out` is the last, and these two are what everything else is measured against.
+        // Walking to `params.length - 2` rather than stopping at the first non-float is what makes
+        // the refusal below say WHICH position could not be filled.
+        int at2 = at;
         for (int i = at; i < params.length - 2; i++) {
             if (params[i] != float.class) {
                 throw new MissingApi("the acceptance harness cannot fill " + signature(UPDATE)
@@ -295,10 +318,11 @@ final class AcceptanceSupport {
                         + " to AcceptanceSupport#step and to the arithmetic in the report.");
             }
             args[i] = 0.0F;
+            at2 = i + 1;
         }
         // `dt` and `out` are the last two by construction: a time step with nothing after it is not
         // a signature, and this pins the fact rather than assuming it.
-        at = params.length - 2;
+        at = at2;
         at = fill(params, args, at, float.class, dt, "dt");
         at = fill(params, args, at, Quaternionf.class, out, "out");
         if (at != params.length) {

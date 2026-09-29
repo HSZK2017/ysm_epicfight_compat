@@ -4,6 +4,253 @@
 
 ### 中文
 
+#### 第二十六轮：四个系统开关统一取值语义（`=false` 曾是"开"）
+
+这四个开关此前都在调用点用 `System.getProperty(名) != null` 判断——**属性的"存在"就是信号**，于是启动参数里写 `-Dysm_ef_compat.disable_gpu=false`（想撤销）反而保持禁用，`-D…force_cpu_render=false` 反而强制 CPU 路径。写 `=false` 去撤销一个开关是人第一件会试的事，而它做的事恰好相反；四处各有一份拷贝，四处同坑。
+
+改法：新增 `com.ysmef.compat.SystemFlags.enabled(名)` 作为**单一实现**——`-D名`/`-D名=true` 为开，**`=false` 为关**，`0`/`no`/`off`（不分大小写、忽略首尾空格）同样读作关，缺省为关；四个调用点（`diag`、`disable_gpu`、`force_cpu_render`、`disable_iris_compute_path`）全部改用它，源码里已无 `getProperty(...) != null` 形式的读取。属性名与原有语义方向不变，所以既有启动参数仍然有效（`-D…disable_gpu` 依旧表示禁用）。
+
+**验证**：新增 `SystemFlagsTest`（5 条，纯 Java 无需 Minecraft），其中 `explicitFalseIsOff` 钉的正是这个坑——**它在旧的 `!= null` 规则下必然失败**，在新规则下通过（本次为"由构造保证"的对照，未再跑一次旧实现来验证）。`gradlew build` → **43 suites / 352 tests / 0 failures**（347 + 5）。README 的调试属性表已补上统一的取值语义说明。
+
+#### 第二十五轮：优化 Iris 路径改为默认开启（多模型实机验证后）
+
+第二十四轮修复了该路径的物理缺陷但保持 opt-in，理由是"验证面太窄"。本轮按用户实测扩到 **9 个模型**，日志核对后翻转默认值。
+
+**日志核对（光影开启 + `-Dysm_ef_compat.enable_iris_compute_path=true`）**
+- 9 个模型全部走到本模组 Iris 路径，且**每个都 `mesh.getPartCount() == iris partCount`**：`wine_fox/01_taisho_maid` 143/17,640、`17_mini.ysm` 135/19,680、`Wither2.3.ysm` 412/41,802、`minecraft_warden2.0.ysm` 204/32,826、一个 205/89,424、`…` 328/75,564、`…` 597/25,776、一个 364/**103,998**、一个 188/40,284、一个 51/11,412。
+- 物理：162 次 `[physics] frame` 采样，`N of N bone(s) moving`。
+- **零 ERROR、零 `[iris-diag]` 异常、零 `Iris path draw failed`**。
+- 唯一的 WARN 是两类**既有且预期**的：①每个模型首次使用时的懒转换首帧回退（`no converted base mesh … Falling back`，README 已记载）；②**模型脚本自身**的 Molang 语法错误（如 `'['`、`']'`、缺右括号的 `((…)/v.time;`），解析器照常告警并降级为 0——这不是回归，Molang 只在 P0-1 改过参数暂存，与解析无关。
+- 两个**看似可疑但与本模组无关**的日志已逐条排除：`GL_INVALID_ENUM (id=1280)` 的上下文是 `AAAParticles`（Effekseer）初始化，前后 40 行内无任何 `com.ysmef` 帧；`UnsupportedOperationException: Reflective setAccessible(true) disabled` 来自 netty 的 Android 探测（`PlatformDependent.isAndroid` ← Forge `NetworkConstants.<clinit>`），是 JDK17+ 下的已知噪音。
+
+**改动**：`YsmIrisComputePath.ENABLED` 由"opt-in"改为"默认开启，`-Dysm_ef_compat.disable_iris_compute_path=true` 关闭"。`enable_iris_compute_path` 开关**移除**——它现在只会是一个不生效的参数，README 已把这一点写明（留着不报错，但没有任何效果）。
+
+**该默认值所依赖的证据边界（与代码注释里写的一致）**：一台机器、一种光影；**"超 MAX_JOINTS(1000) 容量"这一能力未被触达**（本次最大 597 部件 + 约 20 关节，未越界），描边/GUI 通道亦未行使。若某个光影包或显卡与该路径不合，用 disable 开关退回 EF 自带 Iris 路径即可。
+
+**验收**：`gradlew build` → 42 suites / 347 tests / 0 failures。
+
+#### 第二十四轮：优化 Iris 路径的物理缺陷定位并修复（实机验证通过）
+
+第二十三轮把该路径改回 opt-in 止血，并留下两个假设（"没有 part 上传" / "part 序号错位"）。本轮先用**一次测量**把两者都排除，再找到真因。
+
+**测量**（第二十二轮新加的 `[iris-diag]`，一次运行出结果）
+```
+optimized Iris compute path active: model='wine_fox/01_taisho_maid', 143 parts, 17640 vertices
+[iris-diag] mesh.getPartCount()=143, iris partCount=143, non-identity deltas=59, vertices=17640
+```
+`143=143` → 序号空间一致（另用实例里的真实网格 JSON 静态核对：143 个部件键，131 个 `y/<骨骼>`）；`deltas=59` → 物理结果**确实**已发布到 mesh（59 = 模拟骨骼数）。连同上传偏移（`jointCount*64`）、`part_offset`（`= poses.length`）、SSBO 绑定（`poseSsbo` → binding 0）与 EF 着色器的读取位置（`iris_mesh_transformer.comp:122` 读 `poses[part_offset + elem.part_idx]`）**全部对得上**。
+
+**真因：重传门控缺一项。** GPU 路径的重传条件是 `!partSectionValid || **anyTransform** || hiddenChanged || identityChanged`；Iris 路径只有 `!partSectionValid || lastJointCount != jointCount`——它的两个标记只能察觉"增量出现/消失"（null ↔ 非 null），**察觉不到每帧变化的数值**。于是 part 段只在增量第一次出现那一帧上传过一次（此刻位移接近 identity），此后永不重传：求解器照常运算，画面里的部件被冻结。改法：照 GPU 路径补上 `anyTransform`，上传条件改为 `dirty || anyTransform`（物理不动的模型仍不上传，门控收益保留）。
+
+**实机验证（2026-09-20，光影开启 + `-Dysm_ef_compat.enable_iris_compute_path=true`）**：部署件与 `build/libs` 产物逐字节一致；`optimized Iris compute path active` 与 `[iris-diag] … deltas=59` 同时出现；`[physics] frame` 持续 `59 of 59 bone(s) moving, collision active`；**二次运动可见（用户确认）**；零 ERROR、零异常。
+
+**当前状态**：缺陷已修复并验证，但该路径**仍保持 opt-in**（默认关闭）——验证面只有一台机器、一个模型（`wine_fox/01_taisho_maid`）、一种光影，而该路径的其余能力（超 MAX_JOINTS 容量模型、描边/GUI 通道、开销曲线）仍未行使，且这条路径已经产生过一次回归。改默认值应是一个单独的决定。
+
+**教训延续**：第二十三轮的错误（"该类完全不上传 part 段"）源于单文件 grep 的缺席证据；本轮改用"正向测量 + 与可用实现的逐项差异"定位，一次即中。两者都留在注释里。
+
+#### 第二十三轮：P1-4 引入的回归 —— 优化 Iris 路径默认关闭（我把它接上线，它从没画过一帧）
+
+**这是我上一轮决定的后果，先说清楚责任**：P1-4 把 `YsmIrisComputePath` 从不达变可达。该路径此前**从未执行过一次**（没有任何外部引用），而我在接线时**没有**把它默认设成关闭。第一次真正启用（光影开启、去掉 A/B 开关）就暴露了它是**不完整的**：模型失去二次运动，而求解器一直在算。
+
+**证据（同一份日志，同一段帧区间）**
+```
+[physics] frame 240:  dt=12ms max swing=43.2deg max displacement=0.084 blocks, 59 of 59 bone(s) moving, collision active
+[physics] frame 720:  dt=2ms  max swing=56.8deg max displacement=0.124 blocks, 59 of 59 bone(s) moving, collision active
+[physics] frame 1200: dt=2ms  max swing=60.0deg max displacement=0.206 blocks, 59 of 59 bone(s) moving, collision active
+optimized Iris compute path active: model='wine_fox/01_taisho_maid', 143 parts, 17640 vertices
+```
+即**物理在算、渲染没用上**。不是求解器的问题。
+
+**根因**：物理结果存放在 per-part 运行时增量（`YSMMesh#getPartTransform`），而 `YsmIrisComputePath` **完全不上传 part 段**——文件里与"part"有关的只有 `part_offset` 这个 uniform 名、以及激活日志里打印的部件数；它的上传调用只有 `uploadMat4/uploadMat3`（uniform）与 `BufferUploader.invalidate()`。更糟的是该类自己的 javadoc 第 50 行写着 "re-uploads the part section only when it changes"，**这段代码不存在**。骨骼矩阵每帧上传，所以身体动画正常；增量从不上传，所以位移到不了着色器。对照实现是正确的：`YsmGpuRenderPath` 有完整的 part 缓存与 `anyTransform`/`hiddenChanged`/`identityChanged` 三路门控（`:820-862`），那是修复的参照。
+
+> **⚠️ 上述"根因"已被推翻（同日撤回，保留原文以免读者以为从未有过这个判断）。** 我只 grep 了 `YsmIrisComputePath` 一个文件就下了结论，实际实现位于 `YsmIrisMesh.fillPoses`（`:261-287`）：每帧从 `mesh.getPartTransform(p)` 刷新 `partStaging`、带 identity 变更门控、`glBufferSubData` 写到 `jointCount * MAT4_BYTES`，javadoc 也已写明。而且该调用**确实被调用**（`YsmIrisComputePath:421`），`part_offset`（`u[3]`）被设为 `poses.length`（`:512`），**与写入偏移一致**。所以"没有 part 上传"与"偏移不匹配"两条都不成立。真实原因**尚未查明**；剩余疑点按优先顺序是：(1) 该路径 element 缓冲里的 part 序号是否与 `YSMMesh#getPartTransform` 期望的序号一致；(2) 该路径绘制的那几帧里，物理结果是否已经写进 mesh。默认关闭的处置不变（物理已恢复），但在查明并实机验证之前不再改动这条路径——**教训：单文件 grep 不能当作"代码不存在"的证据，尤其是交叉引用的两个类。**
+
+**本轮处置（立即 fail-closed）**：把该路径改为**默认关闭、显式 opt-in**——`-Dysm_ef_compat.enable_iris_compute_path=true` 才启用，`disable_iris_compute_path` 仍然有效且优先。光影下回到 EF 自带 Iris 路径绘制（它带增量，所以物理可见）。加上上一轮新加的 skip-reason 日志，本次运行会明确打印"optimized Iris compute path is not used (off: it uploads no per-part runtime deltas …)"，不会再出现"不知道走的哪条"。README 的已知限制第 2 条与调试属性表已同步。
+
+**验收**：`gradlew build` → 42 suites / **347 tests / 0 failures**；新产物 `-all.jar` sha256 `75CCFA93A62FC1A17CDE2CEAD67DC1582858F0BE3ECA370DD7512DB7FE79E052`。
+
+**实机确认（同日，光影开启、不加任何 `-D`，部署件与当时 `build/libs` 产物逐字节一致）**：物理效果回归。日志三条对得上——
+- Render thread 出现新加的归因行（原文）：`optimized Iris compute path is not used (off: it uploads no per-part runtime deltas, so secondary motion would be invisible; opt in with -Dysm_ef_compat.enable_iris_compute_path=true. Epic Fight's own Iris path draws instead)` → 本模组 Iris 路径已让位，由 EF 自带 Iris 路径绘制；
+- `[physics] frame 240 … 1440` 连续六次采样全部 `59 of 59 bone(s) moving`（max swing 43–47deg，dt 7–12ms）→ 求解器照常；
+- **没有** `optimized Iris compute path active` 行 → 该路径确实没画。
+- 零 ERROR、零异常；`GPU skinning path skipped its first draw … reason=shader-pack-in-use` 与 `has 11283 unique vertices (>8192); using Epic Fight's compute path` 与光电场景一致。
+
+至此"接线 → 启用 → 暴露缺陷 → 止损 → 归因可见"这条链闭合：默认关闭下物理可见，且日志明确说明为什么没走本模组的 Iris 路径。
+
+**未做（下一轮，需要实机迭代）**：真正的修复是把 GPU 路径的 part 段上传 + 变更门控移植过来（读 `YSMMesh#getPartTransform(ordinal)`、按 `YsmIrisMesh` 的缓冲布局写入、只在变化时重传），然后**用 `enable_iris_compute_path=true` 实机确认物理可见**再考虑改默认值。那是一处 495 行 GL 类里的改动，且我这边没有实机回路，草率动手只会再引入一个同类回归——所以本轮只做止血，不做修复。
+
+**教训（写给后来者）**：把一段从未执行过的代码接上线，**应当以默认关闭的形式上线**，让"接上"与"启用"分成两步；这次的代价是你的物理消失了一轮。
+
+#### 第二十二轮：首次实机验证 —— 两条新诊断命中，并暴露两处"改了但看不见"的问题
+
+前四轮（P0–P3）最后一次都以"无游戏内验证"收尾。本轮用真实实例跑了两遍：一遍无光影（该实例 EF 配置为 `use_compute_shader = true`），一遍**开启光影 + `-Dysm_ef_compat.disable_iris_compute_path=true`**。部署件与构建件逐字节一致（sha256 `8905148324743533…`、7,275,373 字节、同一 mtime），因此日志描述的就是被改的代码。
+
+**实机确认（原文引用）**
+- **P1-4**：`skinning paths registered (gpu=true, cpu=true, irisCompute=true)`。该实例的 EF 配置**正是 `use_compute_shader = true`**，也就是修复前必然失效的那个配置——那时 `drawPosed` 不被调用、CPU 路径不加载、GPU 路径（当时只靠 CPU 路径的静态调用被加载）也不加载，两者同时为 null。日志里随后出现 `GPU skinning path active (bone SSBO + skinning shader): model='wine_fox/06_hanfu', 86 parts`：**在这个配置下 GPU 直接蒙皮路径确实画了**。
+- **P1-9**：`animation registry exemption target resolved: public void yesman.epicfight.api.animation.AnimationManager.validateC…`，与 `javap` 对 EF 20.14.17 的预测一致。
+- **P2-b**：`biped armature joint layout verified` —— 改成读 `JointTable` 的那个校验在真实 EF 骨架上通过。
+- 全链路：`converted model 'wine_fox/01_taisho_maid' -> 2940 quads`（worker 线程）→ `rendering 'Valletta997' with converted YSM base mesh`；**零 ERROR、零异常**，两遍都以 `Stopping!` 干净退出。
+- 光影那遍：`GPU skinning path skipped its first draw: model=wine_fox/01_taisho_maid reason=shader-pack-in-use` —— 光影激活时 GPU 直连路径按文档让位。
+- 顺带独立印证两条审查结论：官方 2.6.5 确实没有可读的 `client.*` 类（Mixin `was not found` + `YSM fork identified as LEGACY_YSM`）；以及大模型确被改道（`has 11283 unique vertices (>8192); using Epic Fight's compute path`）。
+
+**本轮修的两处（都由实机暴露）**
+1. **A/B 开关本身不可观测。** `YsmIrisComputePath.tryRender` 的第一行是 `if (DISABLED || !REFLECTION_OK || poses == null) return false;`——**不打任何日志**。于是"打开了 kill switch"与"这台机器没有 Oculus"或"反射失败"在日志里长得一模一样，而 README 恰恰把这个开关写成 A/B 验证手段：开关状态看不见，比较就无法归因。这与 P1-4 修的是同一类缺陷（功能有没有真的接上，必须能从日志读出来），只是低一层。改法：首次 decline 时打一行 INFO，并说明是三者中的哪一种。
+2. **两个重力键的注释互相矛盾。** 实机实例的 `config/ysm_epicfight_compat-client.toml` 里，`secondaryMotionGravityAcceleration` 的注释仍写 "separate from the **retired** secondaryMotionGravity"，而 P1-8 已把另一个键的注释改成"它是**布料**求解器的重力"。同一份配置里两句话对不上，已改。（已存在的 `.toml` 不会自动刷新旧注释，只有键缺失/越界时 Forge 才重写；本条不需要为此重跑。）
+
+**验收**：`gradlew build` → 42 suites / **347 tests / 0 failures**；新产物 `-all.jar` sha256 `FA32B446E9FB0067EB9FEDEEC00E09AE39F25D995D26451EED9EA008E585A2DC`。
+
+**仍未验证（下一步就是它）**：**优化 Iris 路径的"启用"那一臂从未被跑到。** 两遍里它都在 decline（第一遍无光影，第二遍被开关关掉）。要验证 P1-4"把它接上线"这个决定本身，需要**光影保持开启、去掉/置空该 `-D` 参数**再跑一遍。归因信号现成：启用时打 `optimized Iris compute path active: model='…', N parts, M vertices`（每网格一次），被关掉时打新加的 `optimized Iris compute path is not used (disabled by -Dysm_ef_compat.disable_iris_compute_path…)`——**两行必有其一**，不会再出现"都不知道走了哪条"的情况。
+
+#### 第二十一轮：代码审查后的 P3 修复（静默失败补诊断 / 资源释放 / 死代码状态写明）
+
+四项确定做，其余技术债逐条留档。本轮**没有**删除那条未接线的布料链，也**没有**动工作区里既有的一千多行未提交改动——两者都需要你自己的决定，理由写在末尾。
+
+**P3-1 四处掩盖持续性故障的静默 `catch` 补上因由。** 它们都把"读失败"与"没有"折叠成同一个返回值：`ManifestStore` 让**损坏的** manifest 与**不存在**的 manifest 都变成 `null`（于是持续性损坏被当作普通缓存未命中，每个模型反复重转，日志里什么都没有）；`YsmCapabilityReader` 让"读不出 capability"变成"这个玩家没有模型"（而模型同步会把这个结论广播出去）；`YSMMeshLibrary` 的缓存校验失败与"校验判定为不一致"同为一个 `false`；`TextureStore` 的纹理缓存哈希读取失败与"哈希不匹配"同为一个 `false`。四处都**保持返回值不变**（恢复动作本来就是对的），各补一行 `LOGGER.debug` 说明是哪一种。
+
+**P3-2 退出世界时释放 `CURRENT_ENTITY` ThreadLocal。** `YSMRuntimeBridge` 用一个 ThreadLocal 保存"当前正在为其准备网格的实体"，每次绘制结束清除——但一个会话的最后一次绘制正是"世界在帧中途被离开"时那次**没走完**的绘制，于是旧实体及其 `ClientLevel`、区块会被一直持有到下次绘制。改法：在 `YSMReloadTrigger.onDisconnect` 里显式 `clearCurrentEntity()`（与那里已有的 `YsmMeshCloth.clear()`、`YsmClasses.invalidate()` 同一位置、同一理由）。
+
+**P3-3 `TextureStore.sanitize` 的死存储。** 分段循环里对 `..`/`.` 段设置的 `stripped = true` 从未被读取（`_hash` 后缀在字符循环之后、分段循环之前就已追加），删掉。这是**安全相关函数**里的死状态，留着会让下一位读者以为它有意义。
+
+**P3-4 探针输出纳入 `.gitignore`。** T8/T11/T12 在测试运行时把测量表写到 `tmp_verify/`，而它不在忽略列表里——审查期间我自己的两次测试运行就让工作区多出这类未跟踪文件。已加 `tmp_verify/` 及说明（它们是可再生输出，真正的 fixture 在 `src/test/resources`）。
+
+**P3-5 未接线子系统状态写入文档。** README「已知限制」新增第 12 条：`YsmMeshCloth` → `YsmClothSolver` → `YsmClothTuning` 这条位置约束布料链在源码里完整存在，但**渲染路径没有任何地方调用它**（`YsmMeshCloth` 在整个 `src` 中唯一的出现是 `clear()`），当前所有二次运动都走摆锤求解器；因此 `secondaryMotionMaxParticles`、`secondaryMotionIterations`、`secondaryMotionBodyRadius` 与 `secondaryMotionGravity`（布料重力）当下不产生可见效果。接线还是删除需要一次带游戏内观察的决定。上一轮已把 `secondaryMotionGravity` 的配置注释按同一事实更正。
+
+**验证（全部实跑）**：`gradlew build` → **42 suites / 347 tests / 0 failures / 0 errors / 4 skipped**，与上一轮同数（本轮为诊断、资源释放与文档，未新增测试）。
+
+**本轮与后续明确未做（P3 剩余技术债）**
+1. **未删除也未接线那条布料链（约 1200 行）**：删除等于替你扔掉一整块已实现的功能（含 8 次约束松弛、身体体积排斥、钉住粒子的蒙皮放置），接线等于在没有游戏内验证的条件下开启一条从未跑过的新求解器。两者都不是审查方该单方面做的决定；本轮只把状态写到 README 与配置注释里。同类状态还有 `YsmSecondOrder.Bank`（`prime()`/`isPrimed()` 无调用者）与 `YSMMeshLibrary.generateAll()`（无调用者，连带唯一的陈旧文件清理不执行）——已在第十九/二十轮 CHANGELOG 记录，尚未在代码处加标记。
+2. **八个巨型类未拆分**（`YsmMeshSecondaryMotion` 1542 行 … `YsmExtraAnimationLibrary` 808 行）：拆分需要先给这些零测试覆盖的类补上行为测试，否则只是把风险换个位置。
+3. **两处包环未打破**（`model ↔ ysm`、`model.runtime ↔ renderer`）：改动面横跨缓存与渲染分派，收益是"架构图与代码一致"，风险不成比例。
+4. **README 配置表仍只列 18 个键中的 4 个**：纯文档，但要逐个核对默认值，本轮预算不足。
+5. `YsmGpuRenderEnable` 中"250ms TTL 使每帧成本成为一次 volatile 读"的注释与实际（两个字段都非 volatile）不符；`T12_ProbeTest` 的 `mean`/`pivotMean` 两个死方法；`ImplementationPathAcceptanceTest` 用 `getParameterTypes()[0]` 会对无参重载抛 AIOOBE 而非按名报错。
+6. **工作区里那 1169 行未提交改动（6 改 + 13 未跟踪）**：属于你的在制品，我不替你提交；模组仓库之外的 workspace 残渣（`tmp_verify\`、`tmp_decompile\`、若干 `.ps1`）同理。
+
+#### 第二十轮：代码审查后的 P2 修复（缓存记账 / 关节表单源 / 开关方向 / 服务端与网络）
+
+六项小修，承接第十九轮。本轮**未做完** P2 清单里的三项，理由逐条写在末尾。
+
+**P2-a LRU 淘汰先判后摘。** `trimIfNeeded` 原来先把 victim 从 `ACCESS_ORDER` 摘掉、再判断它是否正在转换（`PENDING`）或已失败（`FAILED`）——被跳过的那条于是仍留在 `MESHES` 里却不再被 LRU 追踪。而循环的终止条件正是 `ACCESS_ORDER.size() <= cap`，等于用"被追踪数"当"已加载数"：上限被低估（可长期超过 `lazyModelCacheSize`），被跳过的条目**再也不会被选中淘汰**，只能等整表失效。改法：先在锁内判断、要淘汰才摘；跳过的留下，下一轮 trim 再试。
+
+**P2-b 关节表回到单一数据源。** `YSMPlayerRenderer.validateArmatureOnce` 曾自带**完整第二份** 20 关节 name+id 表——于是"专门用来发现关节表不一致"的那个校验，校验的是它自己那份：`JointTable` 变了而副本没变，校验通过、网格生成器却按新表布局。改法：校验改为遍历 `JointTable`；并新增 `JointTableTest.noSecondCopyOfTheLayoutInTheRenderPath`，扫描 renderer 包内的源码，若再出现"关节名 + id"的字面量组合就转红（源码文本检查是本项目已用的手法，只有它能看见"重新声明"这件事）。
+
+**P2-d ModernYSM 开关读取失败不再"默认开"。** `YsmGpuRenderEnable` 有三处兜底全部偏向"启用 GPU 路径"：字段解析失败 `return true`、单字段读失败 `boolOf(..., true)`、兼容渲染器读失败回退 `false`（`!compatOn` → 开）。用户关掉 GPU 渲染通常正是因为那条路径出过问题，**猜"开"是唯一不能猜的方向**。改法：任一处读不到值即视为"关"，并打一次 WARN 说明该路径保持关闭及如何改回；`gpuOn` 兜底改 `false`、`compatOn` 兜底改 `true`（都指向"关"）。
+
+**P2-e 服务端握手不再对每个收件人重复序列化。** `sendModelToPlayer` 每次调用都 `readSnapshot(target)`，而它在握手时按"每个收件人 × 每个在线玩家"调用一次——即全量玩家 NBT 序列化被付了 **O(n²)** 次。改法：直接复用 `LAST` 里周期扫描已经取到的快照（尚未被扫描到的新玩家才真读一次），实体 id 仍取**在线实时值**（它会在重生后变化，客户端按 UUID 建表）。
+
+**P2-f 网络三处收口。** ①`setChannelVersion` 仍保持 YSM 的"先到先得"，但**允许我们自己的版本覆盖已钉住的错值**——否则该连接的模型同步永远不可能成立（`isConnectionValid` 恒 false、200 tick 重试也换不掉非空属性），而只有一行日志解释。②版本不匹配的告警从"每 JVM 一次"改为**每连接一次**（原来第二个不匹配的服务器是静默的）。③`ModelSyncClient` 的注册表加了**容量上限 4096 + 名称长度校验**：这些条目来自我们无法控制的服务端，原来既无上限也无内容检查，恶意服务端可用不存在的 UUID 把它撑到 OOM（那些 UUID 只在离开世界时才清）。
+
+**P2-i 清理两处失真。** 删掉 `YSMMeshLibrary` 里声明后**从未读写**的 `TEXTURE_TRANSLUCENT`（活的在 `TextureStore`），并留一行注释说明删的是"没人碰过所以不可能错、正因如此值得删"；`YsmGpuRenderPath` 的类 javadoc 原本描述"每帧合成每个部件的矩阵并整块填充 SSBO"，与函数体（关节-only 上传 + 部件段变更门控、`joint×part` 在着色器里合成）**相反**，已按实际改写（README 的对应段落原本才是准确的一方）。
+
+**验证（全部实跑）**
+- `gradlew build` → **42 suites / 347 tests / 0 failures / 0 errors / 4 skipped**（第十九轮为 346，+1 为新的关节表漂移测试；该测试已随套件运行并通过）。
+- `manifest`/`TextureStore`/`YsmCapabilityReader` 等未改动的路径由既有 347 条测试覆盖，全部仍绿。
+- 新增的源码漂移测试**未经变异验证**（即"故意放回一份副本看它转红"这一轮没做，已由结构确认：其正则匹配的正是被删除的那种字面量组合）。列在此处以免被读成已验证。
+
+**本轮明确未做（P2 剩余项，附理由）**
+1. `GlRenderState.capture()` 每 draw 一个 `Snapshot` + 4 次 GL 状态查询：**没有安全的复用写法就不改**——单一共享实例在嵌套绘制（描边通道、半透明双 Pass）下会把内层捕获的状态当成外层要恢复的状态，反而改错 GL 状态；真要复用需要一个按嵌套层级分配的池。代价是一个 4 布尔对象/次绘制，收益不足以承担这个风险。
+2. `TextureStore` 热路径的 `ResourceLocation.toString()` 与 `findTexture` 的全表兜底扫描：需要把若干 static map 的键类型从 String 换成 `ResourceLocation`，属于面更广的重构；逐帧代价约 300B/玩家量级，列入下一轮而非塞进本轮。
+3. 掩盖持续性故障的 4 处静默 `catch`（`ManifestStore:115` 把"损坏"与"缺失"折叠成同一个 null、`YSMMeshLibrary:662/695`、`YsmCapabilityReader:40`、`TextureStore:601`）补诊断：纯诊断改动、零风险，但本轮预算用尽；四个位置已在审查报告中逐条列明。
+4. 服务端周期扫描仍为每 2s 一次全量玩家 NBT（改为直接读 capability 需依赖 YSM 混淆类，改为拉长间隔属产品决策）；8 个巨型类拆分；两处包环；README 配置表只列了 18 个键中的 4 个。
+
+**未验证**：与前两轮相同——无游戏内验证，本轮所有结论只到"编译 + 单元测试 + 静态核对"。渲染、网络与服务端的实际行为仍需实机确认。
+
+#### 第十九轮：代码审查后的 P1 修复（渲染路径注册 / 探针断言 / 文档覆盖地图 / 上限与豁免可观测）
+
+六项，承接第十八轮。仍只动审查报告点名的位置。
+
+**P1-4 渲染路径靠"哪段调用图先碰到类"来决定是否存在。** 三条路径都在自己的 `static {}` 里自注册，所以：`YsmCpuRenderPath` 只由 `SkinnedMeshCpuRenderMixin` 加载（EF 打开 `use_compute_shader` 时 `drawPosed` 根本不被调用 → 永不加载）；`YsmGpuRenderPath` 只因为 CPU 路径调了它一个静态方法而跟着加载；`YsmIrisComputePath` 与 `YsmIrisMesh` **只互相引用、没有任何外部入口**，因此 `registerIris` 从未执行、`RenderBridgeRegistry.iris()` 恒为 null——README 记载、`-Dysm_ef_compat.disable_iris_compute_path` 专门为 A/B 而存在的"优化 Iris 计算路径"，在任何机器、任何配置下都不可达。改法：给三条路径各加一个 `ensureRegistered()`（空体，加载类即注册），在 `YSMCompatClientEvents` 的 client setup 里 `enqueueWork` 显式加载一次，并打印 `skinning paths registered (gpu/cpu/irisCompute)`——全 true 用 INFO，任一为 false 用 WARN，因为"某条路径根本不存在"以前是完全静默的，而 `enableGpuRender`、`-Dysm_ef_compat.force_cpu_render` 会因此变成空操作。
+
+**P1-5/P1-6 探针测试的评分结论改为断言。** T11 的"all of them cloth"、T12 的形状规则（肢体=胶囊、躯干/头=球）、T12 的"收窄 skip 判据是否真的救回面板"、T12 的"胶囊跨度是否等于骨长"、T8 的单位换算结论，此前**只打印不断言**——回归时表格照样漂亮。现在各自断言，并带反空洞下限（面板数、体积数、检查条数）。T8 的容差按实测设定：11 块面板里最差偏差 **0.023**，所以"常数 0.7"实际是"0.7±2.3%"，原来那个"constant 0.70"的说法比数据更硬。
+
+**P1-7 官方 2.6.5 的覆盖地图是错的。** README 与 4 个 `YsmUnobf*` javadoc 都声称那些 `com.elfmcys.yesstevemodel.client.*` 目标"在官方 2.6.5 里也存在"——**官方 jar 里 `client/`、`geckolib3/`、`molang/` 一个可读类都没有**（955 个类里只有 `mixin/` 包 22 个可读），所以官方发行版**就是**"完全混淆构建"（README 表格里那两行本是同一件事）。更危险的是这条错误会诱导维护者删掉 9 个真正生效的混淆目标 mixin。同时补上排障须知：`require=0` 的"没匹配上"**不打任何日志**，只有目标**类**缺失才 WARN；客户端 mixin 计数 31→**32**，并把原先没列出的 8 个与 common 段那个一起写进清单。
+
+**P1-8 `secondaryMotionMaxChains` 的默认值不约束任何东西。** 键的默认值就是 96，而代码把 `96` 当作"未设置"→ `Integer.MAX_VALUE` → 无限，同时该键的注释却承诺"这是给声明了几百根骨骼的模型的兜底"。改法：新增显式哨兵 `-1`（默认值，范围 `[-1,512]`），只把历史值 **24** 继续读作"未设置"（它低于真实模型 4–60 的区间，兑现它会把真正的裙子截断），**96 现在如实生效**；判定逻辑抽成 `maxChainsFor(int)` 以便测试（单测够不到 Forge 配置，这正是 96 能一直等于"无限"而无人发现的原因）。另：`YsmPhysicsTuning.gravity` 字段被 `secondaryMotionGravity` 填充却**没有任何积分器读取**（只有日志打印它），而该键真正的作用域是布料求解器——注释说它"LEGACY, ignored"，事实是"摆锤不用、布料在用"。改法：删掉该字段与构造参数，日志改印 `gravityAcceleration()`（真正被积分的那个数），配置注释改写为说明真实消费者，并注明布料链当前未接线。
+
+**P1-9 动画注册表豁免"装没装上"不可观测。** `AnimationManagerValidationMixin` 是 `require=0` 软注入（正确：EF 升级不该变成启动失败），但软注入不匹配时**没有**诊断，后果是"用轮盘桥的玩家一进服就被踢"而日志里毫无线索。这里**没有**把它硬化成 `require=1`（那会把一次 EF 改名变成启动崩溃），而是新增 `AnimationRegistryGuard.reportExemptionTarget()`，在模组构造期按名字+参数类型反射解析目标并明确记录：命中 INFO，签名变了/方法没了 ERROR 并写明后果。
+
+**验证（全部实跑）**
+- 负例先行：把 `classifyBone` 的容器回溯关掉（退回纯名字规则）→ T11 新断言**转红**，列出 `RB3=0.00, FM1=0.00 …` 全部裙片；把 `BLOCKS_PER_MODEL_UNIT` 从 0.7 改成 1.0 → T8 转红（偏差 0.313）。两处改动均已还原。
+- 还原后 `gradlew build` → **42 suites / 346 tests / 0 failures / 0 errors / 4 skipped**（第十八轮为 344，本轮 +2：`maxChainsFor` 规则与日志重力各一条）。
+- P1-9 的诊断在 EF 20.14.17 上按 `javap` 核对：`validateClientAnimationRegistry(CPCheckAnimationRegistryMatches, ServerGamePacketListenerImpl)` 确实存在且描述符完全匹配 → 游戏内走 INFO 分支；把该诊断单独编译成探针、在缺少 Minecraft 依赖时运行 → 落到 `catch (Throwable)` 打 WARN，**不崩**（这是它必须有的行为）。
+
+**未验证（本轮最重要的一条）**：**Iris 路径从"不可达"变成了"可达"，而本轮没有任何游戏内验证**——它现在会在"EF 计算着色器可用 + 光影包激活 + 反射解析成功"时接管绘制。这条路径是作者自己写的、有内部回退与 kill switch，且此前不可达纯属意外；但"接上线"与"接上线且正确"是两件事。**上线前请用 `-Dysm_ef_compat.disable_iris_compute_path=true` 做一次 A/B**，并看启动日志确认三条路径都 registered。除此外所有渲染相关结论仍只到"编译 + 单测 + 静态核对"一级，无游戏内验证。
+
+**本轮未做完（明确留作下一轮）**：T11 另外 3 个测试（`meshUnitsAndNeighbourGaps`、`panelSeamGapsUnderSwing`、`differentialRotationBetweenNeighbouringPanels`）仍以测量表为主，尚未加不变量断言——它们的数字是"品质阈值"而非"对错"，需要先与作者确认哪个量该成为契约，而不是由审查方凭空定阈值；T8 内部仍有一份 `hangs()` 判据副本未改为调用生产分类器。
+
+#### 第十八轮：代码审查后的 P0 修复（Molang 参数槽重入 / 二进制段落计数 / 测试任务防陈旧）
+
+三项，来自一次五维代码审查（正确性 / 架构 / 安全 / 性能 / 可维护性，加权 6.6/10）。只动这三处，P1/P2/P3 与工作区既有的未提交改动一律未碰。
+
+**P0-1 `Molang` 函数参数暂存重入——静默算错值。** 参数在调用前写入一个 per-thread 暂存数组；求值第 i 个参数时会执行内层调用，内层从下标 0 开始写**同一个数组**，把外层已写好的 `0..i-1` 覆盖掉。**修复前实测**：`math.max(5, math.min(1, 2))` 得 `1`（应为 5）、`math.max(9, math.abs(-3))` 得 `3`（应为 9）、`ysm.outer(1, 'x', ysm.inner('y', 2))` 的第 0 个参数由 `1.0` 变 `0.0`。触发条件是"函数调用出现在参数位置 ≥1"——本文件 `:661` 的注释自己就拿 `ysm.second_order('头发垂直', math.clamp(...), 1.5, 0.6, 0)` 举例。改法：新增 `ArgPool`（per-thread，按嵌套层级各借一个数组，`acquire`/`release` 用 `try/finally` 配对），`ARG_SLOTS` 与 `MIXED_SLOTS` 两个 ThreadLocal 合并为 `ARG_POOL` 一个：层级不同则数组不同，嵌套不再互相覆盖，热路径仍是零分配（数组跨帧复用；深度受 `Parser.MAX_PARSE_DEPTH` 约束）。顺带纠正一处此前的误判：数值调用嵌套在字符串调用里**本来就是安全的**（两者用的是不同 ThreadLocal），会互相覆盖的只有"字符串调用嵌套字符串调用"。
+
+**P0-2 `YsmBinaryReader` 时间轴事件计数无上限。** `new String[timelineEventsCount]` 直接使用流中未校验的 varint，是本文件 9 处计数里**唯一**没有 `1_000_000` 上限的一处，且在第一次 `readString()` 因缓冲区耗尽而失败**之前**就完成分配；伪造的 `.ysm` 可声明 `Integer.MAX_VALUE`（约 8–17 GB），而 `YsmModelPackage.load` 只捕获 `Exception`/`StackOverflowError`，接不住 `OutOfMemoryError`。改法：照抄同文件既有写法加 `if (< 0 || > 1_000_000) throw new IllegalStateException("unreasonable timeline event count: …")`。`skipAnimations` 里的同名计数**有意未加**：它只驱动一个随缓冲区耗尽而终止的循环，不做任何分配。
+
+**P0-3 `test` 任务没有防陈旧门。** 本机 `gradlew test` 会报 `BUILD SUCCESSFUL` 而 `:test` 是 `UP-TO-DATE`——测试根本没跑、报告是上一轮的 XML（本轮审查第一次执行正是如此）。改法：`outputs.upToDateWhen { false }` + `doFirst { delete build/test-results }`。
+
+**验证（全部实跑）**
+- 负例先行：三条新断言在修复前**必红**，实测 `expected: <5.0> but was: <1.0>`、`expected: <1.0> but was: <0.0>`、以及 P0-2 的 `got: java.lang.IllegalStateException: Invalid string length 8352, remaining 1`——最后这条正说明旧行为是"先分配、再报一个与计数无关的解析错"。
+- 修复后：`cleanTest test` → **42 suites / 344 tests / 0 failures / 0 errors / 4 skipped**（原 41/337；新增 `MolangTest` 4 条 + `YsmBinaryReaderSectionCountTest` 3 条）。
+- P0-3 验收：连续两次 `gradlew test` **两次都出现** `> Task :test`（修复前第二次是 `UP-TO-DATE`）。
+- 未破坏既有能力：真实 `.ysm` 黄金用例 3/3 通过，篡改 1 字节后 3/3 失败——说明改动 `test` 配置后 `-Dysmef.golden.ysm` 转发仍有效。
+
+**未验证**：无游戏内验证（无客户端、无专用服务器）；三项都只到"编译 + 单元测试 + 实跑探针"这一级。`Molang` 的零分配特性只做了代码层确认，未做分配计数测量。P0-1 的修复只覆盖脚本求值本身，未评估"此前算错的值是否已进入过任何缓存产物"（`config/ysm_epicfight_compat` 下的运行时 JSON 与已转换网格不含求值结果，因此预期不受影响，但未逐一核对）。
+
+#### 第十七轮：腿穿裙摆 — 碰撞体从"球"改成"沿肢体的胶囊"
+
+用户实测更正了症状：**不是"没按重力下垂"，而是"腿在向前迈步时裙摆依然还在下垂，导致腿穿模穿出去"** —— 是碰撞让位问题，不是空气阻力问题。用户判断正确。
+
+**根因：碰撞体的形状，不是尺寸。** 用真实网格（11283 顶点）逐关节对比"模组构建的体积"与"真实肢体包络"：
+
+```
+joint  部件                体积半径  真实 p85  真实 max   覆盖率
+1/4    Thigh_R/L (大腿)     0.087    0.458     0.512     19% / 17%   ← 腿几乎全在体积外
+2/5    Leg_R/L  (小腿)      0.084    0.188     0.425     44.7% / 19.7%
+7      Torso                0.200    0.339     0.647     58.9% / 30.9%  (CLAMPED from 0.31)
+9      Head                 0.200    0.898     1.040     22.3% / 19.2%  (CLAMPED from 0.29)
+```
+
+**调半径无解**：肢体顶点云"长而细"，球要容下它只能长到**腿长**，而那么大的球会吞掉裙摆空间；原来的 15 百分位就是那个妥协（细球放在腿中段）。钳位数据也证明上限在**向下压**（头 0.29→0.20、躯干 0.31→0.20），抬高上限只会让躯干/头去吞裙摆。**形状错了，不是数字错了。**
+
+**改法**：四肢（Thigh/Leg/Knee）改用**沿肢体轴的胶囊**，躯干/胸/头保留球。轴取**几何自身主方向**（协方差幂迭代）——构建发生在转换期、只有转换后的网格，而这项目出过 16 倍事故正是因为混用两种帧；管半径取**垂直于轴**的距离的 85 百分位，垂直距离**不含长度**，所以百分位选的是"肢体自身的粗细"而不是"粗细与长度的混合"（后者正是 15 百分位落到 1/6 的原因）。**球 = 两端重合的胶囊**，推出/解析/skip 仍只有一份实现。改后大腿 **tube r 0.1800 / span 0.5974**，小腿 0.1503 / 0.1879。
+
+**同时修掉一个真缺陷：`skipFor` 的边距过宽。** 其第二个条件原本是"体积中心离静息质心 < 半径 + 摆动可达"——措辞上是"这块布**能碰到**这个体积"就跳过，而真正该跳过的只是"体积**把布片静息位置本身包住**"。实测（生产几何）它在**六块明确在体外的面板**（`FM`/`FR`/`BM`/`BM2`/`BR` 及左腿 `FL`）上误触发 → **大腿被要求忽略它本该挡住的面板，这就是"腿穿过去"的直接机制**。判据收窄后救回七块中的五块。
+
+**张力未被完全消除（如实记录）**：`FM1`（离轴 0.1523）与 `FR1`（0.1283）**确实在 0.180 半径内**，收窄判据救不了这两块——"体积把静息位置包住"正是 skip 规则存在的理由（推出去 = 喷射）。执行者**刻意没有**继续叠加"取消包含跳过 + 接触法向弹簧投影"这层响应改动，理由充分："它不再是解释症状所必需，而在已验证改动之上再叠一层未验证的响应改动，正是前几轮出错的模式"。该层记为下一步。
+
+**一条更硬的不变量（旧的是错的，已改写而非放宽）**：旧不变量断言"任何落在 `半径 + 摆动可达` 内的体积都应被跳过"——**它把这个缺陷编码成了契约**。现重写为双向：**被包含的绝不施加、在体外的绝不被跳过**。红证据：回退收窄后报 `2 clear pairs are skipped, which is the defect that let a leg through a skirt`。
+
+**两条"修复前必红"的测试**，都驱动**生产 collider + 真实网格顶点**：①形状规则变异体（退回球）时报 `span 0.0` + `tube radius 0.08685396`；②前片被推开且**只去掉法向速度、保留切向**（切向也被杀就是本项目已修过一次的粘滞停止）。执行者还自查纠错了一处**假保证**：那条测试早先驱动**合成 collider**，退回球的变异体让它**保持绿**。
+
+**姿势下的覆盖（解析论证，非实测）**：胶囊存在 bind 空间、两帽心每帧走 `pose × toOrigin`，**刚体变换保距** → span 与轴不随姿态漂移；屈膝改变的是**小腿**（`骨长 × sin(膝弯)`：30°→0.3636、60°→0.6297 blocks），而小腿在 joint 2/5 有自己的胶囊。缺口：胶囊覆盖大腿**几何**（0.5974）而骨长 0.7272，作者若把大腿画得比骨短会在髋部留一段。
+
+**部署注意**：`E:\.minecraft\versions\EPIC mod test` 下有**正在运行的 Forge 服务端**，装 jar 必须**先停服务端**（覆盖被 JVM 加载的 jar 不安全，且旧类在内存里会让"改好了吗"无法判断）。本轮全程未写 `mods/` 下任何文件。
+
+**验证**：`cleanTest test build` → **337 tests / 41 suites / 0 failures / 0 errors / 4 skipped**；`javap` 确认产物含 `isLimbJoint` / `pushOutOfCapsule` / `fromGeometry`。
+
+**未验证**：观感（无人进游戏）；`FM1`/`FR1` 两块仍被包含 → 仍不会被大腿推开（已知残余）；四肢体积变大是否把裙摆整体外推（只有数值）；姿势下的胶囊未实测；只测了一台模型的腿几何。纪律再次被验证：**`compileTestJava` 失败时 `test` 会复用上一轮 XML，陈旧报告与真失败长得一模一样**（本轮又踩两次）。
+
+#### 第十六轮：衣物分类修复（follow=0.0 → 0.92）+ 裙摆连续性量化
+
+用户实测反馈：**「裙摆即便在默认状态下依然在腿后部而非前面」**、**「移动起来看起来像是布条而非连续整体」**。
+
+**问题 1（根因，已修）：衣物根本没被分类。** 日志（装着第十五轮 jar）里逐件读出：`LongHair/BaseHair/Bangs follow=0.6` ✓、`Tail..Tail7 follow=0.8` ✓、但 **43 块裙板 `FM/FL/FR/BM/BL/BR/LF/LB/LM/RF/RB/RM*` 全部 `follow=0.0`** ✗。原因是 `verticalFollow()` **只看骨骼自身名字**，而这台模型的面板叫 `FM`、`FL1`、`RB3`——名字里什么都不含，信息全在**容器**里（`FM <- FrontClothe <- clothe <- UpBody`）。所以"裙摆垂向地面"这个特性在这台模型上**从未生效过**（0.0 = 旧行为 = 被姿态牵着走），这正是裙摆停在腿后而不落到腿前的原因。
+
+**修法（结构判据，不是加名字）**：先看骨骼自身名字；否则**向上走到第一个"读得出家族"的祖先**并继承它。**"在第一个具名区域停下"就是这条规则的全部精度**——若读遍所有祖先，"布料"会变成整具骨架的属性（每根骨骼最终都会经过 `UpBody`）。名字表只作兜底：加一个 `FM` 进表对下一个模型立刻失效，这个项目已反复吃过这类亏。
+
+真实模型 195 根骨骼上：**CLOTH 5 → 48**（43 块面板全部 0.92），HAIR 20 → 21（全 0.60 未变），TAIL 8 → 8（全 0.80 未变），且**无过分类**——除 5 个容器本身外，没有任何手臂/腿/耳/嘴/眼/挂件骨骼变成衣物（逐根列名核对）。（执行者自查纠错：第一版把上溯深度限成 3，第四层 20+ 根仍是 0.0，同一缺陷只是下移一层；现在深度只是防成环的护栏。）
+
+**"修复前必红"证据**：用单行变异禁用容器遍历后，真实模型判定回到 `{CLOTH=5, HAIR=20, TAIL=8}`——**与用户日志里的数字逐字一致**，这就是"这条规则确实是他所报问题的根因"的证明。
+
+**问题 2（量化，但刻意未调参）**：
+- **一处事实更正**：`knitsOf` **已经**让父收子为 partner（`child == parentOf[i]`），`sewnTogether` 的注释还论证过"排除父子会让整件衣服无同件耦合"。不对称的是反方向，且那是刻意的（子是在父之下复合的）。所以"跨层没耦合"这个前提是错的。
+- **实测发现作者本来就把面板画成分离的布条**：静止状态下相邻面板顶点间隙 **0.11–0.31 blocks**（`FM↔FM1` 0.3094、`BL↔BM` 0.1074、`BL3↔BM3` 0.3059）。这意味着"像布条"有相当一部分是**模型形状**，物理无法也不该消除它。
+- **耦合强度不是瓶颈**：60 fps 下每帧闭合 32%、12 帧到 99%（五分之一秒）。
+- **摆动列的数值被污染、不可靠**：网格 fixtures 的 `positions` 在 loader 的 Blender 帧，而同一文件旁的 `pivot` 在 Minecraft 帧，绕一个转另一个混了两套约定。**因此本轮不发布替它假设过坐标的数字，也没有在无可靠度量时调 `COHERENCE`** —— 那只会制造"看起来改善了"的假象。正确顺序是先解决帧不一致、拿到可信的顶点间隙，再决定耦合方向。
+
+**验证**：`cleanTest test build` → **332 tests / 40 suites / 0 failures / 0 errors / 4 skipped**（上一轮 323/39）。改动集中在 `YsmPhysicsParts` 的分类与 `Segment` 的 `Category` 分量；两个按位置构造 `Segment` 的范围外测试文件用兼容构造覆盖而未改动（已 grep 核实它们不调用新入口）。未回退链式复合修复、重力跟随权重、限位锥面以 target 为轴。
+
+**未验证**：未进游戏（观感无人看过）；"像布条"的物理成分未量化（受上述帧问题阻塞）；其他模型未测（结构判据"应当"泛化，但未测）；`isEntityUpsideDown` 例外、`chainLimitFor` 均分、服务端行为均未验。
+
 #### 第十五轮：重力跟随 — 头发自然下垂 / 裙摆垂向地面
 
 需求（用户实测反馈后提出）：**头发要自然受重力下垂**；**身体前倾冲刺时裙摆应垂直于地面，而不是与身体在同一轴线上**。

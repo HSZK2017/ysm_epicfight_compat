@@ -625,6 +625,125 @@ class YsmPhysicsPartsLimitTest {
         assertEquals(0.0F, verticalFollowOf(null), 1.0E-6F);
     }
 
+    // ------------------------------------------------------------------
+    // The container rule: a panel is cloth because of where it hangs
+    // ------------------------------------------------------------------
+
+    /**
+     * The defect this section exists for, as a test: a panel whose own name says nothing is cloth
+     * because of the container it hangs in.
+     *
+     * <p>This is the shipped failure, reproduced. On the first model a user ran the feature against,
+     * the hairdo and the tail were classified and all twenty-four skirt panels came out
+     * {@code follow=0.00} - so "cloth hangs toward the ground" was never applied to any cloth, and
+     * the skirt stayed behind the legs. The panels are called {@code FM}, {@code FL1}, {@code RB3};
+     * their container is called {@code FrontClothe}. A name table cannot know {@code FM}, and the
+     * next model's labels will be different again, but the author has already said structurally which
+     * bones are clothing.
+     *
+     * <p><b>This test is red on the name-only classifier</b>, which is the whole point of it: the
+     * three panels below are the three layers of one panel, and the old rule gave all three 0.00.
+     */
+    @Test
+    void aPanelIsClothBecauseOfTheContainerItHangsIn() {
+        // FM -> FM1 -> FM2, the real chain, under the container the real model uses.
+        YSMRuntimeModel.BoneRt[] bones = {
+                bone("clothe", 7, -1),
+                bone("FrontClothe", 7, 0),
+                bone("FM", 7, 1),
+                bone("FM1", 7, 2),
+                bone("FM2", 7, 3)};
+
+        assertEquals(YsmPhysicsParts.Category.CLOTH, YsmPhysicsParts.classifyBone(bones, 2),
+                "'FM' says nothing; 'FrontClothe' above it says everything");
+        assertEquals(YsmPhysicsParts.Category.CLOTH, YsmPhysicsParts.classifyBone(bones, 3),
+                "and the middle layer of the same panel is the same cloth");
+        assertEquals(YsmPhysicsParts.Category.CLOTH, YsmPhysicsParts.classifyBone(bones, 4),
+                "and the deepest layer too: a panel is one piece of cloth however many bones it has");
+    }
+
+    /**
+     * The rule's own boundary, stated as a test because it is what keeps the rule from spreading.
+     *
+     * <p>The walk up the chain stops at the first ancestor that reads as <i>any</i> family, so a
+     * garment container is reached from anywhere inside it while the trunk beyond an unrelated region
+     * never is. Without that stop, every bone in the model - arms, legs, the head - has the same
+     * {@code UpBody} ancestor eventually, and "cloth" would be a property of the whole skeleton
+     * rather than of the region a bone hangs in.
+     *
+     * <p>The depth is not the boundary and must not be mistaken for one: a deeper panel is still the
+     * same cloth, which is what the fourth layer below checks.
+     */
+    @Test
+    void theContainerRuleDoesNotReachPastANamedRegion() {
+        YSMRuntimeModel.BoneRt[] bones = {
+                bone("UpBody", 7, -1),
+                bone("clothe", 7, 0),
+                bone("FrontClothe", 7, 1),
+                bone("FM", 7, 2),
+                bone("FM1", 7, 3),
+                bone("FM2", 7, 4),
+                bone("FM3", 7, 5),
+                bone("FM4", 7, 6),
+                // A leg, hanging off the same trunk, with no garment anywhere above it.
+                bone("LeftLeg", 5, 0)};
+
+        assertEquals(YsmPhysicsParts.Category.CLOTH, YsmPhysicsParts.classifyBone(bones, 4),
+                "two links below the container is inside its region");
+        assertEquals(YsmPhysicsParts.Category.CLOTH, YsmPhysicsParts.classifyBone(bones, 6),
+                "and so is four links below it: an author may draw as many layers as they like, and "
+                        + "the region is the same region");
+        assertEquals(YsmPhysicsParts.Category.UNKNOWN, YsmPhysicsParts.classifyBone(bones, 8),
+                "but a leg under the same trunk, with no named region above it, is not cloth");
+    }
+
+    /**
+     * A bone's own name still wins, so the container rule adds reach without changing any verdict the
+     * name rule already made - which is what keeps the hairdo and the tail exactly where they were.
+     */
+    @Test
+    void aBonesOwnNameOutranksItsContainer() {
+        YSMRuntimeModel.BoneRt[] bones = {
+                bone("FrontClothe", 7, -1),
+                // A hairdo magically parented under the clothing: its own name still wins.
+                bone("LongHair", 9, 0),
+                // And a tail under it, for the same reason.
+                bone("Tail", 7, 0)};
+
+        assertEquals(YsmPhysicsParts.Category.HAIR, YsmPhysicsParts.classifyBone(bones, 1),
+                "a lock of hair hanging off a garment is still hair");
+        assertEquals(YsmPhysicsParts.Category.TAIL, YsmPhysicsParts.classifyBone(bones, 2),
+                "and a tail is still a tail");
+    }
+
+    /**
+     * A named non-cloth region stops the walk, so nothing inside a hairdo can be read as cloth.
+     *
+     * <p>The rule reads ancestors looking for a garment, and the case that would break it is a
+     * garment ancestor above a hairdo's own container: {@code Hair <- FrontClothe} is a rig an author
+     * could write, and without the stop the strands would inherit the clothing.
+     */
+    @Test
+    void aHairdoContainerStopsTheWalk() {
+        YSMRuntimeModel.BoneRt[] bones = {
+                bone("FrontClothe", 7, -1),
+                bone("Hair", 9, 0),
+                bone("Strand03", 9, 1)};
+
+        assertEquals(YsmPhysicsParts.Category.HAIR, YsmPhysicsParts.classifyBone(bones, 2),
+                "'Strand03' says nothing, but 'Hair' above it does, and that is the region it is in");
+    }
+
+    /** The real model's own containers, so the rule is pinned to the model it was written for. */
+    @Test
+    void theRealModelsClothingContainersAreRecognised() {
+        for (String container : new String[]{"FrontClothe", "BackClothe", "LeftClothe",
+                "RightClothe", "clothe"}) {
+            assertEquals(YsmPhysicsParts.Category.CLOTH, YsmPhysicsParts.categoryOf(container),
+                    container + " is this model's name for a region of cloth");
+        }
+    }
+
     /**
      * The ordering between the families, and the one name that needs it.
      *
@@ -708,21 +827,29 @@ class YsmPhysicsPartsLimitTest {
                         + "ever becomes the pipeline's transform the constant is wrong: " + tilted);
     }
 
-    /** The weight the classification gives one bone name, as the solver would receive it. */
+    /**
+     * The weight one bone NAME alone earns, without a skeleton to read a container from.
+     *
+     * <p>Deliberately the name-only entry point: the block of tests above is about the vocabulary,
+     * and the structural rule has its own tests in the section below. Reading the weight through a
+     * segment here would test the convenience constructor's fallback instead of the classifier.
+     */
     private static float verticalFollowOf(String boneName) {
-        return segmentNamed(boneName).verticalFollow();
+        return categoryWeight(YsmPhysicsParts.categoryOf(boneName));
     }
 
-    /**
-     * A segment carrying only a name, which is all {@code verticalFollow()} reads.
-     *
-     * <p>Built directly rather than through {@link YsmPhysicsParts#build}, because the weight is a
-     * property of the name and building a model would need a runtime model and a mesh: the point of
-     * the test is that the name alone decides, so the name is the only thing supplied.
-     */
-    private static YsmPhysicsParts.Segment segmentNamed(String boneName) {
-        return new YsmPhysicsParts.Segment(0, boneName, TORSO, new Vector3f(), new Vector3f(0.0F, -0.2F, 0.0F),
-                0.2F, 0.03F, 1.0F, 2.36F, 0.81F, MAX_ANGLE_ROOT, -1, new int[]{0}, false, new int[0]);
+    /** The weight a family carries. */
+    private static float categoryWeight(YsmPhysicsParts.Category category) {
+        switch (category) {
+            case CLOTH:
+                return 0.92F;
+            case TAIL:
+                return 0.80F;
+            case HAIR:
+                return 0.60F;
+            default:
+                return 0.0F;
+        }
     }
 
     /** The floor and the ceiling the two tests above name, as they are declared. */

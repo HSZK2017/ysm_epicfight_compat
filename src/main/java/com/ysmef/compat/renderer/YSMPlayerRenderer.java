@@ -295,20 +295,19 @@ public class YSMPlayerRenderer extends PHumanoidRenderer<AbstractClientPlayer, A
             return;
         }
         armatureValidated = true;
-        String[][] expected = {
-                {"Root", "0"}, {"Thigh_R", "1"}, {"Leg_R", "2"}, {"Knee_R", "3"},
-                {"Thigh_L", "4"}, {"Leg_L", "5"}, {"Knee_L", "6"}, {"Torso", "7"},
-                {"Chest", "8"}, {"Head", "9"}, {"Shoulder_R", "10"}, {"Arm_R", "11"},
-                {"Hand_R", "12"}, {"Tool_R", "13"}, {"Elbow_R", "14"}, {"Shoulder_L", "15"},
-                {"Arm_L", "16"}, {"Hand_L", "17"}, {"Tool_L", "18"}, {"Elbow_L", "19"}
-        };
-        for (String[] pair : expected) {
-            yesman.epicfight.api.animation.Joint joint = armature.searchJointByName(pair[0]);
-            int expectedId = Integer.parseInt(pair[1]);
+        // The check reads JointTable rather than a table of its own. It used to carry a second,
+        // complete copy of the twenty names and ids, which made the one check that exists to catch a
+        // joint-layout mismatch validate its own copy: if JointTable changed and the copy did not,
+        // this passed while the mesh generator used the new layout - the failure it is here to
+        // prevent. JointTableTest asserts this file holds no joint-name literal, so the copy cannot
+        // come back.
+        for (int expectedId = 0; expectedId < com.ysmef.compat.model.JointTable.COUNT; expectedId++) {
+            String name = com.ysmef.compat.model.JointTable.NAMES[expectedId];
+            yesman.epicfight.api.animation.Joint joint = armature.searchJointByName(name);
             if (joint == null || joint.getId() != expectedId) {
                 com.ysmef.compat.YSMEpicFightCompat.LOGGER.error(
                         "YSM-EF Compat: biped armature mismatch for joint '{}' (expected id {}, got {}). Generated meshes will NOT deform correctly with this Epic Fight version!",
-                        pair[0], expectedId, joint == null ? "missing" : joint.getId());
+                        name, expectedId, joint == null ? "missing" : joint.getId());
                 return;
             }
         }

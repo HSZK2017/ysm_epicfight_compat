@@ -63,6 +63,11 @@ public class YSMReloadTrigger {
         // piece of hair start the next world mid-swing.
         com.ysmef.compat.model.runtime.YsmMeshCloth.clear();
         com.ysmef.compat.ysm.YsmClasses.invalidate();
+        // The runtime bridge holds the last entity a mesh was prepared for in a ThreadLocal, and
+        // through it that entity's ClientLevel and chunks. Each draw clears it, but the last draw of
+        // a session is the one that never finished when the world is left mid-frame - so clear it
+        // here as well, or the old level is retained until the next mesh is drawn.
+        com.ysmef.compat.model.runtime.YSMRuntimeBridge.clearCurrentEntity();
     }
 
     @SubscribeEvent

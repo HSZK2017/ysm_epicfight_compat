@@ -727,6 +727,17 @@ public class YsmBinaryReader {
             int timelineEventGroupsCount = r.readVarInt();
             for (int i = 0; i < timelineEventGroupsCount; ++i) {
                 int timelineEventsCount = r.readVarInt();
+                // The count comes from untrusted package data and the array below is
+                // allocated from it before the first event has a chance to fail on a
+                // short buffer, so an unbounded value here is a heap request, not a
+                // parse error: a crafted package could declare Integer.MAX_VALUE and
+                // ask for ~8-17 GB. Every other count in this reader carries the same
+                // 1_000_000 bound; this one was the exception, and the sibling count in
+                // skipAnimations needs none because it only drives a loop that stops
+                // when the buffer runs out.
+                if (timelineEventsCount < 0 || timelineEventsCount > 1_000_000) {
+                    throw new IllegalStateException("unreasonable timeline event count: " + timelineEventsCount);
+                }
                 String[] code = new String[timelineEventsCount];
                 for (int j = 0; j < timelineEventsCount; ++j) {
                     code[j] = r.readString();

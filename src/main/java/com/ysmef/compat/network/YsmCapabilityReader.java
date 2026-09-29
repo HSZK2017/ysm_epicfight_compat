@@ -38,6 +38,13 @@ public final class YsmCapabilityReader {
         try {
             return parse(player.saveWithoutId(new CompoundTag()));
         } catch (Exception e) {
+            // "Could not read it" is reported as "no model", which is what the model-sync path
+            // broadcasts for that player. The answer has to stay the same - there is nothing else to
+            // send - but it is a different event from a player who genuinely has no YSM model, and it
+            // was invisible.
+            com.ysmef.compat.YSMEpicFightCompat.LOGGER.debug(
+                    "YSM-EF Compat: could not read a player's YSM capability, reporting no model: {}",
+                    e.toString());
             return null;
         }
     }

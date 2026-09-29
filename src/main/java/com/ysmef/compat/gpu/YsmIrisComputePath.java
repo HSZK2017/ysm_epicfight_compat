@@ -94,6 +94,24 @@ public final class YsmIrisComputePath {
 
     private YsmIrisComputePath() {}
 
+    /**
+     * Load this class, which is what registers the path.
+     *
+     * <p>This one is the reason the load is now explicit rather than incidental. Nothing outside
+     * this class and {@link YsmIrisMesh} ever named it - the two only referenced each other - so
+     * {@code registerIris} never ran, {@code RenderBridgeRegistry.iris()} was permanently null, and
+     * the optimized Iris compute path this class implements (and the README documents, and
+     * {@code -Dysm_ef_compat.disable_iris_compute_path} exists to A/B) could not be reached on any
+     * machine, in any configuration. A mutual reference is not an entry point.
+     *
+     * <p>The body is deliberately empty: loading the class is the whole effect. The reflection over
+     * Oculus/Iris in the field initializers below is guarded and touches no GL, so loading this off
+     * the render thread is safe.
+     */
+    public static void ensureRegistered() {
+        // Loading this class runs the static initializer above.
+    }
+
     // ------------------------------------------------------------------
     // Oculus/Iris reflection
     // ------------------------------------------------------------------
@@ -113,7 +131,48 @@ public final class YsmIrisComputePath {
             && CAPTURED_STATE != null && IRIS_ENTITY_ID_ELEMENT != null
             && IRIS_MID_TEXTURE_ELEMENT != null && IRIS_TANGENT_ELEMENT != null;
 
-    private static final boolean DISABLED = System.getProperty("ysm_ef_compat.disable_iris_compute_path") != null;
+    /**
+     * Whether the optimized Iris compute path may draw: <b>on by default</b>, with a system property to turn it off.
+     *
+     * <p>On by default now. It was opt-in for one round - after the regression below - and the switch
+     * is kept as the escape hatch; the history is worth keeping in full. This class was
+     * unreachable for its whole life - nothing outside it and {@link YsmIrisMesh} ever named it, so
+     * {@code registerIris} never ran - which means it had never drawn a single frame when it was wired
+     * up to be reachable. The first time it drew for real (a shader pack, the A/B switch absent) the
+     * model lost its secondary motion while the solver kept computing it: {@code [physics]} reported
+     * "59 of 59 bone(s) moving, collision active" on every logged frame, and the same run logged
+     * {@code optimized Iris compute path active}.
+     *
+     * <p>The cause, found by measurement and fixed: {@link YsmIrisMesh#fillPoses} re-uploaded the part
+     * section only when a delta appeared or disappeared (null &lt;-&gt; non-null), and secondary motion is a
+     * value that keeps moving, not one that appears - so the section was uploaded once, on the frame the
+     * deltas first existed (still near identity), and never again. The model then rendered frozen parts
+     * while the solver kept moving them. The GPU path carries the term this path lacked
+     * ({@code anyTransform}, {@code YsmGpuRenderPath}); with it added, the section is re-uploaded
+     * whenever any part is animated.
+     *
+     * <p>An earlier note here blamed a missing part upload altogether, from a grep of this file alone.
+     * That was wrong - the upload lives in {@link YsmIrisMesh}, was called, and its offset matched
+     * {@code part_offset}. It is retracted rather than deleted because the mistake is instructive: the
+     * absence of a symbol in one file is not evidence that the feature does not exist across two
+     * mutually-referencing classes.
+     *
+     * <p><b>Verified in game</b> (shader pack active, 2026-09-20): first on one model, then on nine -
+     * 51 to 597 parts each and up to 103,998 vertices - with {@code mesh.getPartCount()} equal to this
+     * path's {@code partCount} on every one of them, the {@code [iris-diag]} line reporting the live
+     * deltas, the secondary motion visible, and no ERROR and no failed draw in the log. That is the
+     * evidence the default rests on, and its limits are worth stating with it: one machine, one shader
+     * pack, and the over-capacity claim (joints + parts above Epic Fight's 1000) was not reached by any
+     * of those models. Turn the path off with
+     * {@code -Dysm_ef_compat.disable_iris_compute_path=true} if a pack or a GPU disagrees with it; Epic
+     * Fight's own Iris path draws instead, which does carry the deltas.
+     */
+    private static final boolean ENABLED =
+            !com.ysmef.compat.SystemFlags.enabled("ysm_ef_compat.disable_iris_compute_path");
+
+    /** One line saying why this path declined; see the head of {@link #tryRender}. */
+    private static final java.util.concurrent.atomic.AtomicBoolean skipReasonLogged =
+            new java.util.concurrent.atomic.AtomicBoolean();
 
     private static Object findIrisConfig() {
         try {
@@ -330,7 +389,21 @@ public final class YsmIrisComputePath {
                                     MultiBufferSource bufferSources, RenderType renderType,
                                     int packedLight, float r, float g, float b, float a, int overlay,
                                     @Nullable Armature armature, @Nullable OpenMatrix4f[] poses) {
-        if (DISABLED || !REFLECTION_OK || poses == null) {
+        if (!ENABLED || !REFLECTION_OK || poses == null) {
+            // Say WHICH arm of the A/B this run is in. The kill switch is documented as the way to
+            // verify this path against Epic Fight's own, and until this line existed the answer was
+            // an absence: with the property set the path returns false here and the run looks exactly
+            // like a run where Oculus was missing or the reflection failed. A switch whose state is
+            // not observable makes its own comparison unattributable - which is the same defect the
+            // registered-paths line was added for, one layer down.
+            if (skipReasonLogged.compareAndSet(false, true)) {
+                YSMEpicFightCompat.LOGGER.info(
+                        "YSM-EF Compat: optimized Iris compute path is not used ({})",
+                        !ENABLED ? "disabled by -Dysm_ef_compat.disable_iris_compute_path; Epic Fight's own "
+                                + "Iris path draws instead"
+                                : !REFLECTION_OK ? "Oculus/Iris is absent or its classes could not be resolved"
+                                : "no poses were supplied for this draw");
+            }
             return false;
         }
         // GUI entity previews (the YSM model selection screen, the inventory
@@ -394,9 +467,27 @@ public final class YsmIrisComputePath {
         }
 
         if (ACTIVE_LOGGED.add(mesh)) {
+            // Diagnostic, kept because "the physics is not visible on this path" could not be settled by
+            // reading the code: the part section IS uploaded (YsmIrisMesh#fillPoses) and the offset
+            // agrees with part_offset, so the next question is whether the deltas are even there on the
+            // frames this path draws. Three numbers answer it: the ordinal space both sides use
+            // (mesh.getPartCount() vs gpu.partCount - equal means one space, not two), how many deltas
+            // the animator has published right now (zero means the physics result never reached this
+            // mesh), and the geometry count, so a zero can be told apart from "this mesh has no parts".
+            int nonIdentityDeltas = 0;
+            for (int p = 0; p < gpu.partCount; p++) {
+                if (mesh.getPartTransform(p) != null) {
+                    nonIdentityDeltas++;
+                }
+            }
             YSMEpicFightCompat.LOGGER.info(
                     "YSM-EF Compat: optimized Iris compute path active: model='{}', {} parts, {} vertices",
                     mesh.getRuntimeModelId(), gpu.partCount, gpu.vertexCount);
+            YSMEpicFightCompat.LOGGER.info(
+                    "YSM-EF Compat: [iris-diag] model='{}': mesh.getPartCount()={}, iris partCount={}, "
+                            + "non-identity deltas={}, vertices={}",
+                    mesh.getRuntimeModelId(), mesh.getPartCount(), gpu.partCount, nonIdentityDeltas,
+                    gpu.vertexCount);
         }
         return true;
     }

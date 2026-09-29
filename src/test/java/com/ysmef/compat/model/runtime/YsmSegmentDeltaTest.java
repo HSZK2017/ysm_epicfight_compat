@@ -293,7 +293,11 @@ class YsmSegmentDeltaTest {
      * </ul>
      *
      * <p>The model is the shape that produced the report - a chain whose top strand hangs sideways -
-     * because the defect was reported on a tail and a skirt, not on a synthetic pendulum.
+     * because the defect was reported on a tail and a skirt, not on a synthetic pendulum. The pose is
+     * a leaning one rather than {@link IdentityPose}: a joint the animation has left as the rig
+     * authors it is a joint the animation is holding still, and a piece hanging from one is pulled by
+     * its spring alone (round 20) - so "gravity has swung it" is a statement about a joint the pose
+     * has actually turned.
      */
     @Test
     void everyPartOfAnAuthoredModelIsIntegratedByTheSolver() {
@@ -301,7 +305,8 @@ class YsmSegmentDeltaTest {
         YsmPhysicsParts.Model model = new YsmPhysicsParts.Model(
                 segments, YsmPhysicsParts.Source.AUTHORED, 0);
         YsmMeshSecondaryMotion.State state = new YsmMeshSecondaryMotion.State(model, null, 1.047F);
-        YsmMeshSecondaryMotion.PoseSource pose = new IdentityPose();
+        YsmMeshSecondaryMotion.PoseSource pose = new LeaningPose(1.047F);
+        YsmMeshSecondaryMotion.PoseSource still = new IdentityPose();
 
         assertEquals(segments.length,
                 YsmMeshSecondaryMotion.simulate(state, pose, FRAME, null, NO_TURN,
@@ -391,7 +396,7 @@ class YsmSegmentDeltaTest {
                 segments, YsmPhysicsParts.Source.AUTHORED, 0);
         YsmMeshSecondaryMotion.State state = new YsmMeshSecondaryMotion.State(model, null, 1.047F);
         YsmPhysicsParts.Segment[] frameSegments = state.parts.segments();
-        YsmMeshSecondaryMotion.PoseSource pose = new IdentityPose();
+        YsmMeshSecondaryMotion.PoseSource pose = new LeaningPose(1.047F);
         for (int frame = 0; frame <= 60; frame++) {
             YsmMeshSecondaryMotion.simulate(state, pose, FRAME, null, NO_TURN,
                     YsmDynamicBoneSolver.NO_COLLIDERS);
@@ -526,6 +531,41 @@ class YsmSegmentDeltaTest {
         @Override
         public OpenMatrix4f poseOf(int joint) {
             return new OpenMatrix4f();
+        }
+    }
+
+    /**
+     * A pose that has turned every joint by sixty degrees about the model's left-right axis: the same
+     * joints as {@link #IdentityPose}, with the animation in them.
+     *
+     * <p>The distinction is not cosmetic and it is round 20's whole subject. A joint the pose has left
+     * as the rig authors it is a joint the animation is holding still, and a piece hanging from one is
+     * pulled by its spring alone - so a test that wants to see gravity swing a piece has to say so by
+     * rotating the joint. Both matrices are built from the same rotation, which is what makes
+     * {@code deformation = pose x toOrigin} the rotation itself rather than something else.
+     */
+    private static final class LeaningPose implements YsmMeshSecondaryMotion.PoseSource {
+        private final OpenMatrix4f rotation;
+
+        LeaningPose(float radians) {
+            rotation = new OpenMatrix4f();
+            float c = (float) Math.cos(radians);
+            float s = (float) Math.sin(radians);
+            // A rotation about x, in Epic Fight's column-addressed fields: m<column><row>.
+            rotation.m11 = c;
+            rotation.m12 = s;
+            rotation.m21 = -s;
+            rotation.m22 = c;
+        }
+
+        @Override
+        public OpenMatrix4f toOriginOf(int joint) {
+            return new OpenMatrix4f();
+        }
+
+        @Override
+        public OpenMatrix4f poseOf(int joint) {
+            return rotation;
         }
     }
 

@@ -69,6 +69,124 @@ mixin {
 
 sourceSets.main.resources { srcDir 'src/generated/resources' }
 
+// ---------------------------------------------------------------------------
+// Conversion-writer fingerprint: the cache key of the generated mesh cache
+// ---------------------------------------------------------------------------
+// config/ysm_epicfight_compat/manifest.json stores every converted model under a
+// `generator` key, so a build that changes what the converter writes must change
+// that key or the game happily keeps serving artefacts produced by the old code
+// (the failure is silent: the tested models simply do not change). That key used
+// to be a hand-maintained int, and a mesh-writer change once shipped without the
+// bump, which cost a full debugging round. This task derives the key from the
+// content of the code that produces those artefacts, so the class of mistake is
+// no longer available: any edit under model/ changes the fingerprint by
+// construction.
+//
+// INPUT SET - deliberately an over-approximation, and the direction is chosen:
+//   every .java file under src/main/java/com/ysmef/compat/model/ recursively
+//   (nested packages included), nothing else.
+// Why over-approximate rather than track the real producers: a conversion input
+// this set does not contain (a shader, a mixin, a config default) is a change the
+// fingerprint cannot see, i.e. a silent stale cache - exactly the bug this
+// replaces - whereas an input in the set that does not affect this model's
+// artefacts only costs one unnecessary re-conversion of the local cache. Also
+// deliberate: the set is CONTENT-hashed, not timestamped, so a touched or
+// reverted file does not churn the key, and a `git checkout` of an older revision
+// restores that revision's key (the manifest then matches what that build wrote).
+//
+// The resource is NOT written into src/generated/resources: that tree is the
+// datagen output target (see the `data` run above and the srcDir line before
+// this comment), and mixing a build-time artefact into it means a datagen
+// `--existing` read can pick it up and a stale copy can be committed by hand.
+abstract class GenerateWriterFingerprint extends DefaultTask {
+
+    /** The one place the fingerprinted file set is defined; see the note above. */
+    @InputFiles
+    @SkipWhenEmpty
+    abstract ConfigurableFileCollection getFingerprintSources()
+
+    @Input
+    abstract Property<String> getRelativeRoot()
+
+    @OutputFile
+    abstract RegularFileProperty getOutputFile()
+
+    @TaskAction
+    void generate() {
+        // Key each file by its path relative to the declared root, so the fingerprint is a
+        // function of the source set alone and not of where the checkout lives.
+        //
+        // The relativize is done on Paths, not on strings, and that is not a style choice: the
+        // previous revision built the root with `Paths.get(relativeRoot.get()).toAbsolutePath()`,
+        // which resolves a relative path against the *daemon's* working directory (Gradle's own
+        // `~/.gradle/daemon/<version>/`), not the project directory, and then compared it with
+        // `String.startsWith` against keys that had already been rewritten to forward slashes.
+        // On Windows the first test can never pass and the second can never match either, so the
+        // `else file` branch was the only one ever taken: the digest was over each file's ABSOLUTE
+        // path, making the cache key a function of where the checkout happens to live - the exact
+        // opposite of what this comment has always claimed. Measured before the fix: the packaged
+        // token was 2348ddfedf17bf37 on this checkout and it moves if the tree is copied elsewhere.
+        // Path.relativize against the project's own directory gives the intended key, and the keys
+        // are normalized to forward slashes so the hash is the same on Windows and on Linux.
+        java.nio.file.Path root = project.file(relativeRoot.get()).toPath().toAbsolutePath().normalize()
+        // Sorted, so the fingerprint cannot depend on filesystem enumeration order.
+        java.util.List<String> files = fingerprintSources.files
+                .collect { it.toPath().toAbsolutePath().normalize().toString().replace('\\', '/') }
+                .sort()
+        java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256")
+        for (String file : files) {
+            String relative = root.relativize(java.nio.file.Paths.get(file)).toString().replace('\\', '/')
+            digest.update(relative.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+            digest.update((byte) 0) // unambiguous separator: path and content cannot bleed together
+            digest.update(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(file)))
+        }
+        // Short prefix: this key is rewritten into a JSON file and read by eye in logs,
+        // and 64 bits is far past collision reach for a cache key whose failure mode is
+        // "one extra re-conversion".
+        String hash = java.util.HexFormat.of().formatHex(digest.digest()).substring(0, 16)
+
+        java.nio.file.Path output = outputFile.get().getAsFile().toPath()
+        java.nio.file.Files.createDirectories(output.getParent())
+        String text = "# Generated by the GenerateWriterFingerprint Gradle task - do not edit, do not commit.\n" +
+                "# SHA-256 (first 16 hex chars) over the sorted sequence of\n" +
+                "# \"<path relative to ${relativeRoot.get()}>\\0<file bytes>\" for the ${files.size()} .java files below.\n" +
+                "# Read by com.ysmef.compat.model.ManifestStore; see the comment block in build.gradle.\n" +
+                "${hash}\n"
+        // Write beside the output and move it into place: resources processing may read
+        // this file concurrently, and it must never observe a half-written fingerprint.
+        java.nio.file.Path temp = output.resolveSibling(output.getFileName().toString() + ".tmp")
+        java.nio.file.Files.write(temp, text.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+        java.nio.file.Files.move(temp, output,
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                java.nio.file.StandardCopyOption.ATOMIC_MOVE)
+        logger.lifecycle("Conversion writer fingerprint: ${hash} over ${files.size()} files under ${relativeRoot.get()}")
+    }
+}
+
+def writerFingerprintDir = layout.buildDirectory.dir('generated/writerFingerprint')
+def writerFingerprintRoot = 'src/main/java/com/ysmef/compat/model'
+def writerFingerprintSources = fileTree(writerFingerprintRoot) {
+    include '**/*.java'
+    exclude '**/.*'
+}
+
+def generateWriterFingerprint = tasks.register('generateWriterFingerprint', GenerateWriterFingerprint) {
+    description = 'Hashes the conversion/mesh sources into the cache-key resource consumed by ManifestStore.'
+    group = 'build'
+    relativeRoot.set(writerFingerprintRoot)
+    fingerprintSources.from(writerFingerprintSources)
+    outputFile.set(writerFingerprintDir.map { it.file('ysm_epicfight_compat/writer_fingerprint.txt') })
+}
+
+sourceSets.main.resources.srcDir writerFingerprintDir
+// Same resource on the test runtime classpath: the test that would have caught the
+// original stale-cache bug asserts the packaged fingerprint is readable and
+// non-degenerate, and it can only fail that way if it sees the production resource.
+sourceSets.test.resources.srcDir writerFingerprintDir
+
+tasks.named('processResources') { dependsOn generateWriterFingerprint }
+tasks.named('processTestResources') { dependsOn generateWriterFingerprint }
+
 repositories {
     flatDir {
         dir 'libs'
@@ -113,6 +231,20 @@ dependencies {
 
 test {
     useJUnitPlatform()
+    // Real model packages are big: the local corpus holds version-3 .ysm files whose decrypted
+    // payload reaches 210 MB, and decrypting one of those transiently needs several times its own
+    // size (the cipher works on whole-array copies and the zstd output buffer doubles as it grows).
+    // Gradle's default fork heap is 512m, which turns the opt-in corpus/install sweeps into an
+    // OutOfMemoryError instead of a measurement.
+    maxHeapSize = '2g'
+    // Never let a stale report stand in for a run. On this machine Gradle's
+    // up-to-date check has re-read the previous build/test-results XML after sources
+    // changed - and even when compileTestJava failed - so "BUILD SUCCESSFUL" could
+    // describe a run that never happened, and a stale report is indistinguishable from
+    // a real failure that was never re-run. Re-executing the suite costs seconds next
+    // to believing a report that describes a different revision.
+    outputs.upToDateWhen { false }
+    doFirst { delete layout.buildDirectory.dir('test-results') }
     // The end-to-end .ysm decryption golden test reads a real model package from
     // the local YSM folder; it is skipped unless the path is given explicitly:
     //   gradlew test -Dysmef.golden.ysm="C:\...\config\yes_steve_model\custom\xxx.ysm"
@@ -131,7 +263,13 @@ tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
     // OpenYsmPlayerRenderMixin uses a string @Mixin target (OpenYSM fork classes are not on
     // the compile classpath - the obfuscated release jar is). Without this the mixin
-    // annotation processor fails the build with "Mixin target ... could not be found";
-    // at runtime a missing target only logs a warning and skips the mixin anyway.
+    // annotation processor fails the build with "Mixin target ... could not be found".
+    // At runtime the two miss cases behave differently and only the first is visible:
+    // a missing target CLASS logs a warning and skips the mixin, while a missing
+    // METHOD/descriptor under require = 0 logs nothing at all - and since this flag also
+    // silences the only build-time check for a string target, a wrong or drifted string
+    // here is invisible in both directions. Prefer `value = X.class` where the class is
+    // on the compile classpath, and treat a string target as unverified until checked
+    // against the real jar.
     options.compilerArgs += '-AMSG_MIXIN_SOFT_TARGET_NOT_FOUND=warning'
 }

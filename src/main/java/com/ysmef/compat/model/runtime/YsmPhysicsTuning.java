@@ -32,19 +32,19 @@ public final class YsmPhysicsTuning {
      *       authors' {@code ysm.second_order} default carries.</li>
      *   <li>{@code 24.0} is the damping key's default; against 220 that is the ratio 0.81 the
      *       config comment promises, so a swing settles in about a second.</li>
-     *   <li>{@code 8.0} is the <i>retired</i> droop key's default, kept only so a config that
-     *       still carries it is read into the same field. The dynamics use
-     *       {@link #gravityAcceleration()} - real gravity, 24 blocks/s^2 - and say so in
-     *       {@link #toString()}.</li>
      *   <li>The two angles are expressed in degrees because that is the unit the config and the
      *       comments use, the unit a person tunes in, and the unit the per-joint ceiling is
      *       specified in. Degrees are converted here, at the one place the default enters.</li>
      * </ul>
+     *
+     * <p>There is no gravity field. The pendulum's gravity is {@link #gravityAcceleration()}, read
+     * live from its own key; the {@code secondaryMotionGravity} key belongs to the cloth solver and
+     * used to be copied into a field of this class that no integrator ever read. See
+     * {@link #toString()}.
      */
     public static final YsmPhysicsTuning DEFAULTS = new YsmPhysicsTuning(
             220.0,
             24.0,
-            8.0,
             Math.toRadians(60.0),
             Math.toRadians(20.0));
 
@@ -52,18 +52,15 @@ public final class YsmPhysicsTuning {
     public final double stiffness;
     /** Relative-velocity decay, 1/s. */
     public final double damping;
-    /** Extra droop while moving, blocks/s^2. */
-    public final double gravity;
     /** Ceiling on how far a chain may bend from its animated pose, radians. */
     public final double maxAngle;
     /** The same ceiling for the top of a hanging piece, which carries all of it. */
     public final double maxAngleRoot;
 
-    public YsmPhysicsTuning(double stiffness, double damping, double gravity,
+    public YsmPhysicsTuning(double stiffness, double damping,
                             double maxAngle, double maxAngleRoot) {
         this.stiffness = stiffness;
         this.damping = damping;
-        this.gravity = gravity;
         this.maxAngle = maxAngle;
         this.maxAngleRoot = maxAngleRoot;
     }
@@ -78,10 +75,16 @@ public final class YsmPhysicsTuning {
      * too small it does not degrade gracefully: whole pieces are left out, so part of a skirt swings
      * and the rest is bolted to the pose, which reads as the garment coming apart.
      *
-     * <p>So the limit is off by default and the classification is the limit. A positive value is
-     * still honoured for anyone who wants to bound the per-frame cost on a model they know to be
-     * pathological, and the two former defaults are read as "unset" - a config written by an older
-     * build carries one of them, and it was never a decision anybody made.
+     * <p>So the config's default is {@link #AUTO} - written as {@code -1}, because the key's range
+     * has to express "no limit" as a number - and the classification is the limit. A positive value
+     * is honoured for anyone who wants to bound the per-frame cost on a model they know to be
+     * pathological.
+     *
+     * <p>One value is still read as "unset" rather than as a cap: {@code 24}, the default of the
+     * build before this one. A config that carries it was not making a decision, and honouring it
+     * would produce exactly the truncation described above. {@code 96}, the default of the most
+     * recent build, is deliberately <i>not</i> treated that way - it is above the range real models
+     * land in and is what this key's own description promises as a backstop.
      */
     public static int maxChains() {
         int configured;
@@ -90,7 +93,26 @@ public final class YsmPhysicsTuning {
         } catch (Throwable t) {
             return AUTO;
         }
-        return configured == FORMER_DEFAULT_CHAINS || configured == 96 ? AUTO : configured;
+        return maxChainsFor(configured);
+    }
+
+    /**
+     * The rule on its own, over a value rather than over the config.
+     *
+     * <p>Split out so the decision can be tested: nothing in a unit test can reach
+     * {@link YSMCompatConfig} (no Forge), so a rule living only inside {@link #maxChains()} is a
+     * rule no test can hold - which is how 96 came to mean "unlimited" while the key's own
+     * description promised a backstop.
+     */
+    static int maxChainsFor(int configured) {
+        // Negative is the documented "automatic" value, and 24 is read the same way because
+        // it was the default of a build whose config still exists in the wild: honouring it
+        // would cap a real garment below the 4-60 bones the classification lands on, which is
+        // the "part of a skirt swings and the rest is bolted to the pose" failure the javadoc
+        // above describes. 96 is deliberately NOT read that way any more. It is above that
+        // range, it is the number this key's own config description promises as a backstop,
+        // and a user who writes it must get it rather than an unlimited solver.
+        return configured < 0 || configured == FORMER_DEFAULT_CHAINS ? AUTO : configured;
     }
 
     /** No limit: every piece the classification finds is simulated. */
@@ -135,13 +157,7 @@ public final class YsmPhysicsTuning {
         return Math.max(0.0, damping / (2.0 * Math.sqrt(stiffness)));
     }
 
-    /**
-     * Downward acceleration on every swinging piece, blocks/s^2.
-     *
-     * <p>Separate from {@link #gravity}, which is a field of the older point-spring model with
-     * a different meaning ("extra droop while moving"), a different default, and its own
-     * config key. This is real gravity, and it is what makes a piece hang.
-     */
+    /** Downward acceleration on every swinging piece, blocks/s^2. */
     public static double gravityAcceleration() {
         try {
             return finite(YSMCompatConfig.SECONDARY_MOTION_GRAVITY_ACCELERATION.get(),
@@ -208,7 +224,6 @@ public final class YsmPhysicsTuning {
             return new YsmPhysicsTuning(
                     finite(YSMCompatConfig.SECONDARY_MOTION_STIFFNESS.get(), DEFAULTS.stiffness),
                     finite(YSMCompatConfig.SECONDARY_MOTION_DAMPING.get(), DEFAULTS.damping),
-                    finite(YSMCompatConfig.SECONDARY_MOTION_GRAVITY.get(), DEFAULTS.gravity),
                     degrees(YSMCompatConfig.SECONDARY_MOTION_MAX_ANGLE_DEGREES.get(), DEFAULTS.maxAngle),
                     degrees(YSMCompatConfig.SECONDARY_MOTION_MAX_ANGLE_ROOT_DEGREES.get(),
                             DEFAULTS.maxAngleRoot));
@@ -226,9 +241,19 @@ public final class YsmPhysicsTuning {
         return Math.toRadians(finite(value, Math.toDegrees(fallbackRadians)));
     }
 
+    /**
+     * The settings the log line carries.
+     *
+     * <p>The gravity in it is {@link #gravityAcceleration()} - the number the dynamics actually
+     * integrate - and not a stored field. A previous version printed the value of the retired
+     * {@code secondaryMotionGravity} key here, which the pendulum never read: the log then
+     * reported a number that did nothing, and anyone tuning from that line would have tuned
+     * the wrong key.
+     */
     @Override
     public String toString() {
-        return "stiffness=" + stiffness + " damping=" + damping + " gravity=" + gravity
+        return "stiffness=" + stiffness + " damping=" + damping
+                + " gravity=" + gravityAcceleration()
                 + " maxAngleDeg=" + Math.toDegrees(maxAngle)
                 + " maxAngleRootDeg=" + Math.toDegrees(maxAngleRoot);
     }

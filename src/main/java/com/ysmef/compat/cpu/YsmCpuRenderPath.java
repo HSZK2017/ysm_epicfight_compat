@@ -117,6 +117,23 @@ public final class YsmCpuRenderPath {
         });
     }
 
+    /**
+     * Load this class, which is what registers the path.
+     *
+     * <p>The registration is in the static initializer above, so this path used to exist only once
+     * something touched the class - and the only thing that ever did was
+     * {@code SkinnedMeshCpuRenderMixin}, which fires when Epic Fight calls {@code drawPosed}. With
+     * Epic Fight's {@code use_compute_shader} enabled that never happens, so {@code cpu()} stayed
+     * null for the whole session: {@code -Dysm_ef_compat.force_cpu_render} and the GPU path that
+     * registers beside this one both silently did nothing.
+     *
+     * <p>The body is deliberately empty: loading the class is the whole effect. See
+     * {@code YSMCompatClientEvents}, which is where the load is now stated on purpose.
+     */
+    public static void ensureRegistered() {
+        // Loading this class runs the static initializer above.
+    }
+
     private static final float[] projScratch = new float[16];
     private static final float[] mvScratch = new float[16];
     private static final float[] ivrScratch = new float[9];
@@ -186,7 +203,7 @@ public final class YsmCpuRenderPath {
      * hardware (verification of the CPU fallback without a compute-less GPU).
      */
     public static boolean isForced() {
-        return System.getProperty("ysm_ef_compat.force_cpu_render") != null;
+        return com.ysmef.compat.SystemFlags.enabled("ysm_ef_compat.force_cpu_render");
     }
 
     /** Once per mesh: confirm the CPU skinning path is drawing this model. */

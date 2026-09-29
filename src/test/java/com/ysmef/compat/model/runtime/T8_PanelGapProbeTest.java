@@ -125,6 +125,44 @@ class T8_PanelGapProbeTest {
                     entry.getValue() / raw));
         }
 
+        // Section 1a's conclusion, asserted rather than left as the table's impression. The table is
+        // the evidence; this is the answer it establishes - the logged lever is the recomputed one
+        // times BLOCKS_PER_MODEL_UNIT - and it is what makes every distance below meaningful. Both
+        // rejected alternatives are far outside the tolerance: the raw distance unscaled gives a
+        // ratio of 1.0, and 1/16 of it gives 0.0625, against the 0.7 pinned here.
+        //
+        // The tolerance is three percent, and it is set from the measurement rather than from the
+        // word "constant": the worst of the eleven panels deviates by 0.023, so "a constant 0.70" is
+        // really "0.70 to within about 2.3%". Most of that is the log's own three decimals (under one
+        // percent of the smallest lever), and the rest is that the probe recomputes the lever from
+        // the fixture's cube geometry while production measured the converted mesh. A tolerance that
+        // said 0.02 would have been a claim the data does not support, and one that said 0.5 would
+        // not tell 0.7 from the unscaled alternative.
+        int unitChecks = 0;
+        float worstRatioDeviation = 0.0F;
+        for (Map.Entry<String, Float> entry : LOGGED_LEVERS.entrySet()) {
+            Bone bone = shape.byName.get(entry.getKey());
+            if (bone == null || bone.vertices.isEmpty()) {
+                continue;
+            }
+            float raw = bone.leverInModelUnits();
+            if (!(raw > 0.0F)) {
+                continue;
+            }
+            worstRatioDeviation = Math.max(worstRatioDeviation,
+                    Math.abs(entry.getValue() / raw - BLOCKS_PER_MODEL_UNIT));
+            unitChecks++;
+        }
+        assertTrue(unitChecks >= 8,
+                "the unit check must run on the fixture's panels; it ran on " + unitChecks);
+        assertTrue(worstRatioDeviation < 0.03F,
+                "the production log's lever must be the recomputed one times " + BLOCKS_PER_MODEL_UNIT
+                        + " blocks per model unit; worst deviation " + worstRatioDeviation
+                        + " over " + unitChecks + " panels");
+        report.append(String.format(Locale.ROOT,
+                "%nUnit check: %d panels, worst deviation from %s = %.4f.%n", unitChecks,
+                BLOCKS_PER_MODEL_UNIT, worstRatioDeviation));
+
         report.append("\n### 1b. The panels as the probe uses them\n\n");
         report.append("| panel | parent | pivot (blocks, panel-local) | lever L | verts |"
                 + " nearest own vert to its pivot |\n");

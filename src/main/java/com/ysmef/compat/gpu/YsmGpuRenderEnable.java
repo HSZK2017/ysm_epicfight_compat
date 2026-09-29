@@ -99,6 +99,7 @@ public final class YsmGpuRenderEnable {
     private static volatile java.lang.reflect.Field MODERN_COMPAT_FIELD;
     private static volatile java.lang.reflect.Method BOOLEAN_VALUE_GET;
     private static volatile boolean modernLookupFailed = false;
+    private static volatile boolean toggleReadFailedLogged = false;
     private static long modernToggleCheckedAtNanos = 0;
     private static boolean modernGpuEnabledCache = true;
 
@@ -117,12 +118,12 @@ public final class YsmGpuRenderEnable {
         java.lang.reflect.Field compatField = MODERN_COMPAT_FIELD;
         java.lang.reflect.Method getMethod = BOOLEAN_VALUE_GET;
         if (modernLookupFailed) {
-            return true;
+            return false;
         }
         if (gpuField == null || compatField == null || getMethod == null) {
             synchronized (YsmGpuRenderEnable.class) {
                 if (modernLookupFailed) {
-                    return true;
+                    return false;
                 }
                 gpuField = MODERN_GPU_FIELD;
                 compatField = MODERN_COMPAT_FIELD;
@@ -139,14 +140,34 @@ public final class YsmGpuRenderEnable {
                     } catch (Throwable t) {
                         modernLookupFailed = true;
                         YSMEpicFightCompat.LOGGER.warn(
-                                "YSM-EF Compat: cannot read ModernYSM's GPU renderer toggles, assuming GPU rendering enabled", t);
-                        return true;
+                                "YSM-EF Compat: cannot read ModernYSM's GPU renderer toggles; this mod's GPU "
+                                        + "skinning path stays off rather than overriding a setting it cannot see", t);
+                        return false;
                     }
                 }
             }
         }
-        boolean gpuOn = boolOf(fieldValue(gpuField, null), true);
-        boolean compatOn = boolOf(fieldValue(compatField, null), false);
+        Object gpuToggle = fieldValue(gpuField, null);
+        Object compatToggle = fieldValue(compatField, null);
+        if (gpuToggle == null || compatToggle == null) {
+            // The toggles exist but their values could not be read. Answering "enabled" would
+            // override whatever the user set in ModernYSM, and a user turns GPU rendering off
+            // because it misbehaved - so that is the one answer that must not be guessed. Off is
+            // also the safe direction: the draw path falls back to Epic Fight's compute path, and
+            // the registered-paths log says what is live.
+            if (!toggleReadFailedLogged) {
+                toggleReadFailedLogged = true;
+                YSMEpicFightCompat.LOGGER.warn(
+                        "YSM-EF Compat: ModernYSM's GPU renderer toggle values could not be read; this mod's "
+                                + "GPU skinning path stays off. Set 'enableGpuRender' and use OpenYSM/LegacyYSM, "
+                                + "or fix the ModernYSM build, if you want the direct GPU path");
+            }
+            return false;
+        }
+        // Same direction for the individual fallbacks: unreadable counts as "compatibility renderer
+        // on", which leaves the direct GPU path off.
+        boolean gpuOn = boolOf(gpuToggle, false);
+        boolean compatOn = boolOf(compatToggle, true);
         return gpuOn && !compatOn;
     }
 

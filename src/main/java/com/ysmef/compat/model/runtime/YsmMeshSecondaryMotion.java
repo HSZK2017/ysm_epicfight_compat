@@ -1,6 +1,7 @@
 package com.ysmef.compat.model.runtime;
 
 import com.ysmef.compat.YSMEpicFightCompat;
+import com.ysmef.compat.YsmDiag;
 import com.ysmef.compat.config.YSMCompatConfig;
 import com.ysmef.compat.model.YSMMesh;
 import net.minecraft.client.Minecraft;
@@ -14,6 +15,7 @@ import yesman.epicfight.api.animation.Joint;
 import yesman.epicfight.api.model.Armature;
 import yesman.epicfight.api.utils.math.OpenMatrix4f;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -175,6 +177,13 @@ public final class YsmMeshSecondaryMotion {
          *  because the angle alone cannot say whether a piece is trailing or being spun. */
         final Vector3f[] lastAxis;
         final Vector3f[] lastRest;
+        /**
+         * The pose's rotation of each segment's own joint - the difference between the joint's
+         * authored orientation and its posed one - which is what the solver scales the
+         * gravity-follow weight by, so that a piece the pose has not moved is pulled by its spring
+         * alone. Per segment rather than per frame because a piece's joint is its own.
+         */
+        final Quaternionf[] pivotRotations;
         /** The body's turn, filtered the same way the pivot's motion is. */
         float smoothedYawRate;
         float yawAccel;
@@ -218,6 +227,7 @@ public final class YsmMeshSecondaryMotion {
             }
             this.lastAxis = new Vector3f[count];
             this.lastRest = new Vector3f[count];
+            this.pivotRotations = new Quaternionf[count];
             this.lastContact = new float[count];
             for (int i = 0; i < count; i++) {
                 this.states[i] = new YsmDynamicBoneSolver.SegmentState();
@@ -228,6 +238,7 @@ public final class YsmMeshSecondaryMotion {
                 this.restDirections[i] = new Vector3f();
                 this.lastAxis[i] = new Vector3f();
                 this.lastRest[i] = new Vector3f();
+                this.pivotRotations[i] = new Quaternionf();
             }
         }
     }
@@ -462,6 +473,7 @@ public final class YsmMeshSecondaryMotion {
         STATES.clear();
         YsmPhysicsParts.clear();
         MISMATCH_LOGGED.clear();
+        LEG_REGION_LOGGED.clear();
     }
 
     /**
@@ -629,6 +641,10 @@ public final class YsmMeshSecondaryMotion {
         // blocks is reported next to the angle because the angle alone cannot say whether a
         // swing is a flicker or a metre: what a viewer calls "the skirt came apart" is a
         // displacement, and this is that number.
+        if (YsmDiag.isEnabled() && LEG_REGION_LOGGED.add(model.modelId)) {
+            // Reads only: this branch prints what the frame already computed and writes nothing.
+            logLegRegion(model, mesh, state, armature, poses);
+        }
         if (state.frames % 240 == 0) {
             YSMEpicFightCompat.LOGGER.info(
                     "YSM-EF Compat: [physics] frame {}: dt={}ms, max swing={}deg, max displacement={} blocks, {} of {} bone(s) moving, collision {}",
@@ -784,6 +800,313 @@ public final class YsmMeshSecondaryMotion {
                     model.modelId, unwrittenCount, unwritten
                             + (unwrittenCount > 8 ? ", ..." : ""));
         }
+    }
+
+    // ------------------------------------------------------------------
+    // The leg-region diagnostic
+    // ------------------------------------------------------------------
+
+    /**
+     * Models whose leg-region diagnostic has already been printed, so a model reload does not repeat
+     * it. Cleared with the rest of the per-mesh state by {@link #clear()}.
+     */
+    private static final java.util.Set<String> LEG_REGION_LOGGED =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** The most leg pieces one model prints; anything beyond it is counted, not listed. */
+    private static final int LEG_DIAG_MAX_PIECES = 16;
+
+    /** Epic Fight's leg joints, by {@code JointTable}: Thigh_R, Leg_R, Knee_R, Thigh_L, Leg_L, Knee_L. */
+    private static final int LEG_JOINT_FIRST = 1;
+    private static final int LEG_JOINT_LAST = 6;
+
+    private static boolean isLegJoint(int joint) {
+        return joint >= LEG_JOINT_FIRST && joint <= LEG_JOINT_LAST;
+    }
+
+    /** Both thighs and both shins: the joints whose own rotation is printed beside the pieces. */
+    private static final int[] LEG_JOINTS = {1, 2, 4, 5};
+
+    /**
+     * The leg region of one model, once per model, behind {@code -Dysm_ef_compat.diag=true}.
+     *
+     * <h2>What this settles</h2>
+     *
+     * <p>The reported defect is a thigh drawn nearly horizontal, and two different causes produce
+     * that picture: the piece's <b>own delta</b> has laid it out beside the limb (a piece pivoting
+     * about a point it does not hang from - what {@link YsmPhysicsParts#risesFromPivot} now refuses),
+     * or the <b>pose</b> already had it at that angle and the delta merely added its allowance on top.
+     * The log's own {@code rest} column cannot separate them, which is why the previous round's
+     * "the pose supplies ~48 degrees" was recovered from the pose rather than measured independently.
+     * This line separates them by printing the drawn long axis of each piece three times - in bind,
+     * after the joint's pose alone, and after the pose and the piece's own delta - so the reader can
+     * subtract: {@code bind -> pose} is what Epic Fight's animation did to that piece, and
+     * {@code pose -> pose+delta} is what this mod's simulation did to it.
+     *
+     * <h2>What it is, and is not</h2>
+     *
+     * <p><b>Reads only.</b> It is called after the frame's transforms have been written to the mesh
+     * and writes nothing: every value comes from what the frame already computed, so it cannot change
+     * what is drawn. It prints at most {@value #LEG_DIAG_MAX_PIECES} pieces plus the four leg joints,
+     * once per model, and only when the diagnostic flag is on.
+     *
+     * <p>The pieces listed are the model's bones that carry geometry on a leg joint, <b>including the
+     * ones that are not simulated</b> - a piece the new rule rejected has no segment at all, and a
+     * diagnostic that could only see simulated pieces would report "the thigh is simulated" on a build
+     * where it no longer is. Each row says which it is and, when it is not simulated, which gate
+     * dropped it.
+     *
+     * <p>EF's own biped values are printed for the same joint ids from {@code Armatures.BIPED} - the
+     * authored rest pose of Epic Fight's biped skeleton, which is what this mod's re-bound armature is
+     * built from. EF's biped <i>pose under the same clip</i> is not separately reachable here: EF draws
+     * this model on the armature built for it, so the {@code pose} column below IS Epic Fight's own
+     * pose for that clip and that joint id, and the biped columns are its rest values.
+     */
+    private static void logLegRegion(YSMRuntimeModel model, YSMMesh mesh, State state,
+                                     Armature armature, OpenMatrix4f[] poses) {
+        try {
+            if (model == null || state == null || state.parts == null || poses == null) {
+                return;
+            }
+            YsmPhysicsParts.Segment[] segments = state.parts.segments();
+            Map<String, Integer> segmentOfBone = new java.util.HashMap<>();
+            for (int i = 0; i < segments.length; i++) {
+                segmentOfBone.put(segments[i].boneName(), i);
+            }
+            Map<Integer, List<Vector3f>> vertices = YsmPhysicsParts.verticesByBone(mesh, model);
+            YSMEpicFightCompat.LOGGER.info(
+                    "YSM-EF Compat: [physics] leg diag of '{}': {} simulated piece(s) in all; the leg joints below are EF's own joint ids (Thigh_R=1, Leg_R=2, Knee_R=3, Thigh_L=4, Leg_L=5, Knee_L=6). "
+                            + "Columns: pivot; own geometry y range; lever L; rest angle from straight down (bind); upShare = the up-component of the unit rest direction, which is what the new rule reads (margin {}); the drawn long axis from vertical in bind, after the joint's pose only, and after the pose and the piece's own delta; and the joint's pose rotation for that piece (pose = pose matrix, delta = pose x toOrigin, i.e. what the solver uses as the pose's turn of this joint)",
+                    model.modelId, segments.length, YsmPhysicsParts.risesFromPivotMargin());
+            int printed = 0;
+            int beyond = 0;
+            for (int boneIndex = 0; boneIndex < model.bones.length; boneIndex++) {
+                YSMRuntimeModel.BoneRt bone = model.bones[boneIndex];
+                if (bone == null || !isLegJoint(bone.joint)) {
+                    continue;
+                }
+                List<Vector3f> own = vertices.get(boneIndex);
+                if (own == null || own.isEmpty()) {
+                    continue;
+                }
+                if (printed >= LEG_DIAG_MAX_PIECES) {
+                    beyond++;
+                    continue;
+                }
+                printed++;
+                YSMEpicFightCompat.LOGGER.info("YSM-EF Compat: [physics] leg diag '{}': {}",
+                        model.modelId, legPieceRow(model, state, bone, boneIndex, own,
+                                segmentOfBone, armature, poses));
+            }
+            if (beyond > 0) {
+                YSMEpicFightCompat.LOGGER.info(
+                        "YSM-EF Compat: [physics] leg diag '{}': {} further leg piece(s) not listed",
+                        model.modelId, beyond);
+            }
+            for (int joint : LEG_JOINTS) {
+                YSMEpicFightCompat.LOGGER.info("YSM-EF Compat: [physics] leg diag '{}': {}",
+                        model.modelId, legJointRow(armature, poses, joint));
+            }
+        } catch (Throwable t) {
+            // A diagnostic that can break a frame is worse than no diagnostic: the frame is already
+            // drawn by the time this runs, and the line is only ever read by a person.
+            YSMEpicFightCompat.LOGGER.warn(
+                    "YSM-EF Compat: [physics] leg diag of '{}' could not be produced", model.modelId, t);
+        }
+    }
+
+    /** One leg piece: what it is, whether it is simulated, and which way it is drawn. */
+    private static String legPieceRow(YSMRuntimeModel model, State state, YSMRuntimeModel.BoneRt bone,
+                                      int boneIndex, List<Vector3f> own,
+                                      Map<String, Integer> segmentOfBone, Armature armature,
+                                      OpenMatrix4f[] poses) {
+        Vector3f pivot = YsmPhysicsParts.bindPivot(model, bone);
+        Vector3f centroid = centroidOf(own);
+        Vector3f rest = centroid == null || pivot == null ? null : new Vector3f(centroid).sub(pivot);
+        float lever = rest == null || !YsmDynamicBoneSolver.isFinite(rest) ? Float.NaN : rest.length();
+        Integer segmentIndex = segmentOfBone.get(bone.name);
+        double gap = YsmPhysicsParts.pivotGapFromGeometry(own, pivot);
+        boolean pointsUp = YsmPhysicsParts.risesFromPivot(rest, lever);
+        boolean hingedOnItself = YsmPhysicsParts.pivotOnGeometry(own, pivot);
+        String verdict;
+        if (segmentIndex != null) {
+            verdict = "simulated";
+        } else if (YsmPhysicsParts.poseBelongsToEpicFight(bone)) {
+            verdict = "rigid (a body bone: Epic Fight poses it)";
+        } else if (pivot == null) {
+            verdict = "rigid (no usable pivot)";
+        } else if (!(lever >= YsmPhysicsParts.minimumLever())) {
+            verdict = "rigid (geometry sits on its pivot: lever " + blocks(lever) + ")";
+        } else if (YsmPhysicsParts.wrapsPivot(own, pivot)) {
+            verdict = "rigid (geometry wraps its pivot: spread "
+                    + blocks(YsmPhysicsParts.directionSpread(own, pivot)) + ")";
+        } else if (YsmPhysicsParts.risesOffPivot(own, pivot, rest, lever)) {
+            verdict = "rigid (NEW RULE: geometry above a pivot that is not on it: upShare "
+                    + share(lever <= 0.0F ? Float.NaN : rest.y / lever) + ", pivot " + blocks(gap)
+                    + " blocks outside the geometry)";
+        } else if (pointsUp && hingedOnItself) {
+            verdict = "rigid (not selected; note: its geometry does point up - upShare "
+                    + share(lever <= 0.0F ? Float.NaN : rest.y / lever) + " - but its pivot is on the piece, "
+                    + "so the new rule keeps it)";
+        } else {
+            verdict = "rigid (not selected)";
+        }
+
+        OpenMatrix4f deformation = deformationOf(armature, poses, bone.joint);
+        Vector3f axis = YsmPhysicsParts.longAxisOf(own);
+        double bindAngle = YsmPhysicsParts.angleFromVertical(axis);
+        double poseAngle = Double.NaN;
+        double drawnAngle = Double.NaN;
+        if (axis != null && deformation != null) {
+            Vector3f posed = transformDirection(deformation, axis, new Vector3f());
+            poseAngle = YsmPhysicsParts.angleFromVertical(posed);
+            drawnAngle = poseAngle;
+            if (segmentIndex != null && segmentIndex >= 0 && segmentIndex < state.jomlDeltas.length) {
+                Matrix4f delta = state.jomlDeltas[segmentIndex];
+                Vector3f swung = new Vector3f(posed);
+                if (delta != null) {
+                    delta.transformDirection(swung);
+                    drawnAngle = YsmPhysicsParts.angleFromVertical(swung);
+                }
+            }
+        }
+
+        StringBuilder row = new StringBuilder();
+        row.append("bone '").append(bone.name).append("' joint ").append(bone.joint)
+                .append(" [").append(verdict).append("]");
+        row.append(" pivot ").append(point(pivot));
+        row.append(" own geom y ").append(blocks(YsmPhysicsParts.minY(own))).append("..")
+                .append(blocks(YsmPhysicsParts.maxY(own)));
+        row.append(" centroid ").append(point(centroid));
+        row.append(" L ").append(blocks(lever));
+        row.append(" rest ").append(degrees(angleFromDown(rest))).append(" deg from down");
+        row.append(" upShare ").append(share(rest == null || !(lever > 0.0F) ? Float.NaN : rest.y / lever));
+        row.append(" pivotGap ").append(blocks(gap)).append(" blocks (pivot ")
+                .append(hingedOnItself ? "on the piece" : "off the piece").append(")");
+        row.append(" longAxis bind ").append(degrees(bindAngle))
+                .append(" deg / after pose ").append(degrees(poseAngle))
+                .append(" deg / after pose+delta ").append(degrees(drawnAngle)).append(" deg from vertical");
+        row.append(" | joint pose ").append(degrees(degreesOf(poses, bone.joint)))
+                .append(" deg, pose x toOrigin ").append(degrees(degreesOf(deformation))).append(" deg");
+        return row.toString();
+    }
+
+    /** One leg joint: its rest rotation, its live pose, and Epic Fight's own biped rest for it. */
+    private static String legJointRow(Armature armature, OpenMatrix4f[] poses, int joint) {
+        Joint skeletonJoint = armature == null ? null : armature.searchJointById(joint);
+        OpenMatrix4f toOrigin = skeletonJoint == null ? null : skeletonJoint.getToOrigin();
+        OpenMatrix4f local = skeletonJoint == null ? null : skeletonJoint.getLocalTransform();
+        OpenMatrix4f deformation = deformationOf(armature, poses, joint);
+        Joint biped = null;
+        try {
+            biped = yesman.epicfight.gameasset.Armatures.BIPED.get().searchJointById(joint);
+        } catch (Throwable ignored) {
+            // The biped armature is a registry entry; a diagnostic is not worth a frame.
+        }
+        return "joint " + joint + " '" + (skeletonJoint == null ? "?" : skeletonJoint.getName())
+                + "': rest toOrigin " + degrees(degreesOf(toOrigin))
+                + " deg, rest local " + degrees(degreesOf(local))
+                + " deg, live pose " + degrees(degreesOf(poses, joint))
+                + " deg, pose x toOrigin " + degrees(degreesOf(deformation))
+                + " deg | EF biped rest toOrigin " + degrees(degreesOf(biped == null ? null : biped.getToOrigin()))
+                + " deg, EF biped rest local " + degrees(degreesOf(biped == null ? null : biped.getLocalTransform()))
+                + " deg";
+    }
+
+    /** {@code pose x toOrigin} for one joint, allocated: this runs once per model, under the flag. */
+    private static OpenMatrix4f deformationOf(Armature armature, OpenMatrix4f[] poses, int joint) {
+        if (armature == null || poses == null || joint < 0 || joint >= poses.length || poses[joint] == null) {
+            return null;
+        }
+        OpenMatrix4f toOrigin = toOriginOf(armature, joint);
+        return toOrigin == null ? null : OpenMatrix4f.mul(poses[joint], toOrigin, new OpenMatrix4f());
+    }
+
+    /** The rotation angle of a pose matrix, in degrees, or NaN. */
+    private static double degreesOf(OpenMatrix4f[] poses, int joint) {
+        if (poses == null || joint < 0 || joint >= poses.length) {
+            return Double.NaN;
+        }
+        return degreesOf(poses[joint]);
+    }
+
+    /** The rotation angle a matrix applies, in degrees, or NaN when there is no rotation to read. */
+    static double degreesOf(OpenMatrix4f matrix) {
+        if (matrix == null) {
+            return Double.NaN;
+        }
+        rotationOf(matrix, diagQuaternion);
+        return degreesOf(diagQuaternion);
+    }
+
+    /** Scratch for the diagnostic only: it runs once per model, on the render thread. */
+    private static final Quaternionf diagQuaternion = new Quaternionf();
+
+    /**
+     * The angle of a rotation, degrees 0..180 - the shortest turn that takes the identity to it.
+     *
+     * <p>{@code 2 acos|w|}, with the absolute value because a quaternion and its negation are the same
+     * rotation, and clamped because a float sum can put {@code |w|} a hair above one. A quaternion
+     * that is not finite, or has no length, answers NaN rather than 0: "cannot read" must not be
+     * printed as "no rotation".
+     */
+    static double degreesOf(Quaternionf rotation) {
+        if (rotation == null || !Float.isFinite(rotation.w())
+                || !Float.isFinite(rotation.x()) || !Float.isFinite(rotation.y())
+                || !Float.isFinite(rotation.z()) || rotation.lengthSquared() < 1.0E-8F) {
+            return Double.NaN;
+        }
+        double w = Math.min(1.0D, Math.abs(rotation.w()));
+        return Math.toDegrees(2.0D * Math.acos(w));
+    }
+
+    /** The angle between a direction and straight down, degrees 0..180, or NaN. */
+    static double angleFromDown(Vector3f direction) {
+        if (direction == null || !YsmDynamicBoneSolver.isFinite(direction)) {
+            return Double.NaN;
+        }
+        double length = Math.sqrt(direction.lengthSquared());
+        if (length < 1.0E-9D) {
+            return Double.NaN;
+        }
+        return Math.toDegrees(Math.acos(Math.max(-1.0D, Math.min(1.0D, -direction.y / length))));
+    }
+
+    private static Vector3f centroidOf(List<Vector3f> vertices) {
+        if (vertices == null || vertices.isEmpty()) {
+            return null;
+        }
+        Vector3f acc = new Vector3f();
+        int used = 0;
+        for (Vector3f vertex : vertices) {
+            if (vertex == null || !YsmDynamicBoneSolver.isFinite(vertex)) {
+                continue;
+            }
+            acc.add(vertex);
+            used++;
+        }
+        return used == 0 ? null : acc.div(used);
+    }
+
+    private static String point(Vector3f v) {
+        return v == null || !YsmDynamicBoneSolver.isFinite(v) ? "n/a"
+                : String.format(java.util.Locale.ROOT, "(%.3f,%.3f,%.3f)", v.x, v.y, v.z);
+    }
+
+    private static String blocks(float value) {
+        return Float.isFinite(value) ? String.format(java.util.Locale.ROOT, "%.3f", value) : "n/a";
+    }
+
+    private static String blocks(double value) {
+        return Double.isFinite(value) ? String.format(java.util.Locale.ROOT, "%.3f", value) : "n/a";
+    }
+
+    private static String share(float value) {
+        return Float.isFinite(value) ? String.format(java.util.Locale.ROOT, "%+.3f", value) : "n/a";
+    }
+
+    private static String degrees(double value) {
+        return Double.isFinite(value) ? String.format(java.util.Locale.ROOT, "%.1f", value) : "n/a";
     }
 
     /**
@@ -977,6 +1300,13 @@ public final class YsmMeshSecondaryMotion {
         // as liveliness; on the model's seven-bone tail every segment added the whole chain's swing
         // again, and the tail ended up where the body is not. A chain needs exactly what the
         // composition gives it.
+        // The rotation the pose applied to the joint this piece hangs from: the difference between
+        // the joint's authored orientation and its posed one, which is what the solver scales the
+        // gravity-follow weight by. It is the one quantity here that is an identity frame for a pose
+        // that has not moved the piece, so a garment standing still is pulled by its spring and
+        // nothing else - see YsmDynamicBoneSolver#update's target. Read from the same deformation the
+        // pivot and the rest direction come from, so the three cannot disagree about the frame.
+        pivotDeltaOf(deformation, state.pivotRotations[index]);
         YsmDynamicBoneSolver.INSTANCE.update(state.states[index],
                 (float) YsmPhysicsTuning.gravityAcceleration(),
                 (float) YsmPhysicsTuning.airDrag(),
@@ -984,7 +1314,7 @@ public final class YsmMeshSecondaryMotion {
                 pivot, restDir,
                 segment.lever(), segment.frequency(), segment.coefficient(), segment.mass(),
                 segment.maxAngle(), bodyVelocity, colliders, segment.radius(), null,
-                turn[0], turn[1], dt, scratch);
+                turn[0], turn[1], dt, scratch, state.pivotRotations[index]);
         // Recorded here, at the one place a segment is handed to the solver, so "this piece was
         // integrated" is a fact about what ran rather than about what the code looks like.
         state.integrated[index] = true;
@@ -1493,6 +1823,29 @@ public final class YsmMeshSecondaryMotion {
         } else {
             out.normalize();
         }
+    }
+
+    /**
+     * The rotation a joint's <b>deformation</b> applies to the geometry it carries, as a quaternion,
+     * and the one place the gravity-follow scale reads it from.
+     *
+     * <p>The deformation is {@code pose x toOrigin}, i.e. the pose's joint transform times the
+     * inverse of the joint's own authored one, so it is the identity exactly when the pose has left
+     * that joint where the rig authors it - which is the property {@code YsmDynamicBoneSolver#update}
+     * needs and the reason it is taken from the deformation rather than from the pose matrix: a pose
+     * matrix carries the joint's authored orientation as well, so it is never the identity and could
+     * not tell "the animation held this piece still" apart from "the model was authored this way".
+     *
+     * <p>{@link #rotationOf} already normalises, refuses a collapsed matrix and answers the identity
+     * for anything it cannot read - and a caller that gets the identity back gets the unscaled
+     * gravity-follow weight, which is the behaviour that predates this parameter.
+     */
+    static void pivotDeltaOf(OpenMatrix4f deformation, Quaternionf out) {
+        if (deformation == null) {
+            out.identity();
+            return;
+        }
+        rotationOf(deformation, out);
     }
 
     private static boolean isNeutral(Quaternionf q) {

@@ -155,7 +155,7 @@ public class YSMCompatConfig {
         ANIMATION_EVAL_RATE_LIMIT_HZ = builder
                 .comment("Upper bound on how often a NON-local player's YSM script/animation state is evaluated, in Hz.",
                         "0 = unlimited (every frame the distance LOD allows), which is the previous behaviour.",
-                        "Allowed values: 0, or 30-240. Lower values reduce render-thread cost at the price of less",
+                        "Allowed values: 0 (unlimited), or 1-240. Lower values reduce render-thread cost at the price of less",
                         "smooth model updates: frames between evaluations replay the last evaluated pose.",
                         "This caps the built-in distance LOD (near players every frame, far ones at 30/10 Hz), so the",
                         "effective cadence is the slower of the two. The local player is never rate-limited.")
@@ -202,10 +202,14 @@ public class YSMCompatConfig {
                 .defineInRange("secondaryMotionDamping", 24.0, 0.0, 200.0);
 
         SECONDARY_MOTION_GRAVITY = builder
-                .comment("LEGACY, ignored by the current physics. Was 'extra droop while the body moves' for the",
-                        "old point-spring model. The pendulum dynamics read secondaryMotionGravityAcceleration",
-                        "instead, because the number means something different there and reusing the key would",
-                        "silently apply an old value under a new meaning.")
+                .comment("Gravity for the cloth solver (the position-based one, which drives garments as a grid of",
+                        "particles and keeps them out of the body's own volumes), in blocks/s^2.",
+                        "This key does NOT affect the pendulum solver - hair, tails and the chain-based skirts -",
+                        "which reads secondaryMotionGravityAcceleration instead, because the number means something",
+                        "different there (a restoring acceleration on a joint) and reusing one key for both would",
+                        "silently apply a value tuned for one under the other's meaning.",
+                        "Note that the cloth solver is currently built but not driven by the render path, so today",
+                        "this key changes nothing visible; it is kept, and kept honest, for when that is wired up.")
                 .defineInRange("secondaryMotionGravity", 8.0, 0.0, 64.0);
 
         SECONDARY_MOTION_GRAVITY_ACCELERATION = builder
@@ -213,8 +217,9 @@ public class YSMCompatConfig {
                         "Real gravity: this is what makes hair hang instead of sticking out where the pose left it.",
                         "Minecraft's own entity gravity is 32; a light, damped piece of hair reads better a little",
                         "below that, and a skirt a little above. Zero makes the pieces weightless and they will sit",
-                        "wherever the body throws them. This key is separate from the retired secondaryMotionGravity",
-                        "on purpose - the meaning changed, so an existing config's value must not be carried over.")
+                        "wherever the body throws them. Separate from secondaryMotionGravity, which is the cloth",
+                        "solver's gravity and not this one - they are different quantities, so neither key is read",
+                        "into the other.")
                 .defineInRange("secondaryMotionGravityAcceleration", 24.0, 0.0, 64.0);
 
         SECONDARY_MOTION_AIR_DRAG = builder
@@ -304,12 +309,21 @@ public class YSMCompatConfig {
                 .defineInRange("secondaryMotionMaxAngleRootDegrees", 20.0, 0.0, 90.0);
 
         SECONDARY_MOTION_MAX_CHAINS = builder
-                .comment("How many bones of one model may swing at once, or 0 for none.",
-                        "Counted in bones, not pieces: every bone of a hairdo swings on its own pivot, so a model",
-                        "with a ten-segment braid spends ten. Real models land between 4 and 60; this is the",
-                        "backstop for a model that declares hundreds. Lower it if a busy model costs too much on a",
-                        "phone.")
-                .defineInRange("secondaryMotionMaxChains", 96, 0, 512);
+                .comment("How many bones of one model may swing at once.",
+                        "-1 (the default) lets the model's own classification decide: it reads every bone, keeps the",
+                        "ones that hang as cloth or hair, drops the containers, and lands on the pieces this model",
+                        "actually has. That is the answer a single number cannot guess - it is the same number for a",
+                        "two-bone fringe and for a garment of forty panels - and a limit that is too small does not",
+                        "degrade gracefully: whole pieces are left out, so part of a skirt swings and the rest stays",
+                        "bolted to the pose, which reads as the garment coming apart.",
+                        "0 disables secondary motion entirely. A positive value is a hard cap, counted in bones",
+                        "rather than pieces: every bone of a hairdo swings on its own pivot, so a model with a",
+                        "ten-segment braid spends ten. Real models land between 4 and 60; set a cap if a model that",
+                        "declares hundreds costs too much on a phone.",
+                        "A config file written before -1 existed carries 96 (the default then) or 24 (the default",
+                        "before that). 24 is still read as 'unset', because honouring it would truncate real",
+                        "garments; 96 is honoured as the cap this key's own description always promised.")
+                .defineInRange("secondaryMotionMaxChains", -1, -1, 512);
 
         builder.pop();
 

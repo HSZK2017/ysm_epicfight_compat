@@ -88,6 +88,23 @@ class GarmentJointBindingTest {
         }
     }
 
+    /**
+     * Gear that sits above the hips is not dragged onto them, which is what the hip reference
+     * changed: the maid's bow is strapped at chest height, its mapped ancestor {@code UpperBody} is
+     * the chest, and the ancestor-relative comparison used to pull it down to the hips because the
+     * bow is not far below its container. A bow that stays with the hips while the chest - and the
+     * shoulders and head hanging from it - turn is the same defect as the skirt, mirrored.
+     */
+    @Test
+    void gearAboveTheHipsFollowsTheChest() throws IOException {
+        YSMGeoModel geometry = YSMGeoModel.parse(resource(MODEL));
+        YSMGeoModel.Bone bow = geometry.bonesByName.get("bow");
+
+        assertNotNull(bow, "the fixture carries the bow on the maid's back");
+        assertEquals(YSMJointMapper.JOINT_CHEST, YSMJointMapper.resolveJointId(bow, geometry),
+                "a bow at chest height follows the chest, not the hips");
+    }
+
     /** The head, the arms and the legs are unaffected: the rule only ever rewrites the chest. */
     @Test
     void otherBodyPartsAreUnaffected() throws IOException {
@@ -102,13 +119,18 @@ class GarmentJointBindingTest {
     }
 
     /**
-     * The rule reads the drop between a piece of cloth and the body part it hangs from, so a model
-     * whose chest sits elsewhere gets a different threshold and the rule still holds. A height
-     * threshold could not work here: the skirt's upper panels pivot at the waist and hang only a
-     * hand's width, so their geometry is <i>above</i> the hip while still being skirt.
+     * The rule reads the drop between a piece of cloth and the model's own <b>hip</b> - the height
+     * its mapped thigh bones attach at - and not the height of whichever mapped ancestor the name
+     * walk stopped at. The difference is the defect the hip reference fixed: an ancestor is a piece
+     * of rig, authored wherever the author put it, and on the shipped models it sat at the same
+     * height as the breast plates, collars and cloaks below it, so the ancestor-relative comparison
+     * put upper-body geometry on the hips. A height threshold against a constant could not work
+     * either: the skirt's upper panels pivot at the waist and hang only a hand's width, so their
+     * geometry is <i>above</i> the hip while still being skirt - which is why the allowance is a
+     * fraction of the model's own thigh rather than a number of blocks.
      */
     @Test
-    void theDropIsMeasuredAgainstTheModelsOwnAnchor() throws IOException {
+    void theDropIsMeasuredAgainstTheModelsOwnHip() throws IOException {
         YSMGeoModel geometry = YSMGeoModel.parse(resource(MODEL));
         YSMGeoModel.Bone panel = geometry.bonesByName.get("FM1");
         YSMGeoModel.Bone anchor = YSMJointMapper.mappedAncestor(panel);
@@ -116,8 +138,12 @@ class GarmentJointBindingTest {
         assertNotNull(anchor, "the skirt descends from a mapped body part");
         assertEquals("UpBody", anchor.name,
                 "and that body part is the chest, which is why the name walk alone is wrong");
-        assertTrue(YSMJointMapper.centroidHeight(panel) < YSMJointMapper.centroidHeight(anchor),
-                "the skirt hangs below the body part it inherited its joint from");
+        float hip = YSMJointMapper.hipHeight(geometry);
+        assertTrue(Float.isFinite(hip), "the maid's own thigh bones give the rule a hip to measure against");
+        assertTrue(YSMJointMapper.geometryHeight(panel, geometry) < hip,
+                "the panel's centre is below the model's own hips, which is what makes it lower-body cloth");
+        assertTrue(YSMJointMapper.thighLength(geometry) > 0.0F,
+                "and the allowance is a fraction of the maid's own thigh, not a constant");
     }
 
     /** Without a model there is nothing to judge by, so the plain name walk is kept. */

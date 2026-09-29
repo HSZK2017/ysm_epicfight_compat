@@ -206,6 +206,27 @@ public final class YsmDynamicBoneSolver {
     public static final float FALLBACK_VERTICAL_FOLLOW = 0.0F;
 
     /**
+     * How far the pose has to move a piece before its gravity-follow weight is worth the full
+     * configured value, radians - and the scale the weight is ramped up over.
+     *
+     * <p>Sixty degrees, which is a sprint. The weight answers "does this piece follow the world's
+     * vertical rather than the pose", and while the pose is holding the piece where the mesh was
+     * authored, the second of those is a statement about the author's own shape, not a lean: the
+     * shipped {@code 兽耳酱x1} hem is a flared band authored 22.95 degrees off vertical, and a weight
+     * applied to it at rest rotates it 22 degrees off the drawing and holds it there - 39 millimetres
+     * of movement while the character stands still, which is the defect this scale exists for. So the
+     * weight comes up with the movement, from zero at the authored orientation to the configured
+     * value here. Sixty is chosen rather than a smaller number because it is the lean the weight's
+     * own documentation was measured at (the acceptance number is "a cloth panel within ten degrees
+     * of vertical at a sixty degree sprint lean"), and because a pose that has moved a piece by less
+     * than that is a pose the piece is meant to follow.
+     */
+    public static final float FULL_FOLLOW_LEAN = (float) Math.toRadians(60.0);
+
+    /** {@code cos(FULL_FOLLOW_LEAN)}, precomputed: the weight scale is asked once per segment a frame. */
+    private static final float FULL_FOLLOW_LEAN_COS = (float) Math.cos(FULL_FOLLOW_LEAN);
+
+    /**
      * Relative speed above which drag stops growing quadratically, blocks/s.
      *
      * <p>The only thing capped about the drag: the force stays {@code C*|v|*v} up to here and is
@@ -517,6 +538,96 @@ public final class YsmDynamicBoneSolver {
      */
     private final Vector3f fallbackDown = new Vector3f(0.0F, -1.0F, 0.0F);
 
+    /**
+     * How much of gravity's torque this call applies, 0..1 - see {@link #gravityScaleFor} for why a
+     * pose that has not turned the piece's joint gets none of it. One by default, which is the
+     * unscaled behaviour a caller that hands in no joint rotation gets.
+     */
+    private float gravityScale = 1.0F;
+
+    /**
+     * The gravity-follow scale for this call: 1 when the caller hands in no joint rotation (the
+     * solver's behaviour before round 20, and every caller that has nothing to say about the pose's
+     * rotation of the joint), otherwise how far the pose has turned the joint, as a fraction of
+     * {@link #FULL_FOLLOW_LEAN} and clamped to 0..1. It scales both halves of the mechanism at once -
+     * this call's spring target below, and gravity's torque in {@code integrate} - because they are
+     * one decision: does the world, or the pose, have the say here.
+     *
+     * <h2>Why the scale exists</h2>
+     *
+     * <p>The gravity-follow weight says how much of the world's vertical a piece follows <i>rather
+     * than the pose</i>, and the world's vertical is only a different answer from the pose's when the
+     * pose has moved. Applying it to a piece the pose has left where the mesh was authored is what
+     * rotated the shipped {@code 兽耳酱x1} hem off its drawing and held it there: the band is authored
+     * 22.95 degrees off vertical, and it settled 22.16 degrees away from that at a standstill - 39
+     * millimetres of movement, a rotation rather than a translation, which is exactly what the report
+     * described. Gravity's own torque is the other half of the same defect and is scaled by the same
+     * factor: {@code d x g} is a torque at every direction except straight down, so on its own it
+     * holds a piece at {@code (g/L) / omega_n^2} radians off the pose whatever the weight says - 11.8
+     * degrees on that hem, and more on a shorter piece.
+     *
+     * <p>The two ends are the ones the weight's own documentation promises, and this is the first
+     * arrangement in which both are true at once:
+     *
+     * <ul>
+     *   <li><b>the pose has not turned the piece's joint</b> (a character standing still, a gait the
+     *       piece follows): the scale is 0, so the spring's target IS the rest direction and gravity's
+     *       torque is zero - the piece is drawn exactly as authored, however flared its geometry is,
+     *       and its centre of mass does not move at all;</li>
+     *   <li><b>the pose has turned it by {@link #FULL_FOLLOW_LEAN} or more</b> (a sprint, a fall, a
+     *       swing): the scale is 1 and the mechanism is bit for bit what it was before - a cloth panel
+     *       is handed over to the world's gravity and hangs toward the ground, a hair piece keeps its
+     *       share of the lean.</li>
+     * </ul>
+     *
+     * @param pivotDelta the pose's rotation of the piece's joint, or null
+     */
+    static float followScaleFor(Quaternionf pivotDelta) {
+        return poseMovementOf(pivotDelta);
+    }
+
+    /**
+     * The factor gravity's torque is multiplied by: the same rule as the spring's target's, and
+     * separate only so that a reader can see the two are one decision rather than two.
+     *
+     * <p>Scaled rather than left alone because {@code d x g} is a torque at every direction except
+     * straight down, so gravity on its own holds a piece at {@code (g/L) / omega_n^2} radians off the
+     * pose - an argument the pose is not present at. Measured on the shipped hem, that argument is
+     * 11.8 degrees of the 22.16 the piece was displaced by at a standstill; the other 10.4 was the
+     * spring's target. A world that has not turned a piece's joint has no say in where that piece
+     * hangs, which is the same statement the weight makes about the spring, and the same factor is
+     * what makes both true together.
+     */
+    static float gravityScaleFor(Quaternionf pivotDelta) {
+        return poseMovementOf(pivotDelta);
+    }
+
+    /**
+     * The rule both scales are: how far the pose has turned the piece's joint, as a fraction of
+     * {@link #FULL_FOLLOW_LEAN} and clamped to 0..1, with 1 for a caller that has nothing to say.
+     */
+    private static float poseMovementOf(Quaternionf pivotDelta) {
+        if (pivotDelta == null || !isFinite(pivotDelta)) {
+            // Nothing to say about the pose's rotation: the weight is the configured one, unscaled.
+            // This is the solver's behaviour before the parameter existed, and the answer for a caller
+            // whose rotation could not be read - a broken matrix is not a reason to freeze a garment,
+            // so it degrades to the mechanism rather than to no mechanism.
+            return 1.0F;
+        }
+        float lengthSquared = pivotDelta.lengthSquared();
+        if (lengthSquared < EPSILON * EPSILON) {
+            return 0.0F;
+        }
+        // The rotation's angle, from |w|: a unit quaternion is (cos(a/2), sin(a/2) * axis), so
+        // 2 * acos(|w|) is the angle in 0..pi whatever the axis. The absolute value is what makes it
+        // sign-independent, because q and -q are the same rotation and slerp is free to hand back
+        // either.
+        float half = Math.min(1.0F, Math.abs(pivotDelta.w) / (float) Math.sqrt(lengthSquared));
+        float angle = 2.0F * (float) Math.acos(half);
+        float scale = angle / FULL_FOLLOW_LEAN;
+        return scale < 0.0F ? 0.0F : (scale > 1.0F ? 1.0F : scale);
+    }
+
     private YsmDynamicBoneSolver() {}
 
     /**
@@ -592,6 +703,32 @@ public final class YsmDynamicBoneSolver {
     }
 
     /**
+     * The same, with the rotation the pose applied to the joint this piece hangs from - the
+     * difference between the joint's authored orientation and its posed one.
+     *
+     * <p>Handing it in is what lets the gravity-follow weight be scaled by how far the pose has
+     * actually moved the piece (see the target below), which is the difference between a garment
+     * that stands still looking exactly as its author drew it and one the spring holds at a
+     * permanent angle. A caller with nothing to say - a stand-in pose in a test, a joint whose
+     * orientation the pose did not change - passes null and gets the unscaled weight, which is the
+     * behaviour this solver had before the parameter existed.
+     *
+     * @param pivotDelta the pose's rotation of this piece's joint, or null
+     */
+    public void update(SegmentState state, float gravity, float airDrag,
+                       float verticalFollow, Vector3f downTarget,
+                       Vector3f pivot,
+                       Vector3f restDir, float lever,
+                       float frequency, float damping, float mass, float maxAngle,
+                       Vector3f bodyVelocity, Colliders colliders, float segmentRadius,
+                       boolean[] collideAgainst, float dt, Quaternionf out,
+                       Quaternionf pivotDelta) {
+        update(state, gravity, airDrag, verticalFollow, downTarget, pivot, restDir, lever, frequency,
+                damping, mass, maxAngle, bodyVelocity, colliders, segmentRadius, collideAgainst,
+                0.0F, 0.0F, dt, out, pivotDelta);
+    }
+
+    /**
      * The same, with the body's own turn added.
      *
      * <p>Cloth flares outward when the body turns, and this is the only driving quantity in the
@@ -623,6 +760,11 @@ public final class YsmDynamicBoneSolver {
      *                     values mean, and for {@code verticalFollow} and {@code downTarget}
      * @param bodyYawRate  the body's turn rate about its own vertical axis, radians/s
      * @param bodyYawAccel the rate of change of that turn rate, radians/s^2
+     * @param pivotDelta   the pose's rotation of this piece's joint, or null; scales the
+     *                     gravity-follow weight by how far the pose has moved the piece - see
+     *                     {@link #update(SegmentState, float, float, float, Vector3f, Vector3f,
+     *                     Vector3f, float, float, float, float, float, Vector3f, Colliders, float,
+     *                     boolean[], float, Quaternionf, Quaternionf)}
      */
     public void update(SegmentState state, float gravity, float airDrag,
                        float verticalFollow, Vector3f downTarget,
@@ -632,6 +774,23 @@ public final class YsmDynamicBoneSolver {
                        Vector3f bodyVelocity, Colliders colliders, float segmentRadius,
                        boolean[] collideAgainst, float bodyYawRate, float bodyYawAccel,
                        float dt, Quaternionf out) {
+        update(state, gravity, airDrag, verticalFollow, downTarget, pivot, restDir, lever, frequency,
+                damping, mass, maxAngle, bodyVelocity, colliders, segmentRadius, collideAgainst,
+                bodyYawRate, bodyYawAccel, dt, out, (Quaternionf) null);
+    }
+
+    /**
+     * The same, with the pose's rotation of the joint the piece hangs from: see the
+     * nineteen-argument overload for what it does.
+     */
+    public void update(SegmentState state, float gravity, float airDrag,
+                       float verticalFollow, Vector3f downTarget,
+                       Vector3f pivot,
+                       Vector3f restDir, float lever,
+                       float frequency, float damping, float mass, float maxAngle,
+                       Vector3f bodyVelocity, Colliders colliders, float segmentRadius,
+                       boolean[] collideAgainst, float bodyYawRate, float bodyYawAccel,
+                       float dt, Quaternionf out, Quaternionf pivotDelta) {
         out.identity();
         if (state == null || pivot == null || restDir == null) {
             return;
@@ -666,6 +825,14 @@ public final class YsmDynamicBoneSolver {
 
         this.rest.set(restDir).normalize();
 
+        // How far the pose has turned this piece's joint, as a fraction of FULL_FOLLOW_LEAN and
+        // clamped to 0..1. It scales both halves of the gravity-follow mechanism - the spring's
+        // target and gravity's own torque - and it is 1 for a caller that hands in no joint rotation,
+        // which is every caller the solver had before this parameter existed. Read here rather than
+        // inside the target's branch because the early exit below needs the same answer, and because
+        // one reading is one statement of it.
+        this.gravityScale = gravityScaleFor(pivotDelta);
+
         // ------------------------------------------------------------------
         // The gravity-follow target: what the spring pulls toward, once, before any integration.
         //
@@ -684,9 +851,9 @@ public final class YsmDynamicBoneSolver {
         // other readers of it are all statements about the pose rather than about the target. See
         // the calls at the end of this method for the reasoning.
         // ------------------------------------------------------------------
-        this.verticalFollow = Float.isFinite(verticalFollow)
+        this.verticalFollow = (Float.isFinite(verticalFollow)
                 ? clamp(verticalFollow, 0.0F, 1.0F)
-                : FALLBACK_VERTICAL_FOLLOW;
+                : FALLBACK_VERTICAL_FOLLOW) * this.gravityScale;
         if (this.verticalFollow <= 0.0F) {
             // Exactly the direction the pose gave, copied and not blended. A blend with a zero
             // weight would be the same vector mathematically, but the copy makes the "zero is the
@@ -884,7 +1051,12 @@ public final class YsmDynamicBoneSolver {
         // the same gravity, exactly as a long pendulum swings more slowly than a short one. This is
         // also why the lever is a real input to the dynamics and not a scale factor on a rotation -
         // it is the only term in the solver that carries it into the response.
-        this.alpha.set(direction).cross(this.gravity).mul(1.0F / lever);
+        //
+        // `gravityScale` is 1 for every caller that hands in no joint rotation - the solver's whole
+        // history, and every test written before round 20 - so this line is the line it always was
+        // for them. A caller that does hand one in gets gravity in proportion to how far the pose has
+        // moved the piece; see update()'s target.
+        this.alpha.set(direction).cross(this.gravity).mul(this.gravityScale / lever);
 
         // Drag, the one term where the mass survives. The centre of mass moves at
         // v_pivot + w x r in the model's frame, and the air in that frame moves at -v_body, so the
@@ -1226,6 +1398,11 @@ public final class YsmDynamicBoneSolver {
     /** Whether every component is finite. */
     public static boolean isFinite(Vector3f v) {
         return Float.isFinite(v.x) && Float.isFinite(v.y) && Float.isFinite(v.z);
+    }
+
+    /** Whether every component is finite: a rotation read from a pose is model data too. */
+    public static boolean isFinite(Quaternionf q) {
+        return Float.isFinite(q.x) && Float.isFinite(q.y) && Float.isFinite(q.z) && Float.isFinite(q.w);
     }
 
     private static float clamp(float value, float min, float max) {

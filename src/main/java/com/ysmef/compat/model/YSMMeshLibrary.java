@@ -154,8 +154,10 @@ public class YSMMeshLibrary {
      */
     private static final java.util.concurrent.atomic.AtomicInteger LOAD_GENERATION = new java.util.concurrent.atomic.AtomicInteger();
 
-    /** textureRL string -> true when the texture has translucent pixels (alpha < 253). */
-    private static final Map<String, Boolean> TEXTURE_TRANSLUCENT = new ConcurrentHashMap<>();
+    // A "textureRL string -> translucent" map used to live here. Nothing ever read or wrote it: the
+    // live one is TextureStore's, which is also keyed by the resource location's string. A field that
+    // no code touches cannot be wrong, which is exactly why it is worth deleting - the next reader
+    // otherwise has to prove that for themselves.
 
     /** Background conversion pool (model decryption + mesh writing are pure CPU work). */
     private static final ExecutorService LAZY_POOL = Executors.newFixedThreadPool(
@@ -548,10 +550,16 @@ public class YSMMeshLibrary {
                         break;
                     }
                     victim = victimIterator.next();
+                    // Decide before removing. ACCESS_ORDER.size() is what the loop above (and this
+                    // break) uses as "how many models are loaded", so taking a victim out and then
+                    // skipping it made the cache's own bookkeeping understate what it holds: the
+                    // model stayed in MESHES, was no longer tracked by the LRU, and could never be
+                    // chosen again - the cap loosened and that entry became unreclaimable until a
+                    // full invalidate. Skipping leaves it tracked, and the next trim retries it.
+                    if (PENDING_MODELS.contains(victim) || FAILED_MODELS.contains(victim)) {
+                        continue;
+                    }
                     ACCESS_ORDER.remove(victim);
-                }
-                if (PENDING_MODELS.contains(victim) || FAILED_MODELS.contains(victim)) {
-                    continue;
                 }
                 if (evictModel(victim)) {
                     evicted++;
@@ -660,6 +668,11 @@ public class YSMMeshLibrary {
             }
             return false;
         } catch (Exception e) {
+            // A verification that failed is treated exactly like one that answered "no": the model is
+            // re-converted, which is the right recovery either way. Only one of the two is worth
+            // knowing about, and it used to be silent.
+            YSMEpicFightCompat.LOGGER.debug(
+                    "YSM-EF Compat: could not verify a cached manifest entry, re-converting: {}", e.toString());
             return false;
         }
     }

@@ -13,8 +13,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * Suppresses YSM's vehicle preview-model pass while a passenger is in Epic
  * Fight battle mode (companion to YsmUnobfVehicleRenderMixin). The
  * un-obfuscated target (ModelPreviewRenderer#renderVehicleModel) exists with
- * this exact signature in the official YSM 2.6.5 release, OpenYSM and
- * ModernYSM alike.
+ * this exact signature in OpenYSM and ModernYSM. It does NOT exist in the
+ * official 2.6.5 release, which has no readable class under
+ * com/elfmcys/yesstevemodel/client/; that build is covered by
+ * YsmVehiclePreviewMixin.
  *
  * The obfuscated-build counterpart is YsmVehiclePreviewMixin. This injection
  * is non-critical (require = 0).

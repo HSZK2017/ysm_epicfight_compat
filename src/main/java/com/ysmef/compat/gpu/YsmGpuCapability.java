@@ -55,7 +55,7 @@ public final class YsmGpuCapability {
         }
         checked = true;
 
-        if (System.getProperty("ysm_ef_compat.disable_gpu") != null) {
+        if (com.ysmef.compat.SystemFlags.enabled("ysm_ef_compat.disable_gpu")) {
             reason = "gpu renderer disabled via system property ysm_ef_compat.disable_gpu";
             return;
         }
