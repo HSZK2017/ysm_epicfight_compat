@@ -94,6 +94,17 @@ public final class YsmMeshSecondaryMotion {
         final OpenMatrix4f[] deltas;
         /** JOML twin of {@link #deltas}, where the composition happens. */
         final Matrix4f[] jomlDeltas;
+        /**
+         * Per segment, the rigid motion its ANCESTORS apply to it: the parent's composed delta, or the
+         * identity for a piece with no chain.
+         *
+         * <p>Handed to the solver so the collision test asks about the point the piece is <b>drawn</b>
+         * at rather than the point it would be drawn at if it had no ancestors - the mesh folds every
+         * delta under its parent's, and the solver held the piece on a sphere about its own pivot only.
+         * Owned here rather than built per call because this runs per segment per frame on the render
+         * thread: one `set` per chained segment, no allocation.
+         */
+        final Matrix4f[] ancestorFrames;
         final boolean[] resolved;
         final int[] resolveDepth;
         /**
@@ -117,6 +128,17 @@ public final class YsmMeshSecondaryMotion {
          * behaviour, byte for byte.
          */
         final boolean[] held;
+        /**
+         * Per-segment swing ceilings from the model's override file, radians; zero means none.
+         *
+         * <p>Zero for every segment of every model that has no override file, so the branch that
+         * reads it is unreachable and the shipped behaviour stays the shipped behaviour, byte for
+         * byte. A ceiling only ever tightens the chain's own allowance, and it is applied before
+         * {@code chainUsed} is written, so the joints below a capped one are charged for what it
+         * actually spent rather than for what it asked for. See
+         * {@link YsmPhysicsOverrides#markOverrides}.
+         */
+        final float[] limit;
         /** The drawn frame's pose, created on the first frame. See {@link ArmaturePose}. */
         private ArmaturePose live;
         /** Per-segment scratch: the joint deformation, its pivot and its rest direction. */
@@ -215,10 +237,12 @@ public final class YsmMeshSecondaryMotion {
             this.states = new YsmDynamicBoneSolver.SegmentState[count];
             this.deltas = new OpenMatrix4f[count];
             this.jomlDeltas = new Matrix4f[count];
+            this.ancestorFrames = new Matrix4f[count];
             this.resolved = new boolean[count];
             this.resolveDepth = new int[count];
             this.integrated = new boolean[count];
             this.held = new boolean[count];
+            this.limit = new float[count];
             this.deformations = new OpenMatrix4f[count];
             this.pivots = new Vector3f[count];
             this.restDirections = new Vector3f[count];
@@ -245,6 +269,7 @@ public final class YsmMeshSecondaryMotion {
                 this.states[i] = new YsmDynamicBoneSolver.SegmentState();
                 this.deltas[i] = new OpenMatrix4f();
                 this.jomlDeltas[i] = new Matrix4f();
+                this.ancestorFrames[i] = new Matrix4f();
                 this.deformations[i] = new OpenMatrix4f();
                 this.pivots[i] = new Vector3f();
                 this.restDirections[i] = new Vector3f();
@@ -756,7 +781,8 @@ public final class YsmMeshSecondaryMotion {
             // once, where the pieces are built - and it applies nothing at all unless
             // config/ysm_epicfight_compat/physics_overrides/<model>.json exists, so the report line
             // it writes says which bones were held and the frame path below needs no file of its own.
-            YsmPhysicsOverrides.markHeld(model.modelId, model.bones, parts.segments(), state.held);
+            YsmPhysicsOverrides.markOverrides(model.modelId, model.bones, parts.segments(),
+                    state.held, state.limit);
             return state;
         } catch (Throwable t) {
             YSMEpicFightCompat.LOGGER.warn(
@@ -1312,6 +1338,10 @@ public final class YsmMeshSecondaryMotion {
         java.util.Arrays.fill(state.resolved, false);
         java.util.Arrays.fill(state.resolveDepth, 0);
         java.util.Arrays.fill(state.integrated, false);
+        // A new pass over the segments, so every collision question recorded below is tagged with the
+        // frame it belongs to rather than with whatever the last reader assumed. See
+        // YsmDynamicBoneSolver#ProbeQuestion.
+        YsmDynamicBoneSolver.advanceProbeFrame();
         // The solver's drag term takes the body's velocity as a vector, and a null one would be a
         // NullPointerException on the render thread rather than a still body. "No velocity to give"
         // means no airflow, so it becomes zero here - the one place a null can enter.
@@ -1335,6 +1365,25 @@ public final class YsmMeshSecondaryMotion {
 
     /** A body standing still, for the frames that have no velocity to give the airflow. */
     private static final Vector3f ZERO_VELOCITY = new Vector3f();
+
+    /**
+     * The point the collision test asked about for each segment on the last frame, by segment index -
+     * a measurement hook, not a mechanism.
+     *
+     * <p>Written where the point is built, so what it holds is what ran, and it exists because the
+     * alternative is a test that orchestrates the frame loop for itself: a probe that orchestrates can
+     * be wrong about the frame in ways the production path cannot, and this one has been - three
+     * separate probe revisions reported tables built from a point that belonged to another piece, a
+     * point read after the volume had already moved it, and a frame loop that ran the whole path once
+     * per segment. Never read on the frame path.
+     */
+    public static final Map<Integer, Vector3f> PROBE_TESTED_POINTS = new java.util.LinkedHashMap<>();
+
+    /** {@link #PROBE_TESTED_POINTS}, cleared at the start of every pass over the segments. */
+    public static void clearProbePoints() {
+        PROBE_TESTED_POINTS.clear();
+        YsmDynamicBoneSolver.resetProbe();
+    }
 
     /**
      * The world's downward direction in the model's own space, blocks-free and never mutated.
@@ -1481,6 +1530,28 @@ public final class YsmMeshSecondaryMotion {
         // nothing else - see YsmDynamicBoneSolver#update's target. Read from the same deformation the
         // pivot and the rest direction come from, so the three cannot disagree about the frame.
         pivotDeltaOf(deformation, state.pivotRotations[index]);
+        // ------------------------------------------------------------------
+        // What this piece's ANCESTORS move it by, as the rigid motion they are.
+        //
+        // The solver answers "which way does this piece swing about its own bind pivot", and the mesh
+        // does not draw it there: `buildSegmentDelta` builds this piece's own swing about its contact
+        // anchor, and the composition at the end of this method then folds that under every ancestor's
+        // delta in turn. So the point the piece is DRAWN at is the point the solver holds, carried by
+        // the ancestors - and until this line existed, the collision test was asked about the point
+        // before that carry, a piece that is not on screen. Measured on the reported model, that was
+        // 0.489 blocks of error on `LM`, with the collision test firing 9.8 million times a run.
+        //
+        // Taken from the parent's composed delta, which `resolveSegment` has already built by the time
+        // this line runs (the parent is resolved first, a few lines above), so this costs one matrix
+        // copy per chained segment per frame and allocates nothing. A piece with no parent gets the
+        // identity, and identity is exactly the frame the solver already worked in - which is why the
+        // twenty-two-argument `update` overloads pass null and are bit for bit what they were.
+        // ------------------------------------------------------------------
+        Matrix4f ancestorFrame = null;
+        if (hasParent) {
+            ancestorFrame = state.ancestorFrames[index].set(state.jomlDeltas[parent]);
+        }
+        YsmDynamicBoneSolver.INSTANCE.setProbeSegment(index);
         YsmDynamicBoneSolver.INSTANCE.update(state.states[index],
                 (float) YsmPhysicsTuning.gravityAcceleration(),
                 (float) YsmPhysicsTuning.airDrag(),
@@ -1488,7 +1559,7 @@ public final class YsmMeshSecondaryMotion {
                 pivot, restDir,
                 segment.lever(), segment.frequency(), segment.coefficient(), segment.mass(),
                 segment.maxAngle(), bodyVelocity, colliders, segment.radius(), null,
-                turn[0], turn[1], dt, scratch, state.pivotRotations[index]);
+                turn[0], turn[1], dt, scratch, state.pivotRotations[index], ancestorFrame);
         // Recorded here, at the one place a segment is handed to the solver, so "this piece was
         // integrated" is a fact about what ran rather than about what the code looks like.
         state.integrated[index] = true;
@@ -1528,6 +1599,15 @@ public final class YsmMeshSecondaryMotion {
         float used = hasParent ? state.chainUsed[parent] : 0.0F;
         float allowed = YsmPhysicsParts.chainAllowance(segment.maxAngle(), state.pieceLimit[index],
                 used, state.jointsLeft[index]);
+        // The user's own ceiling for this bone, if the model's override file names it. Applied after
+        // the chain's own allowance and before the angle is clamped, so it can only ever tighten what
+        // the chain granted - and, because `chainUsed` below is written from the clamped angle, a
+        // capped link hands the rest of its budget to the joints under it rather than spending it.
+        // Zero (every model without a file) leaves `allowed` exactly as it was.
+        float ceiling = state.limit[index];
+        if (ceiling > 0.0F && ceiling < allowed) {
+            allowed = ceiling;
+        }
         if (ownAngle > allowed && ownAngle > 1.0E-4F) {
             scratch.set(scratch).slerp(IDENTITY, 1.0F - allowed / ownAngle);
             ownAngle = allowed;

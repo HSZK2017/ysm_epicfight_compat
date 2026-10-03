@@ -17,6 +17,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -378,6 +379,205 @@ class YsmPhysicsOverridesTest {
     }
 
     // ------------------------------------------------------------------
+    // The swing ceiling
+    // ------------------------------------------------------------------
+
+    @Test
+    void aLimitFileNamesTheBonesAndTheirDegrees() throws IOException {
+        write("model.json", "{\"limitDeg\": {\"Tail5\": 8, \"tail6\": 2.5}}");
+
+        Map<String, Float> limits = YsmPhysicsOverrides.readLimits(dir, "model");
+
+        assertEquals(2, limits.size(), "both entries are read: " + limits);
+        assertEquals(8.0F, Math.toDegrees(limits.get("tail5")), 1.0E-3F,
+                "a file's number is degrees, and the frame path's unit is radians");
+        assertEquals(2.5F, Math.toDegrees(limits.get("tail6")), 1.0E-3F,
+                "and the name is matched without case, like the rigid list");
+    }
+
+    /**
+     * A file that uses only the second key must not be told it has no first key. This is the one
+     * case the two readers could disagree about, and the warning is the thing users see.
+     */
+    @Test
+    void aFileWithOnlyALimitIsNotScoldedForTheMissingRigidArray() throws IOException {
+        write("model.json", "{\"limitDeg\": {\"Tail5\": 8}}");
+
+        List<String> log = captureLog(() -> {
+            assertTrue(YsmPhysicsOverrides.read(dir, "model").isEmpty(),
+                    "there is no rigid list in this file, so nothing is held");
+            assertEquals(1, YsmPhysicsOverrides.readLimits(dir, "model").size(),
+                    "and the ceiling is read");
+        });
+
+        assertEquals(0, count(log, Level.WARN),
+                "a file that uses one of the two keys correctly must be silent: " + log);
+    }
+
+    @Test
+    void aLimitFileWithNeitherKeyIsWarnedAboutOnce() throws IOException {
+        write("model.json", "{\"hold\": [\"BaseHair\"]}");
+
+        List<String> log = captureLog(() -> {
+            assertTrue(YsmPhysicsOverrides.read(dir, "model").isEmpty());
+            assertTrue(YsmPhysicsOverrides.readLimits(dir, "model").isEmpty());
+        });
+
+        assertEquals(1, count(log, Level.WARN),
+                "one warning for the file, not one per reader: " + log);
+        assertTrue(log.get(0).contains("limitDeg"),
+                "and it names both keys it could have used: " + log.get(0));
+    }
+
+    @Test
+    void aLimitThatIsNotANumberIsSkippedAndWarnedAbout() throws IOException {
+        write("model.json", "{\"limitDeg\": {\"Tail5\": \"eight\"}}");
+
+        List<String> log = captureLog(() ->
+                assertTrue(YsmPhysicsOverrides.readLimits(dir, "model").isEmpty()));
+
+        assertEquals(1, count(log, Level.WARN));
+        assertTrue(log.get(0).contains("Tail5"), "the entry that did nothing is named: " + log.get(0));
+    }
+
+    @Test
+    void aLimitThatIsNotPositiveIsSkippedAndWarnedAbout() throws IOException {
+        write("model.json", "{\"limitDeg\": {\"Tail5\": 0, \"Tail6\": -4}}");
+
+        List<String> log = captureLog(() ->
+                assertTrue(YsmPhysicsOverrides.readLimits(dir, "model").isEmpty()));
+
+        assertEquals(2, count(log, Level.WARN), "one per entry that cannot be a ceiling: " + log);
+    }
+
+    @Test
+    void aLimitDegThatIsNotAnObjectIsIgnoredAndWarnedAbout() throws IOException {
+        write("model.json", "{\"limitDeg\": [8]}");
+
+        List<String> log = captureLog(() ->
+                assertTrue(YsmPhysicsOverrides.readLimits(dir, "model").isEmpty()));
+
+        assertEquals(1, count(log, Level.WARN));
+        assertTrue(log.get(0).contains("limitDeg"), log.get(0));
+    }
+
+    @Test
+    void onlyTheNamedPiecesAreCapped() {
+        YsmPhysicsParts.Segment[] segments = segments("BaseHair", "Tail", "Bangs");
+        float[] limits = new float[3];
+
+        int count = YsmPhysicsOverrides.cap(Map.of("bangs", (float) Math.toRadians(6.0)),
+                bones(), segments, limits, null, null);
+
+        assertEquals(1, count, "one name, one piece");
+        assertEquals(0.0F, limits[0], "an unnamed piece has no ceiling");
+        assertEquals(0.0F, limits[1]);
+        assertEquals(6.0F, Math.toDegrees(limits[2]), 1.0E-3F,
+                "the named piece's ceiling is the file's, in radians");
+    }
+
+    @Test
+    void aCeilingOnlyEverTightens() {
+        YsmPhysicsParts.Segment[] segments = segments("Tail");
+        float[] limits = new float[1];
+
+        YsmPhysicsOverrides.cap(Map.of("tail", (float) Math.toRadians(8.0)), bones(), segments,
+                limits, null, null);
+        YsmPhysicsOverrides.cap(Map.of("tail", (float) Math.toRadians(20.0)), bones(), segments,
+                limits, null, null);
+        assertEquals(8.0F, Math.toDegrees(limits[0]), 1.0E-3F,
+                "a wider ceiling must not undo a narrower one");
+        YsmPhysicsOverrides.cap(Map.of("tail", (float) Math.toRadians(4.0)), bones(), segments,
+                limits, null, null);
+        assertEquals(4.0F, Math.toDegrees(limits[0]), 1.0E-3F, "and a narrower one tightens it");
+    }
+
+    @Test
+    void aCapNameThatIsNotOnTheModelCapsNothingAndIsReported() {
+        YsmPhysicsParts.Segment[] segments = segments("Tail");
+        float[] limits = new float[1];
+        List<String> notBones = new ArrayList<>();
+        List<String> notPieces = new ArrayList<>();
+
+        int count = YsmPhysicsOverrides.cap(Map.of("tail9", (float) Math.toRadians(8.0)),
+                bones("Tail", "Head"), segments, limits, notBones, notPieces);
+
+        assertEquals(0, count);
+        assertEquals(List.of("tail9"), notBones, "a name that is not on the model is reported");
+        assertEquals(0.0F, limits[0], "and it must not cap the piece it was nearly spelled like");
+    }
+
+    /**
+     * <b>The ceiling, through the production frame path.</b> A capped piece must swing less than
+     * the chain would have allowed, must still swing, and must not move the piece beside it.
+     *
+     * <p>The last of the three is the whole reason this is a per-bone key rather than a rule: the
+     * cap is applied where the chain's allowance is applied, so it cannot leak into anything that
+     * is not under the capped piece.
+     */
+    @Test
+    void aCappedPieceSwingsAtMostItsCeilingAndItsNeighbourIsUntouched() {
+        YsmPhysicsParts.Segment[] segments = chain();
+        YsmPhysicsParts.Model model = new YsmPhysicsParts.Model(
+                segments, YsmPhysicsParts.Source.BONE_NAMES, 0);
+        YsmMeshSecondaryMotion.State control = run(model, Set.of(), Map.of());
+        YsmMeshSecondaryMotion.State capped = run(model, Set.of(),
+                Map.of("tail", (float) Math.toRadians(5.0)));
+
+        assertTrue(control.lastDegrees[0] > 5.0F,
+                "the control must demand more than the ceiling, or this proves nothing: "
+                        + control.lastDegrees[0] + " deg");
+        assertTrue(capped.lastDegrees[0] <= 5.0001F,
+                "the capped piece swung " + capped.lastDegrees[0] + " deg, over its 5 deg ceiling");
+        assertTrue(capped.lastDegrees[0] > 0.5F,
+                "a ceiling is not a freeze: the piece must still swing, and it swung "
+                        + capped.lastDegrees[0] + " deg");
+        assertEquals(5.0F, Math.toDegrees(capped.chainBudget[0]), 1.0E-3F,
+                "and what the chain granted it is the ceiling, which is what the log prints");
+        assertTrue(capped.integrated[0], "a capped piece is still simulated");
+
+        assertTrue(same(control.deltas[2], capped.deltas[2]),
+                "a piece under no cap must have exactly the delta it had");
+        assertEquals(control.lastDegrees[2], capped.lastDegrees[2], "and the same own swing");
+    }
+
+    @Test
+    void aCeilingAboveTheChainAllowanceChangesNothing() {
+        YsmPhysicsParts.Segment[] segments = chain();
+        YsmPhysicsParts.Model model = new YsmPhysicsParts.Model(
+                segments, YsmPhysicsParts.Source.BONE_NAMES, 0);
+        YsmMeshSecondaryMotion.State control = run(model, Set.of(), Map.of());
+        YsmMeshSecondaryMotion.State loose = run(model, Set.of(),
+                Map.of("tail", (float) Math.toRadians(89.0)));
+
+        for (int i = 0; i < segments.length; i++) {
+            assertTrue(same(control.deltas[i], loose.deltas[i]),
+                    "segment " + i + " must be unchanged by a ceiling the chain already grants");
+        }
+    }
+
+    /**
+     * And with no override at all the ceilings array is left exactly as it was - all zeroes, which
+     * is the value the frame path reads as "no ceiling" and the reason the no-file case is the
+     * shipped behaviour rather than a re-derivation of it.
+     */
+    @Test
+    void withNoOverrideFileNoPieceIsCapped() {
+        YsmPhysicsParts.Segment[] segments = chain();
+        float[] limits = new float[segments.length];
+
+        int capped = YsmPhysicsOverrides.markOverrides("ysmef/test/no-such-model-file",
+                bones("Tail", "Tail2", "Bangs"), segments, null, limits);
+
+        assertEquals(0, capped, "with no file for that id, nothing is capped");
+        for (float limit : limits) {
+            assertEquals(0.0F, limit, 0.0F, "and every ceiling is exactly zero");
+        }
+        assertTrue(YsmPhysicsOverrides.limits("ysmef/test/no-such-model-file").isEmpty(),
+                "and the loader resolved no ceilings at all");
+    }
+
+    // ------------------------------------------------------------------
     // Harness
     // ------------------------------------------------------------------
 
@@ -440,8 +640,18 @@ class YsmPhysicsOverridesTest {
      * the shipped matching rather than the test's.
      */
     private static YsmMeshSecondaryMotion.State run(YsmPhysicsParts.Model model, Set<String> held) {
+        return run(model, held, Map.of());
+    }
+
+    /**
+     * The same, with a ceiling per bone name in radians, set through
+     * {@link YsmPhysicsOverrides#cap} - the same decision the file's numbers go through.
+     */
+    private static YsmMeshSecondaryMotion.State run(YsmPhysicsParts.Model model, Set<String> held,
+                                                    Map<String, Float> limits) {
         YsmMeshSecondaryMotion.State state = new YsmMeshSecondaryMotion.State(model, null, 1.047F);
         YsmPhysicsOverrides.hold(held, null, model.segments(), state.held, null, null);
+        YsmPhysicsOverrides.cap(limits, null, model.segments(), state.limit, null, null);
         YsmMeshSecondaryMotion.PoseSource pose = new LeaningPose(1.047F);
         for (int frame = 0; frame <= 60; frame++) {
             YsmMeshSecondaryMotion.simulate(state, pose, 1.0F / 60.0F, null, NO_TURN,

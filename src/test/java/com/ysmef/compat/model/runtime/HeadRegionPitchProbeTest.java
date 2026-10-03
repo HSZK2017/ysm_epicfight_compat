@@ -702,18 +702,2737 @@ class HeadRegionPitchProbeTest {
     }
 
     // ------------------------------------------------------------------
+    // The skirt layers and the tail tip: this round's measurement
+    // ------------------------------------------------------------------
+
+    /** Cell size the concentric structure is measured in: 2 degrees of azimuth, 2 cm of height. */
+    private static final float LADDER_DEGREES = 2.0F;
+    private static final float LADDER_HEIGHT = 0.02F;
+
+    /** Barycentric subdivisions of every mesh triangle, so a panel's surface is sampled. */
+    private static final int SURFACE_SUBDIVISION = 4;
+
+    /** Frames per motion state, and how many are skipped before any statistic is taken. */
+    private static final int GAIT_FRAMES = 600;
+    private static final int GAIT_WARMUP = 200;
+
+    /** The body's forward speed in the two gaits, blocks/s, in the model's own frame (-Z forward). */
+    private static final float WALK_SPEED = 4.317F;
+    private static final float SPRINT_SPEED = 5.612F;
+
+    /** The pieces the user says look right, which the tail tip has to be read against. */
+    private static final String[] KEEP_SWINGING = {
+            "Tail", "Tail2", "Tail3", "Tail4", "LongHair", "LongHair2",
+            "LongLeftHair", "LongLeftHair2", "LongRightHair", "LongRightHair2",
+            "LeftSideHair", "RightSideHair", "Bangs", "BaseHair"};
+
+    /** One gait: the pose it runs at, and the speed the body moves at while it does. */
+    private record Gait(String name, float leanDegrees, float bob, float strideDegrees,
+                        float kneeDegrees, float hertz, float speed) {}
+
+    /** One candidate override: what it holds rigid and what it caps, by bone name. */
+    private record Candidate(String label, Set<String> rigid, Map<String, Float> limitDeg) {}
+
+    /** The candidates, from the mildest to the harshest, plus the do-nothing baseline. */
+    private static final Candidate[] TAIL_CANDIDATES = {
+            new Candidate("nothing (baseline)", Set.of(), Map.of()),
+            new Candidate("rigid Tail7", Set.of("Tail7"), Map.of()),
+            new Candidate("rigid Tail6, Tail7", Set.of("Tail6", "Tail7"), Map.of()),
+            new Candidate("limitDeg Tail5..7 = 8", Set.of(),
+                    Map.of("tail5", 8.0F, "tail6", 8.0F, "tail7", 8.0F)),
+            new Candidate("limitDeg Tail2..7 = 8", Set.of(),
+                    Map.of("tail2", 8.0F, "tail3", 8.0F, "tail4", 8.0F,
+                            "tail5", 8.0F, "tail6", 8.0F, "tail7", 8.0F)),
+            new Candidate("limitDeg Tail5..7 = 4", Set.of(),
+                    Map.of("tail5", 4.0F, "tail6", 4.0F, "tail7", 4.0F))};
+
+    private static final Gait[] GAITS = {
+            new Gait("idle", 0.0F, 0.003F, 2.0F, 2.0F, 0.30F, 0.0F),
+            new Gait("walk", 6.0F, 0.022F, 20.0F, 16.0F, 1.05F, WALK_SPEED),
+            new Gait("sprint", 17.0F, 0.040F, 34.0F, 28.0F, 1.60F, SPRINT_SPEED)};
+
+    /** The sprint, which is the state the tail was reported in. */
+    private static final Gait SPRINT = GAITS[2];
+
+    /**
+     * The skirt crossing and the tail tip: what the two reported defects are, as numbers.
+     *
+     * <p>Both are measured the same way, in <b>cells</b> of azimuth and height about the body's own
+     * vertical axis, over the piece's own <b>surface</b> rather than its corner list: every mesh
+     * triangle is barycentrically subdivided, so a panel's radial extent at one height is the panel,
+     * not the two corners that happen to be sampled there.
+     *
+     * <p>Only each piece's own delta is applied, in bind space. Every skirt piece and every tail
+     * link is drawn on the same joint, so the pose deformation is common to them and cannot change
+     * their relative geometry; measuring it would add the body's whole lean to every radius and
+     * hide the effect this round is about. The test asserts that common joint rather than assuming
+     * it.
+     */
+    @Test
+    void theSkirtLayersAndTheTailTipAtSpeed() throws Exception {
+        Path pack = convertedPackRoot();
+        assumeTrue(pack != null, "set -D" + YsmModelPackage.CONFIG_ROOT_PROPERTY
+                + "=<.../config/yes_steve_model> (or " + YsmModelPackage.CONFIG_ROOT_ENV
+                + ") to run this against a real install");
+
+        Rig maid = Rig.load(pack, MAID[1], LOGGED_MAID_SIMULATED);
+        StringBuilder report = new StringBuilder();
+        report.append("# The skirt layers and the tail tip, from the deployed build's own artefacts\n\n")
+                .append("Model `").append(maid.modelId).append("`, ").append(maid.segments.size())
+                .append(" simulated pieces. A **cell** is ")
+                .append(fmt(LADDER_DEGREES)).append(" deg of azimuth by ")
+                .append(fmt(LADDER_HEIGHT)).append(" blocks of height about the body's own vertical ")
+                .append("axis, and a piece occupies a cell with the radial interval `[rMin, rMax]` of ")
+                .append("its own surface inside it. Every number is read with **only that piece's own ")
+                .append("delta** applied, in bind space.\n\n");
+        // The reader is calibrated on the one place a running client printed the same numbers this
+        // probe computes: the leg rows of the OTHER model of that session, to the log's own
+        // rounding. The reported model has no such leg rows, so it is calibrated instead against
+        // the armature line its own session printed.
+        List<String> problems = new ArrayList<>();
+        String problem = calibrateTheMatrixConvention(report);
+        if (problem != null) {
+            problems.add(problem);
+        }
+        Rig eku = Rig.load(pack, EKU[1], LOGGED_EKU_SIMULATED);
+        problem = calibrateAgainstTheClientsLegRows(eku, report);
+        if (problem != null) {
+            problems.add(problem);
+        }
+        problem = calibrateArmatureAgainstTheClientsBindLine(maid, report);
+        if (problem != null) {
+            problems.add(problem);
+        }
+
+        Vector3f axis = bodyAxis(maid);
+        report.append("## The frame the measurement is taken in\n\n")
+                .append("- the body's own vertical axis, from the two hip joints the armature ")
+                .append("settled: `").append(point(axis)).append("`\n");
+        // The sign a run leans into, read off the model's own face rather than assumed.
+        Vector3f faceMoved = YsmMeshSecondaryMotion.transformDirection(
+                about(maid.jointOrigin(JointTable.TORSO), 10.0F, 0.0F), maid.face, new Vector3f());
+        float leanSign = faceMoved.y <= maid.face.y ? 1.0F : -1.0F;
+        report.append("- the model's own face `").append(point(maid.face))
+                .append("`: +10 deg about the torso joint moves it to `").append(point(faceMoved))
+                .append("`, so a **forward lean is ").append(leanSign > 0.0F ? "+" : "-")
+                .append("x** and the gaits below use ")
+                .append(leanSign > 0.0F ? "+" : "-").append("lean\n");
+        int wrongJoint = 0;
+        Set<Integer> jointsOfTheGarment = new java.util.TreeSet<>();
+        for (Segment piece : maid.segments) {
+            if (isSkirtOrTail(piece.name)) {
+                jointsOfTheGarment.add(piece.joint);
+            }
+        }
+        for (String name : KEEP_SWINGING) {
+            Segment piece = maid.segmentNamed(name);
+            if (piece != null) {
+                jointsOfTheGarment.add(piece.joint);
+            }
+        }
+        for (int joint : jointsOfTheGarment) {
+            if (joint != JointTable.TORSO && joint != JointTable.CHEST && joint != JointTable.HEAD) {
+                wrongJoint++;
+            }
+        }
+        report.append("- the joints every skirt piece, tail link and reference piece is drawn on: ")
+                .append(jointsOfTheGarment).append(" (")
+                .append(wrongJoint == 0 ? "all of them on the torso, the chest or the head, which is "
+                        + "why one deformation cannot change their relative geometry"
+                        : "**NOT all on one joint** - the relative-geometry argument does not hold")
+                .append(")\n\n");
+
+        // The samples: one surface per piece, in bind space, taken once.
+        float[][] samples = new float[maid.segments.size()][];
+        for (Segment piece : maid.segments) {
+            samples[piece.index] = surfaceSamples(triangleSoup(piece.own), null);
+        }
+
+        // ---- 1. the inventory ------------------------------------------------------------------
+        report.append("## 1. Every simulated piece, measured\n\n")
+                .append("`pivot` is the piece's bind pivot; `anchor` is the shipped hinge the delta ")
+                .append("turns it about (`YsmPhysicsParts#contactAnchor`); `rest` is the piece's own ")
+                .append("centroid minus its pivot; `lever` is its length; `radius` the collision radius ")
+                .append("the solve is given. `y`, `r` and `deg` are its own surface's extent in height, ")
+                .append("radius from the body axis, and azimuth.\n\n")
+                .append("| bone | joint | parent | pivot | anchor | |anchor-pivot| | rest | lever | ")
+                .append("radius | maxAngle | verts | y | r | deg |\n")
+                .append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n");
+        for (Segment piece : maid.segments) {
+            Map<Long, float[]> cells = cellsOf(samples[piece.index], null, axis);
+            float rMin = Float.MAX_VALUE;
+            float rMax = 0.0F;
+            float degMin = Float.MAX_VALUE;
+            float degMax = -Float.MAX_VALUE;
+            for (Map.Entry<Long, float[]> entry : cells.entrySet()) {
+                rMin = Math.min(rMin, entry.getValue()[0]);
+                rMax = Math.max(rMax, entry.getValue()[1]);
+                float degrees = azimuthDegrees(entry.getKey());
+                degMin = Math.min(degMin, degrees);
+                degMax = Math.max(degMax, degrees);
+            }
+            float yLo = Float.MAX_VALUE;
+            float yHi = -Float.MAX_VALUE;
+            for (Vector3f vertex : piece.own) {
+                yLo = Math.min(yLo, vertex.y);
+                yHi = Math.max(yHi, vertex.y);
+            }
+            Segment parent = piece.parent >= 0 ? maid.segmentByIndex.get(piece.parent) : null;
+            report.append("| `").append(piece.name).append("` | ").append(piece.joint)
+                    .append(" | ").append(parent == null ? "-" : "`" + parent.name + "`")
+                    .append(" | ").append(point(piece.bindPivot))
+                    .append(" | ").append(point(piece.bindAnchor))
+                    .append(" | ").append(fmt(piece.bindAnchor.distance(piece.bindPivot)))
+                    .append(" | ").append(point(piece.bindRest))
+                    .append(" | ").append(fmt(piece.lever))
+                    .append(" | ").append(fmt(piece.radius))
+                    .append(" | ").append(fmt(piece.maxAngle))
+                    .append(" | ").append(piece.own.size())
+                    .append(" | ").append(fmt(yLo)).append("..").append(fmt(yHi))
+                    .append(" | ").append(fmt(rMin)).append("..").append(fmt(rMax))
+                    .append(" | ").append(fmt(degMin)).append("..").append(fmt(degMax))
+                    .append(" |\n");
+        }
+        report.append('\n');
+
+        // ---- 2. the columns ---------------------------------------------------------------------
+        int[] all = new int[maid.segments.size()];
+        for (int i = 0; i < all.length; i++) {
+            all[i] = i;
+        }
+        // The pieces this round reads frame by frame: everything the simulation moves. Read as the
+        // whole simulated set rather than a name family, because the first run of this probe showed
+        // what a name family costs: the six `FFM*` pieces of the front of this skirt are not named
+        // like the twelve columns, and they were the one part of the garment the per-frame crossing
+        // test never looked at.
+        int[] tracked = all;
+        Map<Long, float[]>[] bindCells = cellMaps(samples, null, axis);
+        report.append(concentricLadder(maid, bindCells, tracked, axis));
+
+        // ---- 3. the crossing at bind, every pair ------------------------------------------------
+        List<SurfaceRef> staticSurfaces = staticSurfaces(maid);
+        report.append("The crossing test runs over two layers at once, because they are drawn by two ")
+                .append("different rules: the **simulated** pieces, which the solver moves, and every ")
+                .append("bone of this model that carries visible geometry the simulation does ")
+                .append("**not** move (").append(staticSurfaces.size())
+                .append(" of them) - those follow the pose exactly, so a simulated piece swings ")
+                .append("through a layer that never yields. Testing only the simulated set against ")
+                .append("itself would be blind to exactly that case.\n\n")
+                .append("### The control, before any model number\n\n")
+                .append("The ray-parity test is run on two hand-built boxes first: a small box wholly ")
+                .append("inside a bigger one must report every one of its vertices inside, with the ")
+                .append("depth to the nearest face, and two boxes side by side must report none. ")
+                .append("These are asserted, so \"no pair crosses\" below cannot be a statement about a ")
+                .append("broken test.\n\n");
+        report.append(controlReport(problems));
+        report.append(modelControl(maid, all, axis, problems));
+
+        Solid[] staticSolids = solidsOf(staticSurfaces);
+        List<String> staticNames = namesOf(staticSurfaces);
+        List<SurfaceRef> allSurfaces = trackedSurfaces(maid, all, null);
+        Solid[] bindSolids = concat(solidsOf(allSurfaces), staticSolids);
+        List<String> bindNames = concat(namesOf(allSurfaces), staticNames);
+        int bindTracked = allSurfaces.size();
+        report.append("## 3. The crossing at bind: one piece's vertices inside another's surface\n\n")
+                .append("A **crossing** is measured as geometry, not as a statistic: a piece's own ")
+                .append("vertex that lies **inside** another piece's closed surface, and how deep. ")
+                .append("Inside is decided by parity along three axis rays, and the depth is the ")
+                .append("shortest way back out along the six axis directions - the thickness of the ")
+                .append("other piece at that point. A pair that merely touches has no vertex inside, ")
+                .append("so it does not appear; a pair that crosses has as many as the overlap ")
+                .append("contains. `a in b` and `b in a` are counted separately, because which of the ")
+                .append("two is on the outside is the whole question.\n\n");
+        List<Crossing> bindCrossings = crossingTable(bindSolids, axis);
+        report.append(crossingTableReport(maid, bindNames, bindCrossings, bindTracked, 25));
+        report.append("### The garment's own crossings, at bind\n\n")
+                .append("The same table restricted to pairs where **both** pieces are the garment: ")
+                .append("the twelve three-link columns and the six `FFM*` pieces of its front. ")
+                .append("Everything above this line is hair, ears, mouth parts and limbs - shapes ")
+                .append("that are authored to wrap one another (a cap over a skull, a chain link ")
+                .append("over the link above it), which is why the whole-model table is not the ")
+                .append("table this defect is read from.\n\n");
+        List<Crossing> garmentBind = garmentOnly(bindCrossings, bindNames);
+        report.append(crossingTableReport(maid, bindNames, garmentBind, bindTracked, 30));
+        report.append("Pairs that neither meet nor contain: ")
+                .append(bindNames.size() * (bindNames.size() - 1) / 2 - bindCrossings.size())
+                .append(" of ").append(bindNames.size() * (bindNames.size() - 1) / 2).append(".\n\n");
+
+        // ---- 4. the radial order, for the record ------------------------------------------------
+        float[] score = outerScores(bindCells, all);
+        report.append("## 4. Where each piece sits radially, in the cells it occupies\n\n")
+                .append("`outerShare` is the piece's mean position inside the radial span of every ")
+                .append("cell it occupies - 0 at the innermost surface in that cell, 1 at the ")
+                .append("outermost. It is reported for the record and is **not** the layer assignment: ")
+                .append("a piece that occupies cells no other piece reaches reads 0 or 1 by ")
+                .append("construction, and on this model that is most of them, so the column table in ")
+                .append("section 2 and the crossings in section 3 are what identify the layers.\n\n")
+                .append("| bone | outerShare |\n|---|---|\n");
+        Integer[] boxed = new Integer[all.length];
+        for (int i = 0; i < boxed.length; i++) {
+            boxed[i] = i;
+        }
+        java.util.Arrays.sort(boxed, (a, b) -> Float.compare(score[a], score[b]));
+        for (int index : boxed) {
+            report.append("| `").append(maid.segments.get(index).name).append("` | ")
+                    .append(fmt(score[index])).append(" |\n");
+        }
+        report.append('\n');
+
+        // ---- 5. the crossing in each state ------------------------------------------------------
+        report.append("## 5. The crossing, state by state\n\n")
+                .append("`bind` is the authored geometry with no physics at all. `settled` is the ")
+                .append("production solver run to rest with no pose and no velocity: what the player ")
+                .append("sees standing still. `idle`, `walk` and `sprint` are the production frame ")
+                .append("loop over the gait named, ").append(GAIT_FRAMES).append(" frames of ")
+                .append(fmt(DT)).append(" s each with that gait's own pose and body velocity, ")
+                .append("collision off. Every fortieth frame after the warm-up is measured, over ")
+                .append("every simulated piece and every carried bone at once.\n\n")
+                .append("| state | all pairs: worst | the pair | garment pairs crossing | garment worst | ")
+                .append("the garment pair | largest move of a tracked vertex | frames measured |\n")
+                .append("|---|---|---|---|---|---|---|---|\n");
+        report.append(crossingRow("bind", bindNames, bindCrossings, bindTracked, 0.0F, 1,
+                garmentBind.size()));
+        report.append(trackCrossings("settled", maid, STILL_POSE, null, 300, tracked, staticSolids,
+                staticNames));
+        for (Gait gait : GAITS) {
+            report.append(trackCrossings(gait.name(), maid, new RunPose(maid, gait, leanSign), gait,
+                    GAIT_FRAMES, tracked, staticSolids, staticNames));
+        }
+        report.append('\n');
+
+        // ---- 6. the tail tip and the pieces that must keep swinging -----------------------------
+        report.append("## 6. What each piece does while the body runs\n\n")
+                .append("`own` is the swing the solver gave the piece this frame and `allowed` the ")
+                .append("allowance the chain granted it; **pinned share** is the share of frames whose ")
+                .append("own swing is at that allowance, i.e. the frames the piece spends against its ")
+                .append("clamp rather than on its spring. `tip speed` is the distance the piece's own ")
+                .append("farthest vertex travels per second, and `reversals/s` how often that vertex ")
+                .append("changes direction - together they are what \"swings all over the place\" ")
+                .append("means. `composed` is the angle of the delta the mesh actually receives, ")
+                .append("which includes every ancestor's swing.\n\n");
+        for (Gait gait : GAITS) {
+            RunPose pose = new RunPose(maid, gait, leanSign);
+            List<Trace> traces = tracesOf(maid);
+            runGait(maid, pose, gait, traces, Set.of(), Map.of());
+            report.append(gaitTable(maid, gait, traces));
+        }
+
+        // ---- 7. the candidates for the tail tip, measured ---------------------------------------
+        report.append("## 7. The candidates for the tail tip, measured\n\n")
+                .append("Each candidate re-runs the same sprint, 600 frames of ").append(fmt(DT))
+                .append(" s at ").append(fmt(SPRINT_SPEED)).append(" blocks/s, with the candidate's ")
+                .append("own bones held and/or capped exactly where the override file puts them ")
+                .append("(`state.held` and `state.limit`, the two arrays `YsmPhysicsOverrides")
+                .append("#markOverrides` fills). `cost` is the largest distance any vertex of a ")
+                .append("piece the candidate does **not** name moves against the baseline run: a ")
+                .append("piece under a capped link is expected to move, everything else must not.\n\n")
+                .append("| candidate | piece | own mean | allowed mean | pinned | composed max | ")
+                .append("tip spread | tip speed | tip speed vs baseline |\n")
+                .append("|---|---|---|---|---|---|---|---|\n");
+        RunPose baselinePose = new RunPose(maid, SPRINT, leanSign);
+        List<Trace> baselineTraces = tracesOf(maid);
+        YsmMeshSecondaryMotion.State baseline = runGait(maid, baselinePose, SPRINT, baselineTraces,
+                Set.of(), Map.of());
+        Map<String, Float> baselineTips = tipSpeeds(baselineTraces);
+        for (Candidate candidate : TAIL_CANDIDATES) {
+            if (candidate.label().startsWith("nothing")) {
+                report.append(candidateRows(maid, candidate, baselineTraces, baselineTips, baseline,
+                        baseline, 0.0F));
+                continue;
+            }
+            RunPose pose = new RunPose(maid, SPRINT, leanSign);
+            List<Trace> traces = tracesOf(maid);
+            YsmMeshSecondaryMotion.State state = runGait(maid, pose, SPRINT, traces,
+                    candidate.rigid(), candidate.limitDeg());
+            report.append(candidateRows(maid, candidate, traces, baselineTips, baseline, state,
+                    worstUnnamedMove(maid, candidate, baseline, state)));
+        }
+        report.append('\n');
+
+        Path out = Paths.get("build", "reports", "ysm-skirt-tail-measurement.md");
+        Files.createDirectories(out.getParent());
+        Files.writeString(out, report.toString(), StandardCharsets.UTF_8);
+        System.out.println(report);
+
+        assertTrue(problems.isEmpty(), String.join("\n", problems));
+        assertTrue(Files.size(out) > 0L);
+        assertEquals(0, wrongJoint,
+                "every skirt piece, tail link and reference piece must be drawn on one of the three "
+                        + "upper joints, or the relative-geometry argument does not hold");
+    }
+
+    // ------------------------------------------------------------------
+    // The tail root: this round's measurement
+    // ------------------------------------------------------------------
+
+    /** The override the tip round replaced, and the one it shipped - the two states compared. */
+    private static final Set<String> RIGID_ONLY = Set.of("BaseHair");
+    private static final Map<String, Float> NO_CEILING = Map.of();
+    private static final Map<String, Float> TIP_CEILING_8 =
+            Map.of("tail5", 8.0F, "tail6", 8.0F, "tail7", 8.0F);
+
+    /** The seven links of the reported fox tail, root first. */
+    private static final String[] TAIL_LINKS =
+            {"Tail", "Tail2", "Tail3", "Tail4", "Tail5", "Tail6", "Tail7"};
+
+    /** The four links at the tail's base: the ones the report says still overshoot. */
+    private static final String[] TAIL_ROOTS = {"Tail", "Tail2", "Tail3", "Tail4"};
+
+    /** The pieces the report says look right today, as the calibration for every metric below. */
+    private static final String[] REFERENCE_LINKS = {"LongHair", "LongHair2", "LongLeftHair2",
+            "LongRightHair2", "LeftSideHair", "RightSideHair", "Bangs", "BL3", "RF3", "FL2"};
+
+    /** The transient: how long the body settles before the step, and how long the step is followed. */
+    private static final int STEP_SETTLE_FRAMES = 300;
+    private static final int STEP_TAIL_FRAMES = 30;
+    private static final int STEP_FRAMES = 240;
+
+    /** The candidates for the root's problem: the shipped file, and the narrowest ways out of it. */
+    private static final Candidate[] ROOT_CANDIDATES = {
+            new Candidate("before: no ceilings at all", RIGID_ONLY, NO_CEILING),
+            new Candidate("after: limitDeg Tail5..7 = 8", RIGID_ONLY, TIP_CEILING_8),
+            new Candidate("shipped + limitDeg Tail = 14", RIGID_ONLY, tailAndTips(14.0F)),
+            new Candidate("shipped + limitDeg Tail = 12", RIGID_ONLY, tailAndTips(12.0F)),
+            new Candidate("shipped + limitDeg Tail = 10", RIGID_ONLY, tailAndTips(10.0F)),
+            new Candidate("shipped + limitDeg Tail = 8", RIGID_ONLY, tailAndTips(8.0F)),
+            new Candidate("shipped + limitDeg Tail..2 = 12", RIGID_ONLY, rootsAndTips(12.0F, 2)),
+            new Candidate("shipped + limitDeg Tail..3 = 8", RIGID_ONLY, rootsAndTips(8.0F, 3))};
+
+    /** The shipped file's three tip ceilings, plus one on the root link. */
+    private static Map<String, Float> tailAndTips(float tail) {
+        return Map.of("tail", tail, "tail5", 8.0F, "tail6", 8.0F, "tail7", 8.0F);
+    }
+
+    /** The shipped file's three tip ceilings, plus one on the first {@code count} links. */
+    private static Map<String, Float> rootsAndTips(float degrees, int count) {
+        Map<String, Float> out = new LinkedHashMap<>();
+        String[] names = {"tail", "tail2", "tail3", "tail4"};
+        for (int i = 0; i < count; i++) {
+            out.put(names[i], degrees);
+        }
+        out.put("tail5", 8.0F);
+        out.put("tail6", 8.0F);
+        out.put("tail7", 8.0F);
+        return Map.copyOf(out);
+    }
+
+    /** One damping candidate: a ratio for the pieces named, with the shipped ceilings in force. */
+    private record DampingCandidate(String label, Map<String, Float> ratio) {}
+
+    private static final DampingCandidate[] DAMPING_CANDIDATES = {
+            new DampingCandidate("damping 0.50 (control, looser than shipped)",
+                    Map.of("tail", 0.5F, "tail2", 0.5F, "tail3", 0.5F)),
+            new DampingCandidate("damping 0.81 (shipped)", Map.of()),
+            new DampingCandidate("damping Tail..3 = 1.00",
+                    Map.of("tail", 1.0F, "tail2", 1.0F, "tail3", 1.0F)),
+            new DampingCandidate("damping Tail..7 = 1.00",
+                    Map.of("tail", 1.0F, "tail2", 1.0F, "tail3", 1.0F, "tail4", 1.0F,
+                            "tail5", 1.0F, "tail6", 1.0F, "tail7", 1.0F))};
+
+    /**
+     * The tail root, before and after the tip ceilings: the prime hypothesis, the overshoot as a
+     * transient, and the candidates for the root's own problem.
+     *
+     * <p>There are three questions and they are answered in this order, because the second one is
+     * only worth asking of the state the first one leaves standing.
+     *
+     * <ol>
+     *   <li><b>Did the root links absorb the bend the three tip ceilings removed?</b> The two states
+     *       differ in the three ceilings and in nothing else; if the root's own swing, allowance,
+     *       pinned share or far-end travel moved at all, this section says by how much.</li>
+     *   <li><b>What is the overshoot, as a transient property?</b> Not the amplitude: a body that
+     *       starts moving and then stops, with the pose frozen so nothing but the step is driving the
+     *       chain, and per link the distance its own far vertex travels past where it comes to rest -
+     *       as a fraction of the step, with how many times it crosses the rest point and how long it
+     *       takes to stay inside five per cent of the step. The metric is calibrated by running it on
+     *       the pieces the report says look right, and the assertions at the end fail if it cannot
+     *       discriminate at all.</li>
+     *   <li><b>Is the root link's own rest and anchor wrong?</b> Its pivot, the contact patch the
+     *       delta turns it about, its rest direction and the angles between them and the chain, read
+     *       beside the same numbers for the pieces that look right.</li>
+     * </ol>
+     */
+    @Test
+    void theTailRootBeforeAndAfterTheTipCeilings() throws Exception {
+        Path pack = convertedPackRoot();
+        assumeTrue(pack != null, "set -D" + YsmModelPackage.CONFIG_ROOT_PROPERTY
+                + "=<.../config/yes_steve_model> (or " + YsmModelPackage.CONFIG_ROOT_ENV
+                + ") to run this against a real install");
+
+        Rig maid = Rig.load(pack, MAID[1], LOGGED_MAID_SIMULATED);
+        StringBuilder report = new StringBuilder();
+        report.append("# The tail root: before and after the tip ceilings\n\n")
+                .append("Model `").append(maid.modelId).append("`, ").append(maid.segments.size())
+                .append(" simulated pieces. **before** is the override file the tip round replaced, ")
+                .append("`{\"rigid\":[\"BaseHair\"]}` with no `limitDeg`; **after** is the shipped ")
+                .append("file, the same rigid bone and `limitDeg` on `Tail5`, `Tail6`, `Tail7` at 8 ")
+                .append("degrees. The two runs differ in those three ceilings and nothing else, so ")
+                .append("every difference below is attributable to them.\n\n");
+        List<String> problems = new ArrayList<>();
+        String problem = calibrateTheMatrixConvention(report);
+        if (problem != null) {
+            problems.add(problem);
+        }
+        problem = calibrateArmatureAgainstTheClientsBindLine(maid, report);
+        if (problem != null) {
+            problems.add(problem);
+        }
+
+        Vector3f faceMoved = YsmMeshSecondaryMotion.transformDirection(
+                about(maid.jointOrigin(JointTable.TORSO), 10.0F, 0.0F), maid.face, new Vector3f());
+        float leanSign = faceMoved.y <= maid.face.y ? 1.0F : -1.0F;
+
+        // ---- 1. the sprint, every candidate ------------------------------------------------------
+        String[] all = allNames(maid);
+        String[] followed = join(TAIL_LINKS, REFERENCE_LINKS);
+        List<Trace> baselineTraces = tracesNamed(maid, all);
+        YsmMeshSecondaryMotion.State baselineState = runGait(maid, new RunPose(maid, SPRINT, leanSign),
+                SPRINT, baselineTraces, RIGID_ONLY, NO_CEILING);
+        List<List<Trace>> runs = new ArrayList<>();
+        List<Float> costs = new ArrayList<>();
+        for (Candidate candidate : ROOT_CANDIDATES) {
+            if (candidate.label().startsWith("before")) {
+                runs.add(baselineTraces);
+                costs.add(0.0F);
+                continue;
+            }
+            List<Trace> traces = tracesNamed(maid, all);
+            runGait(maid, new RunPose(maid, SPRINT, leanSign), SPRINT, traces,
+                    candidate.rigid(), candidate.limitDeg());
+            runs.add(traces);
+            costs.add(worstUnnamedDifference(maid, candidate, baselineTraces, traces));
+        }
+
+        report.append("## 1. Every link at sprint, before and after the tip ceilings\n\n")
+                .append("The production frame loop, ").append(GAIT_FRAMES).append(" frames of ")
+                .append(fmt(DT)).append(" s at ").append(fmt(SPRINT_SPEED))
+                .append(" blocks/s, the first ").append(GAIT_WARMUP)
+                .append(" frames skipped. `own` is the swing the solver gave the link and `allowed` ")
+                .append("the allowance the chain - and now the file's ceiling - granted it; ")
+                .append("**pinned** is the share of frames spent against that limit, where a pinned ")
+                .append("link has no spring left to give back. `whole` is the composed delta the mesh ")
+                .append("receives, `travel` the distance the link's own far vertex covers per second, ")
+                .append("`spread` the size of the region it swept.\n\n")
+                .append("| link | own before | own after | allowed before | allowed after | pinned ")
+                .append("before | pinned after | drawn before | drawn after | clipped before | ")
+                .append("clipped after | clip max | whole before | whole after | travel before | ")
+                .append("travel after |\n")
+                .append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n");
+        for (String name : followed) {
+            Trace before = traceNamed(runs.get(0), name);
+            Trace after = traceNamed(runs.get(1), name);
+            if (before == null || after == null) {
+                continue;
+            }
+            report.append("| `").append(name).append("` | ")
+                    .append(fmt(before.ownMean())).append(" | ").append(fmt(after.ownMean()))
+                    .append(" | ").append(fmt(before.allowedMean())).append(" | ")
+                    .append(fmt(after.allowedMean()))
+                    .append(" | ").append(fmt(before.saturatedShare())).append(" | ")
+                    .append(fmt(after.saturatedShare()))
+                    .append(" | ").append(fmt(before.drawnRange())).append(" | ")
+                    .append(fmt(after.drawnRange()))
+                    .append(" | ").append(fmt(before.clippedShare())).append(" | ")
+                    .append(fmt(after.clippedShare()))
+                    .append(" | ").append(fmt(Math.max(before.worstClip(), after.worstClip())))
+                    .append(" | ").append(fmt(before.composedMax())).append(" | ")
+                    .append(fmt(after.composedMax()))
+                    .append(" | ").append(fmt(before.tipSpeed())).append(" | ")
+                    .append(fmt(after.tipSpeed()))
+                    .append(" |\n");
+        }
+        report.append("\n`drawn` is how far the link's own **drawn** swing travels between its ")
+                .append("extremes over the run and `clipped` the share of frames in which the drawn ")
+                .append("swing is held below the solver's own by more than a tenth of a degree - the ")
+                .append("allowance is a display clamp, so a link that is never clipped is a link whose ")
+                .append("physics fits inside its budget. `clip max` is the widest that hold gets, in ")
+                .append("degrees. A link with `drawn` near zero is not a link that is still: it is a ")
+                .append("link drawn at a fixed angle in every frame.\n\n");
+
+        report.append("\n### Did the root links absorb the bend?\n\n")
+                .append("The four root links, before and after, in the units the question is asked ")
+                .append("in:\n\n")
+                .append("| root link | own before | own after | change | travel before | travel after ")
+                .append("| change | pinned before | pinned after |\n")
+                .append("|---|---|---|---|---|---|---|---|---|\n");
+        float worstOwnChange = 0.0F;
+        float worstTravelChange = 0.0F;
+        float rootOwnBefore = 0.0F;
+        float rootOwnAfter = 0.0F;
+        for (String name : TAIL_ROOTS) {
+            Trace before = traceNamed(runs.get(0), name);
+            Trace after = traceNamed(runs.get(1), name);
+            if (before == null || after == null) {
+                continue;
+            }
+            float ownChange = after.ownMean() - before.ownMean();
+            float travelChange = after.tipSpeed() - before.tipSpeed();
+            worstOwnChange = Math.max(worstOwnChange, Math.abs(ownChange));
+            worstTravelChange = Math.max(worstTravelChange, Math.abs(travelChange));
+            rootOwnBefore += before.ownMean();
+            rootOwnAfter += after.ownMean();
+            report.append("| `").append(name).append("` | ").append(fmt(before.ownMean()))
+                    .append(" | ").append(fmt(after.ownMean())).append(" | ").append(signed(ownChange))
+                    .append(" | ").append(fmt(before.tipSpeed())).append(" | ")
+                    .append(fmt(after.tipSpeed())).append(" | ").append(signed(travelChange))
+                    .append(" | ").append(fmt(before.saturatedShare())).append(" | ")
+                    .append(fmt(after.saturatedShare())).append(" |\n");
+        }
+        report.append("\nThe largest change any root link's own swing shows is ")
+                .append(signed(worstOwnChange)).append(" degrees and the largest change in its ")
+                .append("far-end travel is ").append(signed(worstTravelChange))
+                .append(" blocks/s; the four roots together move from ").append(fmt(rootOwnBefore))
+                .append(" to ").append(fmt(rootOwnAfter)).append(" degrees of summed own swing.\n\n")
+                .append("The shipped ceilings' blast radius, measured as the largest distance any ")
+                .append("vertex of a piece they do not name - and that does not hang under one they ")
+                .append("do - is in a different place at any of the ").append(GAIT_FRAMES - GAIT_WARMUP)
+                .append(" measured frames: ").append(fmt(costs.get(1))).append(" blocks.\n\n");
+
+        // ---- 2. the overshoot, as a transient ----------------------------------------------------
+        report.append("## 2. The overshoot, measured as a transient\n\n")
+                .append("A transient and not an amplitude, because \"overshoot\" is a property of a ")
+                .append("response: the body settles in one state for ").append(STEP_SETTLE_FRAMES)
+                .append(" frames with the **pose frozen** - the sprint gait's phase 0, held, so the ")
+                .append("only thing that changes at the step is the body's velocity - and then the ")
+                .append("velocity is stepped. **stop** is ").append(fmt(SPRINT_SPEED))
+                .append(" -> 0 blocks/s and **start** is 0 -> ").append(fmt(SPRINT_SPEED))
+                .append("; each is followed for ").append(STEP_FRAMES).append(" frames of ")
+                .append(fmt(DT)).append(" s.\n\n")
+                .append("Per link, with `P0` the mean position of its own far vertex over the last ")
+                .append(STEP_TAIL_FRAMES).append(" frames before the step, `Pinf` the same over the ")
+                .append("last ").append(STEP_TAIL_FRAMES).append(" frames after it, and ")
+                .append("`d(t) = (P(t) - Pinf)` projected on `P0 - Pinf`:\n\n")
+                .append("- **step**: `|P0 - Pinf|`, blocks, what the link is asked to travel;\n")
+                .append("- **overshoot**: `max(0, max_t -d(t)) / step` - how far past where it comes ")
+                .append("to rest it goes *along the line it travelled*, as a fraction of the step;\n")
+                .append("- **reach**: the same question asked without a direction - ")
+                .append("`max(0, max_t |P(t) - Pinf| - step) / step`, so an excursion that leaves the ")
+                .append("line between the two settled places still counts;\n")
+                .append("- **own before / own settled / own peak**: the link's own clamped swing at ")
+                .append("the two ends of the step and at its largest during it; the ratio below is ")
+                .append("how far the swing overshoots where it ends up, and `own raw peak` is the same ")
+                .append("peak read from the solver's own state, before the allowance is applied - the ")
+                .append("two differ exactly when the link is drawn held on its stop;\n")
+                .append("- **clipped**: the share of the step's frames in which the drawn swing is held ")
+                .append("below the solver's own by more than a tenth of a degree;\n")
+                .append("- **5% time**: the last frame at which `|d(t)|` exceeds five per cent of ")
+                .append("the step - the damping time;\n")
+                .append("- **travel**: the path length the far vertex covers during the step, ")
+                .append("blocks, which is what the eye tracks.\n\n");
+
+        Step stopBefore = runStep(maid, leanSign, 0.0F, SPRINT_SPEED, 0.0F, RIGID_ONLY, NO_CEILING);
+        Step stopAfter = runStep(maid, leanSign, 0.0F, SPRINT_SPEED, 0.0F, RIGID_ONLY, TIP_CEILING_8);
+        Step startBefore = runStep(maid, leanSign, 0.0F, 0.0F, SPRINT_SPEED, RIGID_ONLY, NO_CEILING);
+        Step startAfter = runStep(maid, leanSign, 0.0F, 0.0F, SPRINT_SPEED, RIGID_ONLY, TIP_CEILING_8);
+        report.append(stepReport("stop, before", stopBefore));
+        report.append(stepReport("stop, after", stopAfter));
+        report.append(stepReport("start, before", startBefore));
+        report.append(stepReport("start, after", startAfter));
+        report.append(stepComparison("stop", stopBefore, stopAfter));
+        report.append(stepComparison("start", startBefore, startAfter));
+
+        float worstOvershoot = 0.0F;
+        float leastOvershoot = Float.MAX_VALUE;
+        for (Step step : new Step[]{stopBefore, stopAfter, startBefore, startAfter}) {
+            for (StepTrace trace : step.traces) {
+                float value = reachOf(trace);
+                worstOvershoot = Math.max(worstOvershoot, value);
+                leastOvershoot = Math.min(leastOvershoot, value);
+            }
+        }
+        // The mechanism this round is about, as a number the test can fail on: in the shipped state
+        // some of these links are drawn held on their stop in every frame and some are not. If that
+        // is not true of this model, the diagnosis is wrong and everything above is about something
+        // else.
+        float worstClipShare = 0.0F;
+        float leastClipShare = 1.0F;
+        for (String name : followed) {
+            Trace trace = traceNamed(runs.get(0), name);
+            if (trace == null) {
+                continue;
+            }
+            worstClipShare = Math.max(worstClipShare, trace.clippedShare());
+            leastClipShare = Math.min(leastClipShare, trace.clippedShare());
+        }
+        report.append("Over all four transients and every link followed, the direction-free ")
+                .append("overshoot runs from ").append(fmt3(leastOvershoot)).append(" to ")
+                .append(fmt3(worstOvershoot)).append(" of the step, and over the sprint the share ")
+                .append("of frames a followed link is drawn held on its stop runs from ")
+                .append(fmt(leastClipShare)).append(" to ").append(fmt(worstClipShare))
+                .append(".\n\n");
+        if (!(worstOvershoot > 0.05F) || !(leastOvershoot < 0.05F)) {
+            problems.add("the transient overshoot does not discriminate on this model: range "
+                    + fmt3(leastOvershoot) + ".." + fmt3(worstOvershoot));
+        }
+        if (!(worstClipShare > 0.5F) || !(leastClipShare < 0.5F)) {
+            problems.add("no link of this model is drawn held on its stop while another is free: "
+                    + "clipped share range " + fmt(leastClipShare) + ".." + fmt(worstClipShare)
+                    + ", so the mechanism this round measured is not present");
+        }
+
+        // ---- 3. the root's own rest and anchor ---------------------------------------------------
+        report.append("## 3. The root link's own rest and anchor\n\n")
+                .append("`rest` is the piece's centroid minus its pivot, which is the direction the ")
+                .append("solver's spring pulls the piece back to; `anchor` is the contact patch the ")
+                .append("delta turns it about. `down` is the angle from `rest` to the world's own ")
+                .append("downward direction (the solver's gravity target), `to parent` the angle to ")
+                .append("the simulated link above it (`-` for a root link), `to child` the angle to ")
+                .append("the link below it, and `anchor vs rest` whether the anchor is on the same ")
+                .append("side of the pivot as the mass (`+`) or the opposite one (`-`, which turns ")
+                .append("the piece about a point its mass is not on).\n\n")
+                .append("| link | |rest| (lever) | pivot | anchor | |anchor-pivot| | rest | down | ")
+                .append("to parent | to child | anchor vs rest |\n")
+                .append("|---|---|---|---|---|---|---|---|---|---|---|\n");
+        for (String name : followed) {
+            Segment piece = maid.segmentNamed(name);
+            if (piece == null) {
+                continue;
+            }
+            Segment parent = piece.parent >= 0 ? maid.segmentByIndex.get(piece.parent) : null;
+            List<Segment> children = children(maid, piece);
+            Vector3f toParent = parent == null ? null
+                    : new Vector3f(parent.bindPivot).sub(piece.bindPivot);
+            Vector3f toChild = children.isEmpty() ? null
+                    : new Vector3f(children.get(0).bindPivot).sub(piece.bindPivot);
+            Vector3f toAnchor = new Vector3f(piece.bindAnchor).sub(piece.bindPivot);
+            float side = piece.bindRest.dot(toAnchor);
+            report.append("| `").append(name).append("` | ").append(fmt(piece.lever))
+                    .append(" | ").append(point(piece.bindPivot))
+                    .append(" | ").append(point(piece.bindAnchor))
+                    .append(" | ").append(fmt(toAnchor.length()))
+                    .append(" | ").append(point(piece.bindRest))
+                    .append(" | ").append(fmt(angleBetweenDegrees(piece.bindRest, DOWN)))
+                    .append(" | ").append(toParent == null ? "-"
+                            : fmt(angleBetweenDegrees(piece.bindRest, toParent)))
+                    .append(" | ").append(toChild == null ? "-"
+                            : fmt(angleBetweenDegrees(piece.bindRest, toChild)))
+                    .append(" | ").append(Math.abs(side) < 1.0E-6F ? "0" : (side > 0.0F ? "+" : "-"))
+                    .append(" |\n");
+        }
+        report.append('\n');
+
+        // ---- 4. the candidates ------------------------------------------------------------------
+        report.append("## 4. The candidates for the root, measured\n\n")
+                .append("Every candidate over the same sprint, ").append(GAIT_FRAMES)
+                .append(" frames. `cost` is the largest distance any vertex of a piece the ")
+                .append("candidate does not name - and that does not hang under one it does - is in ")
+                .append("a different place from the before run at any measured frame.\n\n")
+                .append("| candidate | link | own | allowed | pinned | drawn | clipped | whole | ")
+                .append("travel | cost |\n")
+                .append("|---|---|---|---|---|---|---|---|---|---|\n");
+        for (int i = 0; i < ROOT_CANDIDATES.length; i++) {
+            Candidate candidate = ROOT_CANDIDATES[i];
+            for (String name : join(TAIL_LINKS, REFERENCE_LINKS)) {
+                Trace trace = traceNamed(runs.get(i), name);
+                if (trace == null) {
+                    continue;
+                }
+                report.append("| ").append(candidate.label()).append(" | `").append(name)
+                        .append("` | ").append(fmt(trace.ownMean()))
+                        .append(" | ").append(fmt(trace.allowedMean()))
+                        .append(" | ").append(fmt(trace.saturatedShare()))
+                        .append(" | ").append(fmt(trace.drawnRange()))
+                        .append(" | ").append(fmt(trace.clippedShare()))
+                        .append(" | ").append(fmt(trace.composedMax()))
+                        .append(" | ").append(fmt(trace.tipSpeed()))
+                        .append(" | ").append(fmt(costs.get(i))).append(" |\n");
+            }
+        }
+        report.append('\n');
+
+        // The shortlist's transients: the four root ceilings and the narrowest multi-link one, which
+        // is what decides whether a ceiling on the bone the user names bounds the overshoot.
+        for (Candidate candidate : ROOT_CANDIDATES) {
+            if (!candidate.label().startsWith("shipped + limitDeg")) {
+                continue;
+            }
+            Step stop = runStep(maid, leanSign, 0.0F, SPRINT_SPEED, 0.0F, candidate.rigid(),
+                    candidate.limitDeg());
+            report.append(stepReport("stop, " + candidate.label(), stop));
+        }
+        report.append('\n');
+
+        // ---- the third key, measured before it is designed --------------------------------------
+        report.append("### The third key: per-bone damping, measured before it is designed\n\n")
+                .append("The solver takes a damping ratio per piece - ")
+                .append(fmt((float) YsmPhysicsTuning.DEFAULTS.dampingRatio()))
+                .append(" for every piece of every model today - and clamps it to 0..1. The rows ")
+                .append("below re-run the sprint with the **shipped** ceilings in force and a ")
+                .append("different ratio for the tail's links: 0.50 is the negative control (if more ")
+                .append("damping helps, less must hurt), and 1.00 is as much as the solver accepts. ")
+                .append("The transient is the same stop step as above.\n\n")
+                .append("| damping | link | own | drawn | clipped | whole | travel | stop ")
+                .append("overshoot | stop reach | stop travel |\n")
+                .append("|---|---|---|---|---|---|---|---|---|---|\n");
+        for (DampingCandidate candidate : DAMPING_CANDIDATES) {
+            List<Trace> traces = tracesNamed(maid, all);
+            runGait(maid, new RunPose(maid, SPRINT, leanSign), SPRINT, traces, RIGID_ONLY,
+                    TIP_CEILING_8, candidate.ratio());
+            Step stop = runStep(maid, leanSign, 0.0F, SPRINT_SPEED, 0.0F, RIGID_ONLY, TIP_CEILING_8,
+                    candidate.ratio());
+            for (String name : TAIL_LINKS) {
+                Trace trace = traceNamed(traces, name);
+                StepTrace transientTrace = null;
+                for (StepTrace candidateTrace : stop.traces) {
+                    if (candidateTrace.piece.name.equals(name)) {
+                        transientTrace = candidateTrace;
+                    }
+                }
+                if (trace == null || transientTrace == null) {
+                    continue;
+                }
+                report.append("| ").append(candidate.label()).append(" | `").append(name)
+                        .append("` | ").append(fmt(trace.ownMean()))
+                        .append(" | ").append(fmt(trace.drawnRange()))
+                        .append(" | ").append(fmt(trace.clippedShare()))
+                        .append(" | ").append(fmt(trace.composedMax()))
+                        .append(" | ").append(fmt(trace.tipSpeed()))
+                        .append(" | ").append(fmt3(overshootOf(transientTrace)))
+                        .append(" | ").append(fmt3(reachOf(transientTrace)))
+                        .append(" | ").append(fmt(travelOf(transientTrace)))
+                        .append(" |\n");
+            }
+        }
+        report.append('\n');
+
+        Path out = Paths.get("build", "reports", "ysm-tail-root-measurement.md");
+        Files.createDirectories(out.getParent());
+        Files.writeString(out, report.toString(), StandardCharsets.UTF_8);
+        System.out.println("YSM-EF probe wrote " + out.toAbsolutePath() + " ("
+                + report.length() + " chars)");
+
+        assertTrue(problems.isEmpty(), String.join("\n", problems));
+        assertEquals(0, problems.size());
+    }
+
+    // ---- the step transient --------------------------------------------------------------------
+
+    /** One link followed through a step: its own far vertex frame by frame, and its own swing. */
+    private static final class StepTrace {
+        final Segment piece;
+        final Vector3f vertex;
+        final List<Vector3f> settled = new ArrayList<>();
+        final List<Vector3f> path = new ArrayList<>();
+        final List<Float> own = new ArrayList<>();
+        final List<Float> raw = new ArrayList<>();
+        final List<Float> ownSettled = new ArrayList<>();
+
+        StepTrace(Segment piece) {
+            this.piece = piece;
+            this.vertex = farthestVertex(piece.own, piece.bindPivot);
+        }
+
+        void settle(YsmMeshSecondaryMotion.State state) {
+            settled.add(YsmMeshSecondaryMotion.transformPoint(state.deltas[piece.index], vertex,
+                    new Vector3f()));
+            ownSettled.add(state.lastDegrees[piece.index]);
+        }
+
+        void frame(YsmMeshSecondaryMotion.State state) {
+            path.add(YsmMeshSecondaryMotion.transformPoint(state.deltas[piece.index], vertex,
+                    new Vector3f()));
+            own.add(state.lastDegrees[piece.index]);
+            raw.add((float) Math.toDegrees(state.states[piece.index].lastAngle));
+        }
+    }
+
+    /** One step run: the traces, each holding where the link was and where it went. */
+    private static final class Step {
+        final float fromSpeed;
+        final float toSpeed;
+        final List<StepTrace> traces;
+
+        Step(float fromSpeed, float toSpeed, List<StepTrace> traces) {
+            this.fromSpeed = fromSpeed;
+            this.toSpeed = toSpeed;
+            this.traces = traces;
+        }
+    }
+
+    /**
+     * A step: settle at one body velocity with the pose frozen, then step the velocity and follow.
+     *
+     * <p>The pose is frozen for both halves - the same matrices every frame - so the only input that
+     * changes at the step is the body's velocity, and what is measured is the chain's own response to
+     * it rather than a gait cycle's drive.
+     */
+    private static Step runStep(Rig rig, float leanSign, float phase, float fromSpeed, float toSpeed,
+                                Set<String> rigid, Map<String, Float> ceilings) {
+        return runStep(rig, leanSign, phase, fromSpeed, toSpeed, rigid, ceilings, Map.of());
+    }
+
+    /**
+     * A step: settle at one body velocity with the pose frozen, then step the velocity and follow.
+     *
+     * <p>The pose is frozen for both halves - the same matrices every frame - so the only input that
+     * changes at the step is the body's velocity, and what is measured is the chain's own response to
+     * it rather than a gait cycle's drive.
+     */
+    private static Step runStep(Rig rig, float leanSign, float phase, float fromSpeed, float toSpeed,
+                                Set<String> rigid, Map<String, Float> ceilings,
+                                Map<String, Float> damping) {
+        YsmPhysicsParts.Model parts = productionModel(rig, damping);
+        YsmMeshSecondaryMotion.State state = new YsmMeshSecondaryMotion.State(
+                parts, null, (float) YsmPhysicsTuning.DEFAULTS.maxAngle);
+        for (int i = 0; i < parts.segments().length; i++) {
+            String name = parts.segments()[i].boneName();
+            state.held[i] = rigid.contains(name);
+            Float degrees = name == null ? null : ceilings.get(name.toLowerCase(Locale.ROOT));
+            if (degrees != null) {
+                state.limit[i] = (float) Math.toRadians(degrees);
+            }
+        }
+        RunPose pose = new RunPose(rig, SPRINT, leanSign);
+        pose.at(phase);
+        List<StepTrace> traces = new ArrayList<>();
+        for (String name : join(TAIL_LINKS, REFERENCE_LINKS)) {
+            Segment piece = rig.segmentNamed(name);
+            if (piece != null) {
+                traces.add(new StepTrace(piece));
+            }
+        }
+        Vector3f velocity = new Vector3f(0.0F, 0.0F, -fromSpeed);
+        for (int frame = 0; frame < STEP_SETTLE_FRAMES; frame++) {
+            YsmMeshSecondaryMotion.simulate(state, pose, DT, velocity, NO_TURN,
+                    YsmDynamicBoneSolver.NO_COLLIDERS);
+            if (frame >= STEP_SETTLE_FRAMES - STEP_TAIL_FRAMES) {
+                for (StepTrace trace : traces) {
+                    trace.settle(state);
+                }
+            }
+        }
+        velocity = new Vector3f(0.0F, 0.0F, -toSpeed);
+        for (int frame = 0; frame < STEP_FRAMES; frame++) {
+            YsmMeshSecondaryMotion.simulate(state, pose, DT, velocity, NO_TURN,
+                    YsmDynamicBoneSolver.NO_COLLIDERS);
+            for (StepTrace trace : traces) {
+                trace.frame(state);
+            }
+        }
+        return new Step(fromSpeed, toSpeed, traces);
+    }
+
+    /** Every link's transient numbers, as a table. */
+    private static String stepReport(String label, Step step) {
+        StringBuilder out = new StringBuilder();
+        out.append("### `").append(label).append("`\n\n")
+                .append("| link | step | overshoot | reach | own before | own settled | own peak | ")
+                .append("own peak/settled | own raw peak | clipped | 5% time | travel |\n")
+                .append("|---|---|---|---|---|---|---|---|---|---|---|---|\n");
+        for (StepTrace trace : step.traces) {
+            float stepSize = stepOf(trace);
+            float overshoot = overshootOf(trace);
+            float ownPeak = 0.0F;
+            for (float value : trace.own) {
+                ownPeak = Math.max(ownPeak, value);
+            }
+            float rawPeak = 0.0F;
+            for (float value : trace.raw) {
+                rawPeak = Math.max(rawPeak, value);
+            }
+            int clipped = 0;
+            for (int i = 0; i < trace.own.size() && i < trace.raw.size(); i++) {
+                if (trace.raw.get(i) - trace.own.get(i) > 0.1F) {
+                    clipped++;
+                }
+            }
+            float ownBefore = tailMean(trace.ownSettled, STEP_TAIL_FRAMES);
+            float ownSettled = tailMean(trace.own, STEP_TAIL_FRAMES);
+            out.append("| `").append(trace.piece.name).append("` | ")
+                    .append(stepSize > 1.0E-4F ? fmt(stepSize) : "-").append(" | ")
+                    .append(stepSize > 1.0E-4F ? fmt3(overshoot) : "-").append(" | ")
+                    .append(stepSize > 1.0E-4F ? fmt3(reachOf(trace)) : "-")
+                    .append(" | ").append(fmt(ownBefore))
+                    .append(" | ").append(fmt(ownSettled))
+                    .append(" | ").append(fmt(ownPeak))
+                    .append(" | ").append(ownSettled > 0.1F ? fmt(ownPeak / ownSettled) : "-")
+                    .append(" | ").append(fmt(rawPeak))
+                    .append(" | ").append(trace.own.isEmpty() ? "0.000"
+                            : fmt((float) clipped / trace.own.size()))
+                    .append(" | ").append(fmt(setttlingTimeOf(trace))).append(" s")
+                    .append(" | ").append(fmt(travelOf(trace)))
+                    .append(" |\n");
+        }
+        return out.append('\n').toString();
+    }
+
+    /**
+     * The overshoot read without a direction: how much further from its rest the link ever is than
+     * where it started.
+     *
+     * <p>The projection above can only see an overshoot along the line between the two settled
+     * places; a link that swings out and back around a turning axis - which is what a pendulum under
+     * a moving pivot does - moves off that line and the projection reads nothing. This reads the
+     * distance from the rest point itself, so any excursion past it counts, whichever way it goes.
+     */
+    private static float reachOf(StepTrace trace) {
+        float stepSize = stepOf(trace);
+        if (!(stepSize > 1.0E-4F)) {
+            return 0.0F;
+        }
+        Vector3f rest = restPoint(trace);
+        float worst = 0.0F;
+        for (Vector3f at : trace.path) {
+            worst = Math.max(worst, at.distance(rest));
+        }
+        return Math.max(0.0F, worst - stepSize) / stepSize;
+    }
+
+    /** The same numbers, before against after, for the links that changed most. */
+    private static String stepComparison(String label, Step before, Step after) {
+        StringBuilder out = new StringBuilder();
+        out.append("### `").append(label).append("`: before against after\n\n")
+                .append("| link | overshoot before | overshoot after | reach before | reach after | ")
+                .append("own peak before | own peak after | 5% time before | 5% time after | travel ")
+                .append("before | travel after |\n")
+                .append("|---|---|---|---|---|---|---|---|---|---|\n");
+        for (int i = 0; i < before.traces.size() && i < after.traces.size(); i++) {
+            StepTrace b = before.traces.get(i);
+            StepTrace a = after.traces.get(i);
+            if (!b.piece.name.equals(a.piece.name)) {
+                continue;
+            }
+            float peakBefore = 0.0F;
+            for (float value : b.own) {
+                peakBefore = Math.max(peakBefore, value);
+            }
+            float peakAfter = 0.0F;
+            for (float value : a.own) {
+                peakAfter = Math.max(peakAfter, value);
+            }
+            out.append("| `").append(b.piece.name).append("` | ").append(fmt3(overshootOf(b)))
+                    .append(" | ").append(fmt3(overshootOf(a)))
+                    .append(" | ").append(fmt3(reachOf(b))).append(" | ").append(fmt3(reachOf(a)))
+                    .append(" | ").append(fmt(peakBefore)).append(" | ").append(fmt(peakAfter))
+                    .append(" | ").append(fmt(setttlingTimeOf(b))).append(" s | ")
+                    .append(fmt(setttlingTimeOf(a))).append(" s")
+                    .append(" | ").append(fmt(travelOf(b))).append(" | ").append(fmt(travelOf(a)))
+                    .append(" |\n");
+        }
+        return out.append('\n').toString();
+    }
+
+    /** The step the link is asked to travel: how far its rest point moves. */
+    private static float stepOf(StepTrace trace) {
+        return new Vector3f(meanPoint(trace.settled)).sub(restPoint(trace)).length();
+    }
+
+    /** Where the link comes to rest: the mean of the last frames of the step. */
+    private static Vector3f restPoint(StepTrace trace) {
+        int from = Math.max(0, trace.path.size() - STEP_TAIL_FRAMES);
+        return meanPoint(trace.path.subList(from, trace.path.size()));
+    }
+
+    /**
+     * How far past its rest the link travels, as a fraction of the step: the overshoot.
+     *
+     * <p>Zero when the link approaches its rest from one side and stops there, which is what a
+     * critically damped piece does; the value is the extreme of the projection of the path beyond
+     * the rest point, divided by the size of the step, so it is the classic overshoot ratio.
+     */
+    private static float overshootOf(StepTrace trace) {
+        float stepSize = stepOf(trace);
+        if (!(stepSize > 1.0E-4F)) {
+            return 0.0F;
+        }
+        Vector3f direction = new Vector3f(meanPoint(trace.settled)).sub(restPoint(trace)).div(stepSize);
+        Vector3f rest = restPoint(trace);
+        float worst = 0.0F;
+        for (Vector3f at : trace.path) {
+            worst = Math.max(worst, -new Vector3f(at).sub(rest).dot(direction));
+        }
+        return worst / stepSize;
+    }
+
+    /** How many times the link passes through its rest point, with a two per cent deadband. */
+    private static int passesOf(StepTrace trace) {
+        float stepSize = stepOf(trace);
+        if (!(stepSize > 1.0E-4F)) {
+            return 0;
+        }
+        Vector3f direction = new Vector3f(meanPoint(trace.settled)).sub(restPoint(trace)).div(stepSize);
+        Vector3f rest = restPoint(trace);
+        int passes = 0;
+        int sign = 0;
+        for (Vector3f at : trace.path) {
+            float d = new Vector3f(at).sub(rest).dot(direction);
+            int now = d > 0.02F * stepSize ? 1 : (d < -0.02F * stepSize ? -1 : 0);
+            if (now != 0) {
+                if (sign != 0 && now != sign) {
+                    passes++;
+                }
+                sign = now;
+            }
+        }
+        return passes;
+    }
+
+    /** The damping time: the last frame at which the link is more than five per cent off its rest. */
+    private static float setttlingTimeOf(StepTrace trace) {
+        float stepSize = stepOf(trace);
+        if (!(stepSize > 1.0E-4F)) {
+            return 0.0F;
+        }
+        Vector3f direction = new Vector3f(meanPoint(trace.settled)).sub(restPoint(trace)).div(stepSize);
+        Vector3f rest = restPoint(trace);
+        float last = 0.0F;
+        for (int i = 0; i < trace.path.size(); i++) {
+            float d = Math.abs(new Vector3f(trace.path.get(i)).sub(rest).dot(direction));
+            if (d > 0.05F * stepSize) {
+                last = (i + 1) * DT;
+            }
+        }
+        return last;
+    }
+
+    /** The path length the far vertex covers during the step. */
+    private static float travelOf(StepTrace trace) {
+        float travel = 0.0F;
+        for (int i = 1; i < trace.path.size(); i++) {
+            travel += trace.path.get(i).distance(trace.path.get(i - 1));
+        }
+        return travel;
+    }
+
+    /** The mean of the last {@code count} values of a list. */
+    private static float tailMean(List<Float> values, int count) {
+        int from = Math.max(0, values.size() - count);
+        double sum = 0.0D;
+        for (int i = from; i < values.size(); i++) {
+            sum += values.get(i);
+        }
+        return values.size() <= from ? 0.0F : (float) (sum / (values.size() - from));
+    }
+
+    private static Vector3f meanPoint(List<Vector3f> points) {
+        Vector3f out = new Vector3f();
+        int used = 0;
+        for (Vector3f point : points) {
+            if (point == null || !YsmDynamicBoneSolver.isFinite(point)) {
+                continue;
+            }
+            out.add(point);
+            used++;
+        }
+        return used == 0 ? out : out.div(used);
+    }
+
+    /** The traces of the pieces named, in the order named, skipping names this model has not got. */
+    private static List<Trace> tracesNamed(Rig rig, String[] names) {
+        List<Trace> out = new ArrayList<>();
+        for (String name : names) {
+            Segment piece = rig.segmentNamed(name);
+            if (piece != null) {
+                out.add(new Trace(piece, farthestVertex(piece.own, piece.bindPivot)));
+            }
+        }
+        return out;
+    }
+
+    private static Trace traceNamed(List<Trace> traces, String name) {
+        for (Trace trace : traces) {
+            if (trace.piece.name.equals(name)) {
+                return trace;
+            }
+        }
+        return null;
+    }
+
+    private static String[] allNames(Rig rig) {
+        String[] out = new String[rig.segments.size()];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = rig.segments.get(i).name;
+        }
+        return out;
+    }
+
+    private static String[] join(String[] first, String[] second) {
+        String[] out = new String[first.length + second.length];
+        System.arraycopy(first, 0, out, 0, first.length);
+        System.arraycopy(second, 0, out, first.length, second.length);
+        return out;
+    }
+
+    /**
+     * The largest distance a piece the candidate does not name is in a different place.
+     *
+     * <p>Measured per frame over the whole run and on the same vertex the trace follows, so a piece
+     * that is a millimetre out for one frame counts and a piece that is not drawn differently at all
+     * reads zero - which is the claim the candidates make about everything they do not name.
+     */
+    private static float worstUnnamedDifference(Rig rig, Candidate candidate,
+                                                List<Trace> baseline, List<Trace> other) {
+        Set<Integer> named = namedIndexes(rig, candidate);
+        float worst = 0.0F;
+        for (int i = 0; i < baseline.size() && i < other.size(); i++) {
+            Segment piece = baseline.get(i).piece;
+            if (candidate.rigid().contains(piece.name)
+                    || candidate.limitDeg().containsKey(piece.name.toLowerCase(Locale.ROOT))
+                    || descendsFrom(rig, piece.index, named)) {
+                continue;
+            }
+            List<Vector3f> b = baseline.get(i).tipPath;
+            List<Vector3f> a = other.get(i).tipPath;
+            int frames = Math.min(b.size(), a.size());
+            for (int frame = 0; frame < frames; frame++) {
+                worst = Math.max(worst, b.get(frame).distance(a.get(frame)));
+            }
+        }
+        return worst;
+    }
+
+    /** A signed number, for the change columns. */
+    private static String signed(float value) {
+        return String.format(Locale.ROOT, "%+.3f", value);
+    }
+
+    /** Three decimals with a digit more than {@link #fmt}, for the overshoot ratios. */
+    private static String fmt3(float value) {
+        return Float.isFinite(value) ? String.format(Locale.ROOT, "%.3f", value) : "n/a";
+    }
+
+    // ---- the frame's geometry ------------------------------------------------------------------
+
+    /** The body's own vertical axis, from the two hip joints the armature settled. */
+    private static Vector3f bodyAxis(Rig rig) {
+        Vector3f left = rig.jointOrigin(JointTable.THIGH_L);
+        Vector3f right = rig.jointOrigin(JointTable.THIGH_R);
+        if (left == null || right == null) {
+            return new Vector3f();
+        }
+        return new Vector3f((left.x + right.x) * 0.5F, 0.0F, (left.z + right.z) * 0.5F);
+    }
+
+    /** A rotation of {@code degrees} about {@code origin} and the model's own x axis, plus a bob. */
+    private static OpenMatrix4f about(Vector3f origin, float degrees, float bob) {
+        if (origin == null) {
+            return new OpenMatrix4f();
+        }
+        Matrix4f matrix = new Matrix4f()
+                .translate(origin.x, origin.y + bob, origin.z)
+                .rotateX((float) Math.toRadians(degrees))
+                .translate(-origin.x, -origin.y, -origin.z);
+        return toOpen(matrix);
+    }
+
+    /** The piece's own surface as sampled points: every mesh triangle, barycentrically subdivided. */
+    private static float[] surfaceSamples(List<Vector3f> own, OpenMatrix4f delta) {
+        List<Float> points = new ArrayList<>();
+        int n = SURFACE_SUBDIVISION;
+        Vector3f moved = new Vector3f();
+        for (int i = 0; i + 2 < own.size(); i += 3) {
+            Vector3f a = own.get(i);
+            Vector3f b = own.get(i + 1);
+            Vector3f c = own.get(i + 2);
+            if (a == null || b == null || c == null) {
+                continue;
+            }
+            for (int u = 0; u <= n; u++) {
+                for (int v = 0; v + u <= n; v++) {
+                    float wa = (float) u / n;
+                    float wb = (float) v / n;
+                    float wc = 1.0F - wa - wb;
+                    moved.set(a.x * wa + b.x * wb + c.x * wc,
+                            a.y * wa + b.y * wb + c.y * wc,
+                            a.z * wa + b.z * wb + c.z * wc);
+                    if (delta != null) {
+                        YsmMeshSecondaryMotion.transformPoint(delta, moved, moved);
+                    }
+                    if (!YsmDynamicBoneSolver.isFinite(moved)) {
+                        continue;
+                    }
+                    points.add(moved.x);
+                    points.add(moved.y);
+                    points.add(moved.z);
+                }
+            }
+        }
+        float[] out = new float[points.size()];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = points.get(i);
+        }
+        return out;
+    }
+
+    /** The cell key: azimuth bin in the high half, height bin in the low half. */
+    private static long cellKey(float x, float y, float z, Vector3f axis) {
+        float dx = x - axis.x;
+        float dz = z - axis.z;
+        float degrees = (float) Math.toDegrees(Math.atan2(dz, dx));
+        if (degrees < 0.0F) {
+            degrees += 360.0F;
+        }
+        int azimuth = Math.min(179, (int) (degrees / LADDER_DEGREES));
+        int height = Math.max(0, Math.min(1023, (int) Math.floor((y + 4.0F) / LADDER_HEIGHT)));
+        return (long) azimuth * 1024L + height;
+    }
+
+    /** The azimuth a cell key names, degrees. */
+    private static float azimuthDegrees(long key) {
+        return (key / 1024L) * LADDER_DEGREES;
+    }
+
+    /** One piece's surface as a map from cell to the radial interval it occupies there. */
+    private static Map<Long, float[]> cellsOf(float[] samples, OpenMatrix4f delta, Vector3f axis) {
+        Map<Long, float[]> out = new HashMap<>();
+        Vector3f point = new Vector3f();
+        for (int i = 0; i + 2 < samples.length; i += 3) {
+            point.set(samples[i], samples[i + 1], samples[i + 2]);
+            if (delta != null) {
+                YsmMeshSecondaryMotion.transformPoint(delta, point, point);
+            }
+            float r = (float) Math.hypot(point.x - axis.x, point.z - axis.z);
+            long key = cellKey(point.x, point.y, point.z, axis);
+            float[] interval = out.get(key);
+            if (interval == null) {
+                out.put(key, new float[]{r, r});
+            } else {
+                if (r < interval[0]) {
+                    interval[0] = r;
+                }
+                if (r > interval[1]) {
+                    interval[1] = r;
+                }
+            }
+        }
+        return out;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<Long, float[]>[] cellMaps(float[][] samples, OpenMatrix4f[] deltas, Vector3f axis) {
+        Map<Long, float[]>[] out = new Map[samples.length];
+        for (int i = 0; i < samples.length; i++) {
+            out[i] = samples[i] == null ? new HashMap<>() : cellsOf(samples[i], deltas == null ? null : deltas[i], axis);
+        }
+        return out;
+    }
+
+    /** The same, for the few pieces a per-frame measurement tracks: every other slot stays null. */
+    @SuppressWarnings("unchecked")
+    private static Map<Long, float[]>[] cellMapsOf(float[][] samples, int[] subset, Vector3f axis) {
+        Map<Long, float[]>[] out = new Map[samples.length];
+        for (int index : subset) {
+            out[index] = cellsOf(samples[index], null, axis);
+        }
+        return out;
+    }
+
+    // ---- the crossing --------------------------------------------------------------------------
+
+    /**
+     * One surface the crossing test is run over: a name, the geometry it is drawn from, and the
+     * delta the state applies to it - or null for a piece the simulation does not move, which
+     * therefore follows the pose exactly and sits where it was authored.
+     */
+    private record SurfaceRef(String name, List<Vector3f> own, OpenMatrix4f delta) {}
+
+    /**
+     * One piece's own surface as a closed triangle shell in the frame of one state, with the
+     * bounding box that lets a pair be skipped before any ray is cast.
+     */
+    private static final class Solid {
+        final float[] vertices;
+        final float[] bounds = {Float.MAX_VALUE, Float.MAX_VALUE, Float.MAX_VALUE,
+                -Float.MAX_VALUE, -Float.MAX_VALUE, -Float.MAX_VALUE};
+        final int vertexCount;
+
+        Solid(int vertices) {
+            this.vertices = new float[vertices * 3];
+            this.vertexCount = vertices;
+        }
+    }
+
+    /** How far one piece reaches into another: the count of vertices inside, and the deepest. */
+    private record Crossing(int a, int b, int meetings, int insideA, float depthA, int insideB,
+                            float depthB, float azimuth, float height) {
+        float depth() {
+            return Math.max(depthA, depthB);
+        }
+    }
+
+    /**
+     * The triangles of a piece, from the list the physics reader hands over.
+     *
+     * <p>The mesh lays a part out as its vertex ordinals with <b>stride three</b> - each ordinal
+     * written three times, once per position component - so the reader's own list holds every vertex
+     * three times over and its consecutive triples are degenerate. Every vertex-level statistic
+     * survives that (a centroid, a y range, a lever and a pivot gap are all the same over a tripled
+     * cloud), which is why five earlier rounds could calibrate against the client through this
+     * reader without noticing. Triangles do not: they need every third entry taken, which is what
+     * this does, and only here, so the calibrated reader is left exactly as it was.
+     *
+     * <p>A list that is not so packed (the hand-built controls) is returned unchanged.
+     */
+    private static List<Vector3f> triangleSoup(List<Vector3f> own) {
+        if (own.size() < 9 || own.size() % 3 != 0) {
+            return own;
+        }
+        List<Vector3f> out = new ArrayList<>(own.size() / 3);
+        for (int i = 0; i + 2 < own.size(); i += 3) {
+            Vector3f first = own.get(i);
+            if (!first.equals(own.get(i + 1)) || !first.equals(own.get(i + 2))) {
+                return own;
+            }
+            out.add(first);
+        }
+        return out;
+    }
+
+    /** Every surface of one state, transformed by that state's own delta where it has one. */
+    private static Solid[] solidsOf(List<SurfaceRef> surfaces) {
+        Solid[] out = new Solid[surfaces.size()];
+        Vector3f moved = new Vector3f();
+        for (int s = 0; s < surfaces.size(); s++) {
+            SurfaceRef ref = surfaces.get(s);
+            List<Vector3f> own = ref.own();
+            int count = own.size() - own.size() % 3;
+            Solid solid = new Solid(count);
+            for (int v = 0; v < count; v++) {
+                Vector3f vertex = own.get(v);
+                moved.set(vertex);
+                if (ref.delta() != null) {
+                    YsmMeshSecondaryMotion.transformPoint(ref.delta(), moved, moved);
+                }
+                solid.vertices[v * 3] = moved.x;
+                solid.vertices[v * 3 + 1] = moved.y;
+                solid.vertices[v * 3 + 2] = moved.z;
+                if (moved.x < solid.bounds[0]) {
+                    solid.bounds[0] = moved.x;
+                }
+                if (moved.y < solid.bounds[1]) {
+                    solid.bounds[1] = moved.y;
+                }
+                if (moved.z < solid.bounds[2]) {
+                    solid.bounds[2] = moved.z;
+                }
+                if (moved.x > solid.bounds[3]) {
+                    solid.bounds[3] = moved.x;
+                }
+                if (moved.y > solid.bounds[4]) {
+                    solid.bounds[4] = moved.y;
+                }
+                if (moved.z > solid.bounds[5]) {
+                    solid.bounds[5] = moved.z;
+                }
+            }
+            out[s] = solid;
+        }
+        return out;
+    }
+
+    /**
+     * Whether a point is inside the shell: parity along three <b>skewed</b> rays drawn from the
+     * point, majority. Skewed rather than axis-aligned because an axis ray through a boxy part
+     * regularly passes exactly along a face diagonal, and a crossing counted twice is a crossing
+     * counted zero times - which the control below caught on the first run.
+     */
+    private static boolean inside(Solid solid, float x, float y, float z) {
+        if (x < solid.bounds[0] || x > solid.bounds[3] || y < solid.bounds[1] || y > solid.bounds[4]
+                || z < solid.bounds[2] || z > solid.bounds[5]) {
+            return false;
+        }
+        int votes = 0;
+        for (int ray = 0; ray < 3; ray++) {
+            if (crossingsAlong(solid, x, y, z, RAY_DIRECTIONS[ray]) % 2 != 0) {
+                votes++;
+            }
+        }
+        return votes >= 2;
+    }
+
+    /** Three directions with no exact relation to a box's own axes or diagonals. */
+    private static final float[][] RAY_DIRECTIONS = {
+            {1.0F, 0.3711F, 0.6187F}, {0.5331F, 1.0F, 0.2917F}, {0.7103F, 0.4317F, 1.0F}};
+
+    /** How many triangles a ray from the point crosses: Moller-Trumbore, no backface cull. */
+    private static int crossingsAlong(Solid solid, float x, float y, float z, float[] direction) {
+        int hits = 0;
+        float dx = direction[0];
+        float dyy = direction[1];
+        float dz = direction[2];
+        for (int t = 0; t + 8 < solid.vertices.length; t += 9) {
+            float ax = solid.vertices[t];
+            float ay = solid.vertices[t + 1];
+            float az = solid.vertices[t + 2];
+            float e1x = solid.vertices[t + 3] - ax;
+            float e1y = solid.vertices[t + 4] - ay;
+            float e1z = solid.vertices[t + 5] - az;
+            float e2x = solid.vertices[t + 6] - ax;
+            float e2y = solid.vertices[t + 7] - ay;
+            float e2z = solid.vertices[t + 8] - az;
+            float px = dyy * e2z - dz * e2y;
+            float py = dz * e2x - dx * e2z;
+            float pz = dx * e2y - dyy * e2x;
+            float determinant = e1x * px + e1y * py + e1z * pz;
+            if (Math.abs(determinant) < 1.0E-12F) {
+                continue;
+            }
+            float inverse = 1.0F / determinant;
+            float tx = x - ax;
+            float ty = y - ay;
+            float tz = z - az;
+            float u = (tx * px + ty * py + tz * pz) * inverse;
+            if (u <= 0.0F || u >= 1.0F) {
+                continue;
+            }
+            float qx = ty * e1z - tz * e1y;
+            float qy = tz * e1x - tx * e1z;
+            float qz = tx * e1y - ty * e1x;
+            float v = (dx * qx + dyy * qy + dz * qz) * inverse;
+            if (v <= 0.0F || u + v >= 1.0F) {
+                continue;
+            }
+            float along = (e2x * qx + e2y * qy + e2z * qz) * inverse;
+            if (along > 1.0E-6F) {
+                hits++;
+            }
+        }
+        return hits;
+    }
+
+    /**
+     * The shortest way out of the shell along the six axis directions: how deep the point is in.
+     *
+     * <p>Axis directions are the right choice here even though they are the wrong choice for the
+     * parity test: the depth is the nearest exit, and a direction that happens to graze a face
+     * diagonal still reports the distance it grazed at, while a direction that misses entirely
+     * simply does not win the minimum.
+     */
+    private static float exitDepth(Solid solid, float x, float y, float z) {
+        float best = Float.MAX_VALUE;
+        for (int axis = 0; axis < 3; axis++) {
+            for (int sign = -1; sign <= 1; sign += 2) {
+                float nearest = firstHit(solid, x, y, z, axis, sign);
+                if (nearest < best) {
+                    best = nearest;
+                }
+            }
+        }
+        return best == Float.MAX_VALUE ? 0.0F : best;
+    }
+
+    private static float firstHit(Solid solid, float x, float y, float z, int axis, int sign) {
+        float nearest = Float.MAX_VALUE;
+        for (int t = 0; t + 8 < solid.vertices.length; t += 9) {
+            float ax = solid.vertices[t];
+            float ay = solid.vertices[t + 1];
+            float az = solid.vertices[t + 2];
+            float e1x = solid.vertices[t + 3] - ax;
+            float e1y = solid.vertices[t + 4] - ay;
+            float e1z = solid.vertices[t + 5] - az;
+            float e2x = solid.vertices[t + 6] - ax;
+            float e2y = solid.vertices[t + 7] - ay;
+            float e2z = solid.vertices[t + 8] - az;
+            float dx = axis == 0 ? sign : 0.0F;
+            float dy = axis == 1 ? sign : 0.0F;
+            float dz = axis == 2 ? sign : 0.0F;
+            float px = dy * e2z - dz * e2y;
+            float py = dz * e2x - dx * e2z;
+            float pz = dx * e2y - dy * e2x;
+            float determinant = e1x * px + e1y * py + e1z * pz;
+            if (Math.abs(determinant) < 1.0E-9F) {
+                continue;
+            }
+            float inverse = 1.0F / determinant;
+            float tx = x - ax;
+            float ty = y - ay;
+            float tz = z - az;
+            float u = (tx * px + ty * py + tz * pz) * inverse;
+            if (u < 0.0F || u > 1.0F) {
+                continue;
+            }
+            float qx = ty * e1z - tz * e1y;
+            float qy = tz * e1x - tx * e1z;
+            float qz = tx * e1y - ty * e1x;
+            float v = (dx * qx + dy * qy + dz * qz) * inverse;
+            if (v < 0.0F || u + v > 1.0F) {
+                continue;
+            }
+            float along = (e2x * qx + e2y * qy + e2z * qz) * inverse;
+            if (along > 1.0E-6F && along < nearest) {
+                nearest = along;
+            }
+        }
+        return nearest;
+    }
+
+    /**
+     * Whether the two surfaces cross, and how far one reaches into the other.
+     *
+     * <p>Two questions, because they answer different shapes of defect and neither implies the
+     * other. <b>Do the surfaces meet</b> is the crossing test proper: an edge of one triangle that
+     * passes through the <i>interior</i> of a triangle of the other, in either direction. Two thin
+     * panels crossing like an X have none of each other's vertices inside, so a containment test
+     * alone would call them clean - which is why both are asked. Excluding the triangle boundaries
+     * is what keeps panels that merely share an edge from reading as crossings. <b>How deep</b> is
+     * the containment test: a vertex of one inside the other's shell, and the shortest way out.
+     *
+     * <p>Reads the location of the first meeting or the deepest vertex, for the report.
+     */
+    private static Crossing crossing(Solid a, Solid b, int indexA, int indexB, Vector3f axis) {
+        if (!overlaps(a.bounds, b.bounds)) {
+            return null;
+        }
+        float[] where = new float[3];
+        int meetings = meetings(a, b, where) + meetings(b, a, where);
+        int insideA = 0;
+        int insideB = 0;
+        float depthA = 0.0F;
+        float depthB = 0.0F;
+        float worstGround = -1.0F;
+        float worstX = 0.0F;
+        float worstY = 0.0F;
+        float worstZ = 0.0F;
+        for (int v = 0; v < a.vertexCount; v++) {
+            float x = a.vertices[v * 3];
+            float y = a.vertices[v * 3 + 1];
+            float z = a.vertices[v * 3 + 2];
+            if (!inside(b, x, y, z)) {
+                continue;
+            }
+            insideA++;
+            float depth = exitDepth(b, x, y, z);
+            depthA = Math.max(depthA, depth);
+            if (depth > worstGround) {
+                worstGround = depth;
+                worstX = x;
+                worstY = y;
+                worstZ = z;
+            }
+        }
+        for (int v = 0; v < b.vertexCount; v++) {
+            float x = b.vertices[v * 3];
+            float y = b.vertices[v * 3 + 1];
+            float z = b.vertices[v * 3 + 2];
+            if (!inside(a, x, y, z)) {
+                continue;
+            }
+            insideB++;
+            float depth = exitDepth(a, x, y, z);
+            depthB = Math.max(depthB, depth);
+            if (depth > worstGround) {
+                worstGround = depth;
+                worstX = x;
+                worstY = y;
+                worstZ = z;
+            }
+        }
+        if (meetings == 0 && insideA == 0 && insideB == 0) {
+            return null;
+        }
+        float x = meetings > 0 ? where[0] : worstX;
+        float y = meetings > 0 ? where[1] : worstY;
+        float z = meetings > 0 ? where[2] : worstZ;
+        float degrees = (float) Math.toDegrees(Math.atan2(z - axis.z, x - axis.x));
+        if (degrees < 0.0F) {
+            degrees += 360.0F;
+        }
+        return new Crossing(indexA, indexB, meetings, insideA, depthA, insideB, depthB, degrees, y);
+    }
+
+    /**
+     * How many edges of {@code from} pass through the interior of a triangle of {@code to}, with the
+     * first such point written to {@code where}.
+     */
+    private static int meetings(Solid from, Solid to, float[] where) {
+        int count = 0;
+        for (int t = 0; t + 8 < from.vertices.length; t += 9) {
+            for (int corner = 0; corner < 3; corner++) {
+                int p = t + corner * 3;
+                int q = t + ((corner + 1) % 3) * 3;
+                if (segmentMeets(to, from.vertices[p], from.vertices[p + 1], from.vertices[p + 2],
+                        from.vertices[q], from.vertices[q + 1], from.vertices[q + 2],
+                        count == 0 ? where : null)) {
+                    count++;
+                }
+            }
+        }
+        return count;
+    }
+
+    /** Whether the segment p-q passes through the interior of a triangle of the shell. */
+    private static boolean segmentMeets(Solid solid, float px, float py, float pz,
+                                        float qx, float qy, float qz, float[] where) {
+        float dx = qx - px;
+        float dyy = qy - py;
+        float dz = qz - pz;
+        for (int t = 0; t + 8 < solid.vertices.length; t += 9) {
+            float ax = solid.vertices[t];
+            float ay = solid.vertices[t + 1];
+            float az = solid.vertices[t + 2];
+            float e1x = solid.vertices[t + 3] - ax;
+            float e1y = solid.vertices[t + 4] - ay;
+            float e1z = solid.vertices[t + 5] - az;
+            float e2x = solid.vertices[t + 6] - ax;
+            float e2y = solid.vertices[t + 7] - ay;
+            float e2z = solid.vertices[t + 8] - az;
+            float rx = dyy * e2z - dz * e2y;
+            float ry = dz * e2x - dx * e2z;
+            float rz = dx * e2y - dyy * e2x;
+            float determinant = e1x * rx + e1y * ry + e1z * rz;
+            if (Math.abs(determinant) < 1.0E-12F) {
+                continue;
+            }
+            float inverse = 1.0F / determinant;
+            float tx = px - ax;
+            float ty = py - ay;
+            float tz = pz - az;
+            float u = (tx * rx + ty * ry + tz * rz) * inverse;
+            if (u <= 0.0F || u >= 1.0F) {
+                continue;
+            }
+            float sx = ty * e1z - tz * e1y;
+            float sy = tz * e1x - tx * e1z;
+            float sz = tx * e1y - ty * e1x;
+            float v = (dx * sx + dyy * sy + dz * sz) * inverse;
+            if (v <= 0.0F || u + v >= 1.0F) {
+                continue;
+            }
+            float along = (e2x * sx + e2y * sy + e2z * sz) * inverse;
+            if (along <= 0.0F || along >= 1.0F) {
+                continue;
+            }
+            if (where != null) {
+                where[0] = px + dx * along;
+                where[1] = py + dyy * along;
+                where[2] = pz + dz * along;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private static boolean overlaps(float[] a, float[] b) {
+        return a[0] <= b[3] && a[3] >= b[0] && a[1] <= b[4] && a[4] >= b[1]
+                && a[2] <= b[5] && a[5] >= b[2];
+    }
+
+    /** Every pair of the list that crosses, deepest first. */
+    private static List<Crossing> crossingTable(Solid[] solids, Vector3f axis) {
+        List<Crossing> out = new ArrayList<>();
+        for (int a = 0; a < solids.length; a++) {
+            for (int b = a + 1; b < solids.length; b++) {
+                Crossing value = crossing(solids[a], solids[b], a, b, axis);
+                if (value != null) {
+                    out.add(value);
+                }
+            }
+        }
+        out.sort((x, y) -> {
+            int byMeetings = Integer.compare(y.meetings(), x.meetings());
+            if (byMeetings != 0) {
+                return byMeetings;
+            }
+            int byDepth = Float.compare(y.depth(), x.depth());
+            return byDepth != 0 ? byDepth : Integer.compare(y.insideA() + y.insideB(),
+                    x.insideA() + x.insideB());
+        });
+        return out;
+    }
+
+    // ---- the crossing test's own control --------------------------------------------------------
+
+    /** A closed box as a triangle soup, laid out the way the mesh lays a part out. */
+    private static List<Vector3f> box(float minX, float minY, float minZ,
+                                      float maxX, float maxY, float maxZ) {
+        float[][] corners = {
+                {minX, minY, minZ}, {maxX, minY, minZ}, {maxX, maxY, minZ}, {minX, maxY, minZ},
+                {minX, minY, maxZ}, {maxX, minY, maxZ}, {maxX, maxY, maxZ}, {minX, maxY, maxZ}};
+        int[][] faces = {{0, 1, 2, 3}, {4, 5, 6, 7}, {0, 1, 5, 4}, {3, 2, 6, 7},
+                {0, 3, 7, 4}, {1, 2, 6, 5}};
+        List<Vector3f> out = new ArrayList<>();
+        for (int[] face : faces) {
+            // The same fan the writer emits: (0,1,2) then (2,3,0).
+            int[] order = {face[0], face[1], face[2], face[2], face[3], face[0]};
+            for (int corner : order) {
+                out.add(new Vector3f(corners[corner][0], corners[corner][1], corners[corner][2]));
+            }
+        }
+        return out;
+    }
+
+    /** Unused placeholder removed. */
+
+    /** Where each piece sits inside the radial span of every cell it occupies, averaged. */
+    private static float[] outerScores(Map<Long, float[]>[] cells, int[] subset) {
+        Map<Long, float[]> span = new HashMap<>();
+        for (int index : subset) {
+            for (Map.Entry<Long, float[]> entry : cells[index].entrySet()) {
+                float[] current = span.get(entry.getKey());
+                if (current == null) {
+                    span.put(entry.getKey(), new float[]{entry.getValue()[0], entry.getValue()[1]});
+                } else {
+                    current[0] = Math.min(current[0], entry.getValue()[0]);
+                    current[1] = Math.max(current[1], entry.getValue()[1]);
+                }
+            }
+        }
+        float[] out = new float[cells.length];
+        for (int index : subset) {
+            double sum = 0.0D;
+            int used = 0;
+            for (Map.Entry<Long, float[]> entry : cells[index].entrySet()) {
+                float[] whole = span.get(entry.getKey());
+                float width = whole == null || whole[1] <= whole[0] ? 0.0F : whole[1] - whole[0];
+                if (width <= 0.0F) {
+                    continue;
+                }
+                sum += (entry.getValue()[1] - whole[0]) / width;
+                used++;
+            }
+            out[index] = used == 0 ? 0.0F : (float) (sum / used);
+        }
+        return out;
+    }
+
+    private static String layerLine(Rig rig, float[] score, Integer[] order, int from, int to) {
+        StringBuilder out = new StringBuilder();
+        for (int i = from; i < to; i++) {
+            if (out.length() > 0) {
+                out.append(", ");
+            }
+            out.append("`").append(rig.segments.get(order[i]).name).append("` ")
+                    .append(fmt(score[order[i]]));
+        }
+        return out.toString();
+    }
+
+    // ---- the states ----------------------------------------------------------------------------
+
+    /** The simulated pieces this round follows, as surfaces carrying one state's deltas. */
+    private static List<SurfaceRef> trackedSurfaces(Rig rig, int[] subset,
+                                                    YsmMeshSecondaryMotion.State state) {
+        List<SurfaceRef> out = new ArrayList<>();
+        for (int index : subset) {
+            Segment piece = rig.segments.get(index);
+            out.add(new SurfaceRef(piece.name, triangleSoup(piece.own),
+                    state == null ? null : state.deltas[index]));
+        }
+        return out;
+    }
+
+    /**
+     * Every bone of the model that carries visible geometry and is <b>not</b> a piece the
+     * simulation moves: the layer that follows the pose exactly. Read through the same map
+     * production's own selection reads, so the hidden bones of the model's default form are out of
+     * it by the same rule.
+     */
+    private static List<SurfaceRef> staticSurfaces(Rig rig) {
+        Set<Integer> simulated = new HashSet<>();
+        for (Segment piece : rig.segments) {
+            simulated.add(piece.boneIndex);
+        }
+        List<SurfaceRef> out = new ArrayList<>();
+        for (Map.Entry<Integer, List<Vector3f>> entry : rig.vertices.entrySet()) {
+            if (simulated.contains(entry.getKey()) || entry.getValue().size() < 3) {
+                continue;
+            }
+            out.add(new SurfaceRef(rig.bones[entry.getKey()].name,
+                    triangleSoup(entry.getValue()), null));
+        }
+        return out;
+    }
+
+    private static List<String> namesOf(List<SurfaceRef> surfaces) {
+        List<String> out = new ArrayList<>(surfaces.size());
+        for (SurfaceRef surface : surfaces) {
+            out.add(surface.name());
+        }
+        return out;
+    }
+
+    private static Solid[] concat(Solid[] first, Solid[] second) {
+        Solid[] out = java.util.Arrays.copyOf(first, first.length + second.length);
+        System.arraycopy(second, 0, out, first.length, second.length);
+        return out;
+    }
+
+    private static List<String> concat(List<String> first, List<String> second) {
+        List<String> out = new ArrayList<>(first);
+        out.addAll(second);
+        return out;
+    }
+
+    /** The crossing table for one state, the two layers listed apart. */
+    private static String crossingTableReport(Rig rig, List<String> names, List<Crossing> found,
+                                              int trackedCount, int limit) {
+        StringBuilder out = new StringBuilder();
+        out.append("| rank | a | b | surface meetings | a-vertices inside b | deepest | ")
+                .append("b-vertices inside a | deepest | where |\n")
+                .append("|---|---|---|---|---|---|---|---|---|\n");
+        int plotted = 0;
+        for (Crossing value : found) {
+            if (plotted++ >= limit) {
+                break;
+            }
+            out.append("| ").append(plotted)
+                    .append(" | `").append(names.get(value.a())).append("`")
+                    .append(" | `").append(names.get(value.b())).append("`")
+                    .append(" | ").append(value.meetings())
+                    .append(" | ").append(value.insideA()).append(" | ").append(fmt(value.depthA()))
+                    .append(" | ").append(value.insideB()).append(" | ").append(fmt(value.depthB()))
+                    .append(" | ").append(fmt(value.azimuth())).append(" deg, ")
+                    .append(fmt(value.height())).append(" |\n");
+        }
+        if (found.isEmpty()) {
+            out.append("| - | - | - | - | - | - | - | - | - |\n");
+        }
+        // Which of the two layers each crossing is between, and how many pieces of the static layer
+        // there are at all: the count is what makes "the swinging layer meets the carried one" a
+        // reading rather than a guess.
+        int garmentIntoGarment = 0;
+        int garmentIntoStatic = 0;
+        int staticIntoGarment = 0;
+        for (Crossing value : found) {
+            boolean aTracked = value.a() < trackedCount;
+            boolean bTracked = value.b() < trackedCount;
+            if (aTracked && bTracked) {
+                garmentIntoGarment++;
+                continue;
+            }
+            if (aTracked) {
+                if (value.insideA() > 0) {
+                    garmentIntoStatic++;
+                }
+                if (value.insideB() > 0) {
+                    staticIntoGarment++;
+                }
+            } else {
+                if (value.insideB() > 0) {
+                    garmentIntoStatic++;
+                }
+                if (value.insideA() > 0) {
+                    staticIntoGarment++;
+                }
+            }
+        }
+        out.append("\nOf those crossings: ").append(garmentIntoGarment)
+                .append(" between two simulated pieces, ").append(garmentIntoStatic)
+                .append(" a simulated piece's vertices inside a carried one, and ")
+                .append(staticIntoGarment)
+                .append(" a carried piece's vertices inside a simulated one.\n\n")
+                .append("The carried layer (").append(names.size() - trackedCount).append(" bones): ")
+                .append(names.subList(trackedCount, names.size()).toString()).append("\n\n");
+        return out.toString();
+    }
+
+    /** One row of the state table: the worst crossing the run produced, all pairs and garment only. */
+    private static String crossingRow(String label, List<String> names, List<Crossing> found,
+                                      int trackedCount, float maxMove, int measured,
+                                      int garmentPairFrames) {
+        List<Crossing> garment = garmentOnly(found, names);
+        Crossing worst = found.isEmpty() ? null : found.get(0);
+        Crossing worstGarment = garment.isEmpty() ? null : garment.get(0);
+        return "| " + label + " | " + describe(worst, names)
+                + " | " + (worst == null ? "-" : "`" + names.get(worst.a()) + "` / `"
+                        + names.get(worst.b()) + "`")
+                + " | " + garment.size() + " of " + garmentPairFrames + " pair-frames | "
+                + describe(worstGarment, names)
+                + " | " + (worstGarment == null ? "-" : "`" + names.get(worstGarment.a()) + "` / `"
+                        + names.get(worstGarment.b()) + "`")
+                + " | " + fmt(maxMove) + " | " + measured + " |\n";
+    }
+
+    private static String describe(Crossing value, List<String> names) {
+        return value == null ? "none"
+                : value.meetings() + " meet / " + value.insideA() + "+" + value.insideB()
+                        + " inside / " + fmt(value.depth()) + " deep";
+    }
+
+    /**
+     * Drive the production frame loop over one state and measure the crossing every twentieth frame.
+     *
+     * <p>The whole model is simulated, because a piece's swing depends on its ancestors, but only
+     * the garment is rebuilt per frame and only pairs whose boxes overlap are tested, which is what
+     * makes a per-frame geometric crossing affordable.
+     */
+    private static String trackCrossings(String label, Rig rig, YsmMeshSecondaryMotion.PoseSource pose,
+                                         Gait gait, int frames, int[] subset, Solid[] staticSolids,
+                                         List<String> staticNames) {
+        YsmPhysicsParts.Model parts = productionModel(rig);
+        YsmMeshSecondaryMotion.State state = new YsmMeshSecondaryMotion.State(
+                parts, null, (float) YsmPhysicsTuning.DEFAULTS.maxAngle);
+        Vector3f velocity = gait == null ? null : new Vector3f(0.0F, 0.0F, -gait.speed());
+        Vector3f axis = bodyAxis(rig);
+        boolean moving = pose instanceof RunPose;
+        Solid[] rest = solidsOf(trackedSurfaces(rig, subset, null));
+        List<Crossing> worst = null;
+        List<String> worstNames = null;
+        int crossingPairs = 0;
+        int garmentPairs = 0;
+        int measured = 0;
+        float maxMove = 0.0F;
+        for (int frame = 0; frame < frames; frame++) {
+            if (moving) {
+                ((RunPose) pose).at(frame * DT);
+            }
+            YsmMeshSecondaryMotion.simulate(state, pose, DT, velocity, NO_TURN,
+                    YsmDynamicBoneSolver.NO_COLLIDERS);
+            if (frame % 40 != 0 || frame < Math.min(GAIT_WARMUP, frames / 2)) {
+                continue;
+            }
+            measured++;
+            List<SurfaceRef> tracked = trackedSurfaces(rig, subset, state);
+            List<String> names = concat(namesOf(tracked), staticNames);
+            Solid[] frameSolids = solidsOf(tracked);
+            for (int s = 0; s < frameSolids.length; s++) {
+                for (int v = 0; v < frameSolids[s].vertices.length; v += 3) {
+                    float dx = frameSolids[s].vertices[v] - rest[s].vertices[v];
+                    float dy = frameSolids[s].vertices[v + 1] - rest[s].vertices[v + 1];
+                    float dz = frameSolids[s].vertices[v + 2] - rest[s].vertices[v + 2];
+                    maxMove = Math.max(maxMove, (float) Math.sqrt(dx * dx + dy * dy + dz * dz));
+                }
+            }
+            List<Crossing> found = crossingTable(concat(frameSolids, staticSolids), axis);
+            List<Crossing> garment = garmentOnly(found, names);
+            crossingPairs += found.size();
+            garmentPairs += garment.size();
+            boolean better = worst == null
+                    || (!garment.isEmpty() && garmentOnly(worst, worstNames).isEmpty())
+                    || (garment.isEmpty() == garmentOnly(worst, worstNames).isEmpty()
+                            && found.get(0).meetings() > worst.get(0).meetings());
+            if (!found.isEmpty() && better) {
+                worst = found;
+                worstNames = names;
+            }
+        }
+        return crossingRow(label, worstNames == null ? List.of() : worstNames,
+                worst == null ? List.of() : worst, subset.length, maxMove, measured, garmentPairs);
+    }
+
+    /**
+     * The second control, on the model's own geometry: <b>the same test on a copy of a real piece
+     * that is known to cut through it</b>. The two pieces closest to each other at bind are found,
+     * and the first is turned thirty degrees about a horizontal axis through its own centre; the
+     * test must then report a meeting with the copy it came from.
+     *
+     * <p>It exists because every other number in this report is a "no", and a "no" from a pipeline
+     * that never applies a delta looks exactly like a "no" from a model that is clean. Sliding one
+     * piece onto another would not do: two panels of this skirt are parallel facets of the same
+     * cylinder, so a slide leaves them parallel and a turning is what makes them cut.
+     */
+    private static String modelControl(Rig rig, int[] subset, Vector3f axis, List<String> problems) {
+        int bestA = -1;
+        int bestB = -1;
+        float best = Float.MAX_VALUE;
+        for (int i = 0; i < subset.length; i++) {
+            for (int j = i + 1; j < subset.length; j++) {
+                float gap = Rig.centroid(rig.segments.get(subset[i]).own)
+                        .distance(Rig.centroid(rig.segments.get(subset[j]).own));
+                if (gap < best) {
+                    best = gap;
+                    bestA = subset[i];
+                    bestB = subset[j];
+                }
+            }
+        }
+        if (bestA < 0) {
+            problems.add("the model has no pair to run the crossing test's own control on");
+            return "";
+        }
+        Solid[] solids = solidsOf(trackedSurfaces(rig, subset, null));
+        Crossing clean = crossing(solids[bestA], solids[bestB], bestA, bestB, axis);
+        Segment piece = rig.segments.get(bestA);
+        Vector3f centre = Rig.centroid(piece.own);
+        Matrix4f turn = new Matrix4f().translate(centre.x, centre.y, centre.z)
+                .rotateX(0.5236F).translate(-centre.x, -centre.y, -centre.z);
+        Solid turned = solidsOf(List.of(new SurfaceRef(piece.name, triangleSoup(piece.own),
+                toOpen(turn))))[0];
+        Crossing forced = crossing(solids[bestA], turned, bestA, bestA, axis);
+        String report = "The model's own control, on the closest pair it has (`"
+                + piece.name + "` and `" + rig.segments.get(bestB).name + "`, centres "
+                + fmt(best) + " blocks apart): clean = "
+                + (clean == null ? "nothing" : clean.meetings() + " meeting(s), "
+                        + clean.insideA() + "+" + clean.insideB() + " vertices inside")
+                + "; `" + piece.name + "` against a copy of itself turned 30 degrees about a "
+                + "horizontal axis through its own centre = "
+                + (forced == null ? "STILL NOTHING"
+                        : forced.meetings() + " meeting(s), " + forced.insideA() + "+"
+                                + forced.insideB() + " vertices inside, "
+                                + fmt(forced.depth()) + " blocks deep")
+                + ". `" + piece.name + "`: " + solidTriangleReport(solids[bestA])
+                + "; the turned copy: " + solidTriangleReport(turned)
+                + "; bounds " + boundsText(solids[bestA]) + " against " + boundsText(turned)
+                + ".\n\n";
+        if (forced == null || forced.meetings() == 0) {
+            problems.add("the crossing test's own control failed on the model's own geometry: a "
+                    + "piece turned 30 degrees through its own centre must cut the copy it came "
+                    + "from, and the test reports nothing - so every \"no crossing\" number here is "
+                    + "untrustworthy");
+        }
+        return report;
+    }
+
+    /** How many of a solid's triangles have any area at all, and its vertex count. */
+    private static String solidTriangleReport(Solid solid) {
+        int triangles = 0;
+        int flat = 0;
+        for (int t = 0; t + 8 < solid.vertices.length; t += 9) {
+            triangles++;
+            float e1x = solid.vertices[t + 3] - solid.vertices[t];
+            float e1y = solid.vertices[t + 4] - solid.vertices[t + 1];
+            float e1z = solid.vertices[t + 5] - solid.vertices[t + 2];
+            float e2x = solid.vertices[t + 6] - solid.vertices[t];
+            float e2y = solid.vertices[t + 7] - solid.vertices[t + 1];
+            float e2z = solid.vertices[t + 8] - solid.vertices[t + 2];
+            float nx = e1y * e2z - e1z * e2y;
+            float ny = e1z * e2x - e1x * e2z;
+            float nz = e1x * e2y - e1y * e2x;
+            if (Math.sqrt(nx * nx + ny * ny + nz * nz) < 1.0E-8F) {
+                flat++;
+            }
+        }
+        return solid.vertexCount + " vertices, " + triangles + " triangles, " + flat
+                + " of them flat";
+    }
+
+    private static String boundsText(Solid solid) {
+        return "[" + fmt(solid.bounds[0]) + ".." + fmt(solid.bounds[3]) + ", "
+                + fmt(solid.bounds[1]) + ".." + fmt(solid.bounds[4]) + ", "
+                + fmt(solid.bounds[2]) + ".." + fmt(solid.bounds[5]) + "]";
+    }
+
+    /**
+     * The first control: a small box inside a bigger one, two boxes side by side, two plates
+     * crossing like an X and two plates sharing a face. Asserted, because every "no crossing"
+     * number in this report is a statement about the same two tests.
+     */
+    private static String controlReport(List<String> problems) {
+        Solid outer = solidsOf(List.of(new SurfaceRef("outer",
+                box(-0.10F, 0.00F, -0.10F, 0.10F, 0.20F, 0.10F), null)))[0];
+        Solid inner = solidsOf(List.of(new SurfaceRef("inner",
+                box(-0.02F, 0.08F, -0.02F, 0.02F, 0.12F, 0.02F), null)))[0];
+        Solid beside = solidsOf(List.of(new SurfaceRef("beside",
+                box(0.30F, 0.00F, -0.10F, 0.50F, 0.20F, 0.10F), null)))[0];
+        // Two thin plates crossing like an X: no vertex of either is inside the other, so this pair
+        // is the one that says whether the crossing test proper (edges through faces) works.
+        Solid plateA = solidsOf(List.of(new SurfaceRef("plateA",
+                box(-0.05F, 0.00F, -0.02F, 0.05F, 0.20F, 0.02F), null)))[0];
+        Solid plateB = solidsOf(List.of(new SurfaceRef("plateB",
+                box(-0.02F, 0.08F, -0.05F, 0.02F, 0.12F, 0.05F), null)))[0];
+        // And two plates that share a face but cross nothing: touching is not crossing.
+        Solid touchA = solidsOf(List.of(new SurfaceRef("touchA",
+                box(-0.05F, 0.00F, -0.05F, 0.05F, 0.20F, -0.01F), null)))[0];
+        Solid touchB = solidsOf(List.of(new SurfaceRef("touchB",
+                box(-0.05F, 0.00F, -0.01F, 0.05F, 0.20F, 0.03F), null)))[0];
+        Crossing nested = crossing(inner, outer, 0, 1, new Vector3f());
+        Crossing disjoint = crossing(outer, beside, 0, 1, new Vector3f());
+        Crossing crossingPlates = crossing(plateA, plateB, 0, 1, new Vector3f());
+        Crossing touching = crossing(touchA, touchB, 0, 1, new Vector3f());
+        int innerVertices = inner.vertexCount;
+        // The inner box's own faces are 0.08 blocks from the outer box's nearest face, so every one
+        // of its vertices is inside and the deepest is 0.08 blocks from the way out.
+        String control = "The inner box has " + innerVertices + " vertices, "
+                + (nested == null ? 0 : nested.insideA()) + " of them inside the outer box, and the "
+                + "deepest is " + fmt(nested == null ? 0.0F : nested.depth())
+                + " blocks from a face; the box beside the outer one reports "
+                + (disjoint == null ? "nothing" : fmt(disjoint.depth()) + " blocks")
+                + ". Two plates crossing like an X meet in " + (crossingPlates == null ? 0
+                        : crossingPlates.meetings()) + " place(s) with "
+                + (crossingPlates == null ? 0 : crossingPlates.insideA() + crossingPlates.insideB())
+                + " vertices inside either; two plates sharing a face meet in "
+                + (touching == null ? 0 : touching.meetings()) + ".\n\n";
+        if (nested == null || nested.insideA() != innerVertices) {
+            problems.add("the crossing test's own control failed: a box wholly inside another "
+                    + "reports " + (nested == null ? 0 : nested.insideA()) + " of " + innerVertices
+                    + " vertices inside");
+        }
+        if (nested == null || Math.abs(nested.depth() - 0.08F) > 0.005F) {
+            problems.add("the crossing test's own control failed: the deepest vertex of a box whose "
+                    + "own faces are 0.08 blocks from the outer box's nearest face should read 0.08 "
+                    + "blocks, not " + fmt(nested == null ? 0.0F : nested.depth()));
+        }
+        if (nested == null || nested.meetings() != 0) {
+            problems.add("the crossing test's own control failed: a box wholly inside another has "
+                    + "no surface crossing, but reported "
+                    + (nested == null ? 0 : nested.meetings()));
+        }
+        if (disjoint != null) {
+            problems.add("the crossing test's own control failed: two boxes side by side must not "
+                    + "report a crossing, but reported " + fmt(disjoint.depth()) + " blocks and "
+                    + disjoint.meetings() + " meeting(s)");
+        }
+        if (crossingPlates == null || crossingPlates.meetings() == 0) {
+            problems.add("the crossing test's own control failed: two plates crossing like an X "
+                    + "must be reported, and their vertices are outside each other, so only the "
+                    + "edge-through-face test can see them");
+        }
+        if (touching != null && touching.meetings() != 0) {
+            problems.add("the crossing test's own control failed: two plates sharing a face meet "
+                    + "along an edge, which is a touch and not a crossing, but "
+                    + touching.meetings() + " interior meeting(s) were reported");
+        }
+        return control;
+    }
+
+    /** The pose of a body that is not moving at all. */
+    private static final YsmMeshSecondaryMotion.PoseSource STILL_POSE =
+            new YsmMeshSecondaryMotion.PoseSource() {
+                private final OpenMatrix4f identity = new OpenMatrix4f();
+
+                @Override
+                public OpenMatrix4f toOriginOf(int joint) {
+                    return identity;
+                }
+
+                @Override
+                public OpenMatrix4f poseOf(int joint) {
+                    return identity;
+                }
+            };
+
+    // ---- the gaits -----------------------------------------------------------------------------
+
+    /** A running body: the torso leaning and bobbing, the legs cycling, and a constant velocity. */
+    private static final class RunPose implements YsmMeshSecondaryMotion.PoseSource {
+        private static final OpenMatrix4f TO_ORIGIN = new OpenMatrix4f();
+        private final Rig rig;
+        private final Gait gait;
+        private final float leanSign;
+        private OpenMatrix4f torso = new OpenMatrix4f();
+        private OpenMatrix4f chest = new OpenMatrix4f();
+        private OpenMatrix4f head = new OpenMatrix4f();
+        private OpenMatrix4f thighRight = new OpenMatrix4f();
+        private OpenMatrix4f thighLeft = new OpenMatrix4f();
+        private OpenMatrix4f legRight = new OpenMatrix4f();
+        private OpenMatrix4f legLeft = new OpenMatrix4f();
+
+        RunPose(Rig rig, Gait gait, float leanSign) {
+            this.rig = rig;
+            this.gait = gait;
+            this.leanSign = leanSign;
+            at(0.0F);
+        }
+
+        /** The pose one instant into the cycle. */
+        void at(float seconds) {
+            float phase = (float) (2.0D * Math.PI * gait.hertz() * seconds);
+            float bob = gait.bob() * (float) Math.sin(2.0F * phase);
+            torso = about(rig.jointOrigin(JointTable.TORSO), gait.leanDegrees() * leanSign, bob);
+            // The chest and the head carry the same cycle and a counter-lean, so every reference
+            // piece this round compares the tail against is driven too: a comparison against a
+            // piece that is not moving would prove nothing about the tail's motion.
+            chest = about(rig.jointOrigin(JointTable.CHEST),
+                    gait.leanDegrees() * 0.55F * leanSign + 2.5F * (float) Math.sin(2.0F * phase),
+                    bob * 0.5F);
+            head = about(rig.jointOrigin(JointTable.HEAD),
+                    -gait.leanDegrees() * 0.45F * leanSign + 3.5F * (float) Math.sin(2.0F * phase + 1.0F),
+                    0.0F);
+            thighRight = about(rig.jointOrigin(JointTable.THIGH_R),
+                    gait.strideDegrees() * (float) Math.sin(phase), 0.0F);
+            thighLeft = about(rig.jointOrigin(JointTable.THIGH_L),
+                    gait.strideDegrees() * (float) Math.sin(phase + Math.PI), 0.0F);
+            legRight = about(rig.jointOrigin(JointTable.LEG_R),
+                    gait.kneeDegrees() * (float) Math.sin(phase + 2.0F), 0.0F);
+            legLeft = about(rig.jointOrigin(JointTable.LEG_L),
+                    gait.kneeDegrees() * (float) Math.sin(phase + Math.PI + 2.0F), 0.0F);
+        }
+
+        @Override
+        public OpenMatrix4f toOriginOf(int joint) {
+            return TO_ORIGIN;
+        }
+
+        @Override
+        public OpenMatrix4f poseOf(int joint) {
+            if (joint == JointTable.TORSO) {
+                return torso;
+            }
+            if (joint == JointTable.CHEST) {
+                return chest;
+            }
+            if (joint == JointTable.HEAD) {
+                return head;
+            }
+            if (joint == JointTable.THIGH_R) {
+                return thighRight;
+            }
+            if (joint == JointTable.THIGH_L) {
+                return thighLeft;
+            }
+            if (joint == JointTable.LEG_R) {
+                return legRight;
+            }
+            if (joint == JointTable.LEG_L) {
+                return legLeft;
+            }
+            return TO_ORIGIN;
+        }
+    }
+
+    /** The production frame loop over a moving body, recording every traced piece. */
+    private static YsmMeshSecondaryMotion.State runGait(Rig rig, RunPose pose, Gait gait,
+                                                        List<Trace> traces, Set<String> rigid,
+                                                        Map<String, Float> limitDeg) {
+        return runGait(rig, pose, gait, traces, rigid, limitDeg, Map.of());
+    }
+
+    /** The same, with a per-piece damping ratio for the pieces named. */
+    private static YsmMeshSecondaryMotion.State runGait(Rig rig, RunPose pose, Gait gait,
+                                                        List<Trace> traces, Set<String> rigid,
+                                                        Map<String, Float> limitDeg,
+                                                        Map<String, Float> damping) {
+        YsmPhysicsParts.Model parts = productionModel(rig, damping);
+        YsmMeshSecondaryMotion.State state = new YsmMeshSecondaryMotion.State(
+                parts, null, (float) YsmPhysicsTuning.DEFAULTS.maxAngle);
+        for (int i = 0; i < parts.segments().length; i++) {
+            String name = parts.segments()[i].boneName();
+            state.held[i] = rigid.contains(name);
+            Float degrees = name == null ? null : limitDeg.get(name.toLowerCase(Locale.ROOT));
+            if (degrees != null) {
+                state.limit[i] = (float) Math.toRadians(degrees);
+            }
+        }
+        Vector3f velocity = new Vector3f(0.0F, 0.0F, -gait.speed());
+        for (int frame = 0; frame < GAIT_FRAMES; frame++) {
+            pose.at(frame * DT);
+            YsmMeshSecondaryMotion.simulate(state, pose, DT, velocity, NO_TURN,
+                    YsmDynamicBoneSolver.NO_COLLIDERS);
+            if (frame >= GAIT_WARMUP) {
+                for (Trace trace : traces) {
+                    trace.frame(state);
+                }
+            }
+        }
+        return state;
+    }
+
+    /** The pieces this round follows: the whole garment, the tail and the pieces that look right. */
+    private static List<Trace> tracesOf(Rig rig) {
+        List<Trace> out = new ArrayList<>();
+        for (Segment piece : rig.segments) {
+            if (isGarment(piece.name) || contains(KEEP_SWINGING, piece.name)) {
+                out.add(new Trace(piece, farthestVertex(piece.own, piece.bindPivot)));
+            }
+        }
+        return out;
+    }
+
+    private static Map<String, Float> tipSpeeds(List<Trace> traces) {
+        Map<String, Float> out = new HashMap<>();
+        for (Trace trace : traces) {
+            out.put(trace.piece.name, trace.tipSpeed());
+        }
+        return out;
+    }
+
+    /** One candidate's rows: what it does to the tail, and what it costs everything else. */
+    private static String candidateRows(Rig rig, Candidate candidate, List<Trace> traces,
+                                        Map<String, Float> baselineTips,
+                                        YsmMeshSecondaryMotion.State baseline,
+                                        YsmMeshSecondaryMotion.State state, float cost) {
+        StringBuilder out = new StringBuilder();
+        String[] rows = {"Tail", "Tail2", "Tail3", "Tail4", "Tail5", "Tail6", "Tail7",
+                "LongHair", "LongHair2", "LongRightHair2", "BL3", "RF3"};
+        for (String name : rows) {
+            Trace trace = null;
+            for (Trace candidateTrace : traces) {
+                if (candidateTrace.piece.name.equals(name)) {
+                    trace = candidateTrace;
+                    break;
+                }
+            }
+            if (trace == null) {
+                continue;
+            }
+            Float before = baselineTips.get(name);
+            float speed = trace.tipSpeed();
+            out.append("| ").append(candidate.label()).append(" | `").append(name).append("` | ")
+                    .append(fmt(trace.ownMean())).append(" | ").append(fmt(trace.allowedMean()))
+                    .append(" | ").append(fmt(trace.saturatedShare()))
+                    .append(" | ").append(fmt(trace.composedMax()))
+                    .append(" | ").append(fmt(trace.tipSpread()))
+                    .append(" | ").append(fmt(speed))
+                    .append(" | ").append(before == null ? "-" : fmt(speed - before))
+                    .append(" |\n");
+        }
+        out.append("\n`").append(candidate.label()).append("`: worst move of a piece it does not ")
+                .append("name = ").append(fmt(cost)).append(" blocks.\n\n");
+        return out.toString();
+    }
+
+    /** The largest move a candidate causes in a piece it does not name: the blast radius. */
+    private static float worstUnnamedMove(Rig rig, Candidate candidate,
+                                          YsmMeshSecondaryMotion.State baseline,
+                                          YsmMeshSecondaryMotion.State state) {
+        float worst = 0.0F;
+        for (Segment piece : rig.segments) {
+            String name = piece.name;
+            boolean named = candidate.rigid().contains(name)
+                    || candidate.limitDeg().containsKey(name.toLowerCase(Locale.ROOT));
+            // A piece hanging under a named one is expected to move: its parent's swing changed.
+            if (named || descendsFrom(rig, piece.index, namedIndexes(rig, candidate))) {
+                continue;
+            }
+            worst = Math.max(worst, maxMove(baseline.deltas[piece.index], state.deltas[piece.index],
+                    piece.index, rig));
+        }
+        return worst;
+    }
+
+    private static Set<Integer> namedIndexes(Rig rig, Candidate candidate) {
+        Set<Integer> out = new HashSet<>();
+        for (Segment piece : rig.segments) {
+            if (candidate.rigid().contains(piece.name)
+                    || candidate.limitDeg().containsKey(piece.name.toLowerCase(Locale.ROOT))) {
+                out.add(piece.index);
+            }
+        }
+        return out;
+    }
+
+    /** What one piece did over a run, sampled once per frame after the warm-up. */
+    private static final class Trace {
+        final Segment piece;
+        final Vector3f tip;
+        final List<Float> own = new ArrayList<>();
+        /**
+         * The swing the solver holds, degrees, <b>before</b> the allowance is applied.
+         *
+         * <p>The allowance is a display clamp: {@code resolveSegment} slerps the drawn rotation back
+         * to the limit and writes that into {@code lastDegrees}, but nothing writes it back into the
+         * solver state, so the pendulum keeps swinging past it. The difference between this and
+         * {@link #own} is therefore how far the link is drawn <i>behind</i> where its own physics is -
+         * a link whose difference is never zero is a link drawn held on a stop in every frame.
+         */
+        final List<Float> raw = new ArrayList<>();
+        final List<Float> allowed = new ArrayList<>();
+        final List<Float> composed = new ArrayList<>();
+        final List<Vector3f> tipPath = new ArrayList<>();
+
+        Trace(Segment piece, Vector3f tip) {
+            this.piece = piece;
+            this.tip = tip;
+        }
+
+        void frame(YsmMeshSecondaryMotion.State state) {
+            own.add(state.lastDegrees[piece.index]);
+            raw.add((float) Math.toDegrees(state.states[piece.index].lastAngle));
+            // The budget the chain granted, in the same unit as the swing the solver reported: the
+            // solver works in radians and the log in degrees, and comparing the two without this
+            // conversion reads every piece as pinned.
+            allowed.add((float) Math.toDegrees(state.chainBudget[piece.index]));
+            composed.add(rotationAngleOf(state.deltas[piece.index]));
+            tipPath.add(YsmMeshSecondaryMotion.transformPoint(state.deltas[piece.index], tip,
+                    new Vector3f()));
+        }
+
+        float ownMean() {
+            return mean(own);
+        }
+
+        float ownMax() {
+            return max(own);
+        }
+
+        /** How far the link's <b>drawn</b> swing travels between its own extremes, degrees. */
+        float drawnRange() {
+            return max(own) - min(own);
+        }
+
+        /** The share of frames in which the drawn swing is held below the solver's own: on a stop. */
+        float clippedShare() {
+            int clipped = 0;
+            for (int i = 0; i < own.size() && i < raw.size(); i++) {
+                if (raw.get(i) - own.get(i) > 0.1F) {
+                    clipped++;
+                }
+            }
+            return own.isEmpty() ? 0.0F : (float) clipped / own.size();
+        }
+
+        /** The widest the drawn swing is held below the solver's own, degrees. */
+        float worstClip() {
+            float worst = 0.0F;
+            for (int i = 0; i < own.size() && i < raw.size(); i++) {
+                worst = Math.max(worst, raw.get(i) - own.get(i));
+            }
+            return worst;
+        }
+
+        /** The largest swing the solver itself holds, before the allowance is applied, degrees. */
+        float rawMax() {
+            return max(raw);
+        }
+
+        float allowedMean() {
+            return mean(allowed);
+        }
+
+        /** The share of frames whose own swing is at its own allowance: pinned at the clamp. */
+        float saturatedShare() {
+            int pinned = 0;
+            for (int i = 0; i < own.size(); i++) {
+                if (own.get(i) > 0.5F && own.get(i) >= allowed.get(i) - 0.01F) {
+                    pinned++;
+                }
+            }
+            return own.isEmpty() ? 0.0F : (float) pinned / own.size();
+        }
+
+        float composedMax() {
+            return max(composed);
+        }
+
+        /** How far the composed swing travels between its own extremes. */
+        float composedPeakToPeak() {
+            return max(composed) - min(composed);
+        }
+
+        /** Blocks per second the tip travels: the plainest reading of "all over the place". */
+        float tipSpeed() {
+            float path = 0.0F;
+            for (int i = 1; i < tipPath.size(); i++) {
+                path += tipPath.get(i).distance(tipPath.get(i - 1));
+            }
+            return tipPath.size() < 2 ? 0.0F : path / ((tipPath.size() - 1) * DT);
+        }
+
+        /** How far the tip moves in the worst single frame, blocks per second. */
+        float worstTipSpeed() {
+            float worst = 0.0F;
+            for (int i = 1; i < tipPath.size(); i++) {
+                worst = Math.max(worst, tipPath.get(i).distance(tipPath.get(i - 1)));
+            }
+            return worst / DT;
+        }
+
+        /**
+         * How far apart the two farthest places the tip visited are: the size of the region the
+         * tip swept, which is the plainest reading of "swings all over the place" - a tip that
+         * whips back and forth over a wide arc has a large spread however little path it covers.
+         */
+        float tipSpread() {
+            float minX = Float.MAX_VALUE;
+            float minY = Float.MAX_VALUE;
+            float minZ = Float.MAX_VALUE;
+            float maxX = -Float.MAX_VALUE;
+            float maxY = -Float.MAX_VALUE;
+            float maxZ = -Float.MAX_VALUE;
+            for (Vector3f at : tipPath) {
+                minX = Math.min(minX, at.x);
+                minY = Math.min(minY, at.y);
+                minZ = Math.min(minZ, at.z);
+                maxX = Math.max(maxX, at.x);
+                maxY = Math.max(maxY, at.y);
+                maxZ = Math.max(maxZ, at.z);
+            }
+            return tipPath.isEmpty() ? 0.0F
+                    : (float) Math.sqrt((maxX - minX) * (maxX - minX) + (maxY - minY) * (maxY - minY)
+                            + (maxZ - minZ) * (maxZ - minZ));
+        }
+
+        /** How often the tip reverses direction, per second. */
+        float reversalsPerSecond() {
+            int reversals = 0;
+            Vector3f previous = null;
+            Vector3f last = null;
+            for (Vector3f at : tipPath) {
+                if (last != null) {
+                    Vector3f step = new Vector3f(at).sub(last);
+                    if (previous != null && step.dot(previous) < 0.0F) {
+                        reversals++;
+                    }
+                    if (step.lengthSquared() > 1.0E-10F) {
+                        previous = step;
+                    }
+                }
+                last = at;
+            }
+            return tipPath.size() < 2 ? 0.0F : reversals / ((tipPath.size() - 1) * DT);
+        }
+
+        private static float mean(List<Float> values) {
+            double sum = 0.0D;
+            for (float value : values) {
+                sum += value;
+            }
+            return values.isEmpty() ? 0.0F : (float) (sum / values.size());
+        }
+
+        private static float max(List<Float> values) {
+            float out = Float.NEGATIVE_INFINITY;
+            for (float value : values) {
+                out = Math.max(out, value);
+            }
+            return out == Float.NEGATIVE_INFINITY ? 0.0F : out;
+        }
+
+        private static float min(List<Float> values) {
+            float out = Float.POSITIVE_INFINITY;
+            for (float value : values) {
+                out = Math.min(out, value);
+            }
+            return out == Float.POSITIVE_INFINITY ? 0.0F : out;
+        }
+    }
+
+    private static String gaitTable(Rig rig, Gait gait, List<Trace> traces) {
+        StringBuilder out = new StringBuilder();
+        out.append("### `").append(gait.name()).append("` - lean ")
+                .append(fmt(gait.leanDegrees())).append(" deg, bob ")
+                .append(fmt(gait.bob())).append(" blocks, stride ")
+                .append(fmt(gait.strideDegrees())).append(" deg at ")
+                .append(fmt(gait.hertz())).append(" Hz, body speed ")
+                .append(fmt(gait.speed())).append(" blocks/s\n\n")
+                .append("| bone | support | own mean | own max | allowed mean | **pinned share** | ")
+                .append("composed max | composed p-p | tip speed | worst tip speed | reversals/s |\n")
+                .append("|---|---|---|---|---|---|---|---|---|---|---|\n");
+        for (Trace trace : traces) {
+            Segment piece = trace.piece;
+            out.append("| `").append(piece.name).append("` | `").append(piece.supportName)
+                    .append("` | ").append(fmt(trace.ownMean()))
+                    .append(" | ").append(fmt(trace.ownMax()))
+                    .append(" | ").append(fmt(trace.allowedMean()))
+                    .append(" | ").append(fmt(trace.saturatedShare()))
+                    .append(" | ").append(fmt(trace.composedMax()))
+                    .append(" | ").append(fmt(trace.composedPeakToPeak()))
+                    .append(" | ").append(fmt(trace.tipSpeed()))
+                    .append(" | ").append(fmt(trace.worstTipSpeed()))
+                    .append(" | ").append(fmt(trace.reversalsPerSecond()))
+                    .append(" |\n");
+        }
+        return out.append('\n').toString();
+    }
+
+    // ---- the concentric ladder -----------------------------------------------------------------
+
+    private static String concentricLadder(Rig rig, Map<Long, float[]>[] cells, int[] subset,
+                                           Vector3f axis) {
+        StringBuilder out = new StringBuilder();
+        out.append("## 2. The concentric ladder: the garment's pieces every 60 degrees of azimuth\n\n")
+                .append("Each row lists the pieces whose surface is present in that sector and that ")
+                .append("height band, sorted by the radius they **start** at, with their radial ")
+                .append("interval inside the band. Two concentric garments show up as two groups per ")
+                .append("row; a row whose intervals are not ordered is a crossing, and the exact ")
+                .append("crossings are measured in section 3.\n\n");
+        float[] bandBase = {0.15F, 0.35F, 0.55F, 0.75F, 0.95F, 1.15F, 1.35F};
+        for (int sector = 0; sector < 6; sector++) {
+            out.append("### ").append(sector * 60).append(" deg\n\n")
+                    .append("| height | pieces, innermost first |\n|---|---|\n");
+            for (float base : bandBase) {
+                List<String> rows = new ArrayList<>();
+                for (int index : subset) {
+                    float rMin = Float.MAX_VALUE;
+                    float rMax = 0.0F;
+                    for (Map.Entry<Long, float[]> entry : cells[index].entrySet()) {
+                        if ((int) (entry.getKey() / 1024L) / 30 != sector) {
+                            continue;
+                        }
+                        float y = (entry.getKey() % 1024L) * LADDER_HEIGHT - 4.0F;
+                        if (y < base || y >= base + 0.20F) {
+                            continue;
+                        }
+                        rMin = Math.min(rMin, entry.getValue()[0]);
+                        rMax = Math.max(rMax, entry.getValue()[1]);
+                    }
+                    if (rMin != Float.MAX_VALUE) {
+                        rows.add(String.format(Locale.ROOT, "`%s` %.3f..%.3f",
+                                rig.segments.get(index).name, rMin, rMax));
+                    }
+                }
+                java.util.Collections.sort(rows);
+                out.append("| ").append(fmt(base)).append("..").append(fmt(base + 0.20F))
+                        .append(" | ").append(rows.isEmpty() ? "-" : String.join(", ", rows))
+                        .append(" |\n");
+            }
+            out.append('\n');
+        }
+        return out.toString();
+    }
+
+    // ---- small helpers -------------------------------------------------------------------------
+
+    private static boolean contains(String[] names, String name) {
+        for (String candidate : names) {
+            if (candidate.equals(name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether a piece is part of the skirt: the twelve three-link chains and nothing else. Read as
+     * a name family here only to keep the tables short - the layers themselves are assigned by
+     * measurement in section 4.
+     */
+    private static boolean isSkirtOrTail(String name) {
+        if (name.startsWith("Tail")) {
+            return true;
+        }
+        String[] families = {"RF", "RM", "RB", "LF", "LM", "LB", "FL", "FM", "FR", "BL", "BM", "BR"};
+        for (String family : families) {
+            if (name.startsWith(family)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether a piece is part of the garment: the twelve three-link columns, and the six `FFM*`
+     * pieces of its front - the second family is named unlike the first and was missed by a name
+     * filter on the first run of this probe.
+     */
+    private static boolean isGarment(String name) {
+        return isSkirtOrTail(name) || name.startsWith("FFM");
+    }
+
+    /** The crossings of the list where both pieces are the garment. */
+    private static List<Crossing> garmentOnly(List<Crossing> found, List<String> names) {
+        List<Crossing> out = new ArrayList<>();
+        for (Crossing value : found) {
+            if (isGarment(names.get(value.a())) && isGarment(names.get(value.b()))) {
+                out.add(value);
+            }
+        }
+        return out;
+    }
+
+    /** The piece's own vertex farthest from its pivot: the tip the user watches. */
+    private static Vector3f farthestVertex(List<Vector3f> own, Vector3f pivot) {
+        Vector3f best = pivot;
+        float bestDistance = -1.0F;
+        for (Vector3f vertex : own) {
+            if (vertex == null) {
+                continue;
+            }
+            float distance = vertex.distance(pivot);
+            if (distance > bestDistance) {
+                bestDistance = distance;
+                best = vertex;
+            }
+        }
+        return best;
+    }
+
+    // ------------------------------------------------------------------
     // The production frame loop, driven for the override measurement
     // ------------------------------------------------------------------
 
     /** This model's pieces as the production record, from the probe's own reading of the model. */
     private static YsmPhysicsParts.Model productionModel(Rig rig) {
+        return productionModel(rig, Map.of());
+    }
+
+    /**
+     * The same, with a damping ratio of its own for the pieces named.
+     *
+     * <p>The third key the brief names, measured before it is designed: the damping ratio is a
+     * property of the piece's record here ({@code YsmPhysicsTuning.DEFAULTS.dampingRatio()}, 0.81 for
+     * every piece of every model today), so a candidate can be run without the production change.
+     * The solver clamps the ratio to 0..1, so 1.00 is the most damping it can be given.
+     */
+    private static YsmPhysicsParts.Model productionModel(Rig rig, Map<String, Float> damping) {
         YsmPhysicsParts.Segment[] out = new YsmPhysicsParts.Segment[rig.segments.size()];
         for (int i = 0; i < out.length; i++) {
             Segment s = rig.segments.get(i);
+            Float ratio = damping.get(s.name.toLowerCase(Locale.ROOT));
             out[i] = new YsmPhysicsParts.Segment(s.boneIndex, s.name, s.joint, new Vector3f(s.bindPivot),
                     new Vector3f(s.bindAnchor), new Vector3f(s.bindRest), s.lever, s.radius, s.mass,
                     (float) YsmPhysicsTuning.DEFAULTS.frequency(),
-                    (float) YsmPhysicsTuning.DEFAULTS.dampingRatio(),
+                    ratio == null ? (float) YsmPhysicsTuning.DEFAULTS.dampingRatio() : ratio,
                     s.maxAngle, s.parent, new int[0], false, new int[0],
                     YsmPhysicsParts.classifyBone(rig.bones, s.boneIndex));
         }

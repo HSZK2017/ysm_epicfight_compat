@@ -890,9 +890,23 @@ public final class YSMPlayerAnimator implements Molang.Env {
             float ox = bone.px + (hasPos[i] ? animPos[i][0] : 0);
             float oy = bone.py + (hasPos[i] ? animPos[i][1] : 0);
             float oz = bone.pz + (hasPos[i] ? animPos[i][2] : 0);
-            float rx = hasRot[i] ? animRot[i][0] : bone.rx;
-            float ry = hasRot[i] ? animRot[i][1] : bone.ry;
-            float rz = hasRot[i] ? animRot[i][2] : bone.rz;
+            // A clip's rotation is an OFFSET from the bone's authored rotation, not a replacement
+            // for it, and this must not be "simplified" back to `hasRot[i] ? animRot[i][0] :
+            // bone.rx`. The mesh is baked WITH the authored rotations (EFMeshJsonWriter#walkBone
+            // 271-276), so replacing them un-rotates the geometry by the whole bind angle for as long
+            // as the clip is active - on the maid's `Tail2` (authored 127.5 deg, carrying the entire
+            // tip section) that is a 0.896-block fold, identical in every state including standing
+            // still, and it is the defect this line fixes. Every reference implementation adds the
+            // two: YSM's own ModernYSM geckolib3/core/snapshot/BoneTopLevelSnapshot.java 45-48
+            // (`setRotationX(this.rotation.x + initialRotation.x)`) with
+            // geckolib3/core/util/MathUtil.java 30-46 (nlerpEulerAngles adds `offsetEuler` = the
+            // bone's initial rotation before the quaternion and subtracts it after); OpenYSM, the
+            // same file and the same lines; and this project's own sibling
+            // 参考/YSM-EFC-sakura-1.20.1 .../animation/ParallelAnimationProgram.java 4609-4614
+            // (`float rx = bone.rotationX() + (pose.hasRotation[auxiliary] ? ... : 0.0F);`).
+            float rx = bone.rx + (hasRot[i] ? animRot[i][0] : 0.0F);
+            float ry = bone.ry + (hasRot[i] ? animRot[i][1] : 0.0F);
+            float rz = bone.rz + (hasRot[i] ? animRot[i][2] : 0.0F);
             localAnim[i].translation(ox, oy, oz)
                     .rotateZ(rz).rotateY(ry).rotateX(rx)
                     .scale(sx, sy, sz)

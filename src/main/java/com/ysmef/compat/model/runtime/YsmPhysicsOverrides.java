@@ -11,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -79,8 +80,28 @@ public final class YsmPhysicsOverrides {
     /** The one key this file format reads. */
     private static final String RIGID_KEY = "rigid";
 
+    /**
+     * The second key: a per-bone ceiling on the swing the solver may keep, in degrees.
+     *
+     * <p>Where {@code rigid} removes a piece's motion, this only bounds it. It exists because a
+     * piece can be at its <i>chain's</i> allowance in every frame and therefore have no spring left
+     * to give back - measured on this model's fox tail, whose seven links each sit at their granted
+     * 18.3 degrees in every frame of every state, so the tip is where seven clamps add up (69
+     * degrees, against 39 for the hair that looks right) and its direction follows the airflow 1:1.
+     * A ceiling here does not restore the spring; it bounds what the chain's clamped links can add
+     * up to, which is the visible quantity.
+     *
+     * <pre>
+     * { "rigid": ["BaseHair"], "limitDeg": { "Tail5": 8, "Tail6": 8, "Tail7": 8 } }
+     * </pre>
+     */
+    private static final String LIMIT_KEY = "limitDeg";
+
     /** Bone names are matched the way YSM writes them, but not case-sensitively. */
     private static final Map<String, Set<String>> RIGID_CACHE = new ConcurrentHashMap<>();
+
+    /** The per-bone swing ceilings this model's file asks for, radians, keyed the same way. */
+    private static final Map<String, Map<String, Float>> LIMIT_CACHE = new ConcurrentHashMap<>();
 
     /** Models already reported, so each of the lines below is written at most once per model. */
     private static final Set<String> LOGGED_MODELS = ConcurrentHashMap.newKeySet();
@@ -107,21 +128,50 @@ public final class YsmPhysicsOverrides {
      */
     static int markHeld(String modelId, YSMRuntimeModel.BoneRt[] bones,
                         YsmPhysicsParts.Segment[] segments, boolean[] held) {
-        if (segments == null || held == null || segments.length == 0) {
+        return markOverrides(modelId, bones, segments, held, null);
+    }
+
+    /**
+     * Apply this model's whole override file: the bones held rigid and the bones whose swing is
+     * capped, and report what it did - once per model, whichever of the two keys did something.
+     *
+     * <p>Called once per model, where its segments are built. Both arrays are left alone unless a
+     * file exists, so the frame path's {@code held} and {@code limit} branches are unreachable for
+     * every model without one - which is what makes the no-file case the shipped behaviour rather
+     * than a re-derivation of it.
+     *
+     * @param modelId  the YSM model id (may be null)
+     * @param bones    the model's runtime bone table, for telling "not a bone of this model" from
+     *                 "a bone that is not a piece the simulation moves" (may be null)
+     * @param segments the model's physics pieces
+     * @param held     the rigid flags to set, indexed like {@code segments} (may be null)
+     * @param limits   the per-bone ceilings in radians to set, or null for "no ceilings"
+     * @return how many pieces were held
+     */
+    static int markOverrides(String modelId, YSMRuntimeModel.BoneRt[] bones,
+                             YsmPhysicsParts.Segment[] segments, boolean[] held, float[] limits) {
+        if (segments == null || segments.length == 0 || (held == null && limits == null)) {
             return 0;
         }
         Set<String> names = rigidBones(modelId);
-        if (names.isEmpty()) {
+        Map<String, Float> ceilings = limits(modelId);
+        if (names.isEmpty() && ceilings.isEmpty()) {
             return 0;
         }
         List<String> notPieces = new ArrayList<>();
         List<String> notBones = new ArrayList<>();
-        int count = hold(names, bones, segments, held, notBones, notPieces);
+        int count = held == null ? 0 : hold(names, bones, segments, held, notBones, notPieces);
+        int capped = limits == null ? 0
+                : cap(ceilings, bones, segments, limits, notBones, notPieces);
         if (LOGGED_MODELS.add(modelId == null ? "" : modelId)) {
-            if (count > 0) {
+            if (count > 0 || capped > 0) {
                 YSMEpicFightCompat.LOGGER.info(
-                        "YSM-EF Compat: [physics] model '{}': {} bone(s) held rigid by physics_overrides/{}.json [{}]",
-                        modelId, count, relativeFile(modelId), namesOf(segments, held));
+                        "YSM-EF Compat: [physics] model '{}':{}{} from physics_overrides/{}.json [{}]",
+                        modelId,
+                        count > 0 ? " " + count + " bone(s) held rigid" : "",
+                        capped > 0 ? " " + capped + " bone(s) with a swing ceiling ("
+                                + ceilingsOf(segments, limits) + ")" : "",
+                        relativeFile(modelId), namesOf(segments, held));
             }
             if (!notBones.isEmpty() || !notPieces.isEmpty()) {
                 // One warning, because the user has to be able to see that the file was read and
@@ -134,6 +184,59 @@ public final class YsmPhysicsOverrides {
                         notBones.isEmpty() || notPieces.isEmpty() ? "" : "; ",
                         notPieces.isEmpty() ? ""
                                 : quote(notPieces) + " on this model but not a piece the simulation moves, so it already follows its joint");
+            }
+        }
+        return count;
+    }
+
+    /**
+     * The decision for the ceilings: which pieces a map of name to degrees caps, and why the rest
+     * cap nothing. Ceilings are stored in radians, because that is the unit the frame path compares
+     * in; a file's {@code 8} is eight degrees.
+     *
+     * @return how many flags this changed
+     */
+    static int cap(Map<String, Float> ceilings, YSMRuntimeModel.BoneRt[] bones,
+                   YsmPhysicsParts.Segment[] segments, float[] limits,
+                   List<String> notBones, List<String> notPieces) {
+        if (ceilings == null || ceilings.isEmpty() || segments == null || limits == null) {
+            return 0;
+        }
+        int count = 0;
+        for (Map.Entry<String, Float> entry : ceilings.entrySet()) {
+            String name = entry.getKey();
+            float radians = entry.getValue() == null ? 0.0F : entry.getValue();
+            if (name == null || name.isEmpty() || !(radians > 0.0F)) {
+                continue;
+            }
+            int matched = 0;
+            for (int i = 0; i < segments.length && i < limits.length; i++) {
+                YsmPhysicsParts.Segment segment = segments[i];
+                String boneName = segment == null ? null : segment.boneName();
+                if (boneName == null || !boneName.toLowerCase(Locale.ROOT).equals(name)) {
+                    continue;
+                }
+                matched++;
+                // Only ever tightens: a ceiling above what the chain already grants is the same as
+                // no ceiling, and writing it would make the log claim a limit that never bites.
+                float ceiling = radians;
+                if (limits[i] <= 0.0F || ceiling < limits[i]) {
+                    limits[i] = ceiling;
+                    count++;
+                }
+            }
+            if (matched > 0) {
+                continue;
+            }
+            if (notBones == null && notPieces == null) {
+                continue;
+            }
+            if (hasBone(bones, name)) {
+                if (notPieces != null) {
+                    notPieces.add(name);
+                }
+            } else if (notBones != null) {
+                notBones.add(name);
             }
         }
         return count;
@@ -215,6 +318,26 @@ public final class YsmPhysicsOverrides {
         return read;
     }
 
+    /**
+     * The per-bone swing ceilings this model's file asks for, in radians, or an empty map.
+     *
+     * <p>Empty is the answer for every quiet case, exactly as for the rigid set: no file, no folder,
+     * no {@code limitDeg} object, a model id that cannot name a file, or a file that could not be
+     * read (which has already warned).
+     */
+    static Map<String, Float> limits(String modelId) {
+        if (modelId == null || modelId.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Float> cached = LIMIT_CACHE.get(modelId);
+        if (cached != null) {
+            return cached;
+        }
+        Map<String, Float> read = readLimits(OVERRIDE_DIR, modelId);
+        LIMIT_CACHE.put(modelId, read);
+        return read;
+    }
+
     // ------------------------------------------------------------------
     // The file format
     // ------------------------------------------------------------------
@@ -227,9 +350,96 @@ public final class YsmPhysicsOverrides {
      * @return the bone names to hold, lower-cased; empty when there is nothing to hold
      */
     static Set<String> read(Path dir, String modelId) {
+        JsonObject root = rootOf(dir, modelId, RIGID_KEY);
+        if (root == null) {
+            return Set.of();
+        }
+        JsonElement element = root.get(RIGID_KEY);
+        if (element == null) {
+            return Set.of();
+        }
+        if (!element.isJsonArray()) {
+            // Said out loud rather than treated as an empty list: a misspelled key is the one
+            // mistake the format cannot otherwise distinguish from "hold nothing", and its
+            // symptom on screen is the defect the file was written to fix.
+            YSMEpicFightCompat.LOGGER.warn(
+                    "YSM-EF Compat: physics override file {} has a '{}' that is not an array of bone "
+                            + "names - ignored",
+                    fileFor(dir, modelId), RIGID_KEY);
+            return Set.of();
+        }
+        Set<String> names = new LinkedHashSet<>();
+        for (JsonElement item : element.getAsJsonArray()) {
+            if (item.isJsonPrimitive() && item.getAsJsonPrimitive().isString()) {
+                String name = item.getAsString().trim();
+                if (!name.isEmpty()) {
+                    names.add(name.toLowerCase(Locale.ROOT));
+                }
+            }
+        }
+        return Set.copyOf(names);
+    }
+
+    /**
+     * Read one model's swing ceilings from one folder. The same file as {@link #read}, the other
+     * key; deliberately uncached for the same reason, so the rules can be tested against a temporary
+     * folder rather than against the game's config.
+     *
+     * @return the bone names to cap, lower-cased, with their ceilings in radians
+     */
+    static Map<String, Float> readLimits(Path dir, String modelId) {
+        JsonObject root = rootOf(dir, modelId, LIMIT_KEY);
+        if (root == null) {
+            return Map.of();
+        }
+        JsonElement element = root.get(LIMIT_KEY);
+        if (element == null) {
+            return Map.of();
+        }
+        if (!element.isJsonObject()) {
+            YSMEpicFightCompat.LOGGER.warn(
+                    "YSM-EF Compat: physics override file {} has a '{}' that is not an object of "
+                            + "bone name to degrees - ignored",
+                    fileFor(dir, modelId), LIMIT_KEY);
+            return Map.of();
+        }
+        Map<String, Float> out = new LinkedHashMap<>();
+        for (Map.Entry<String, JsonElement> entry : element.getAsJsonObject().entrySet()) {
+            String name = entry.getKey() == null ? "" : entry.getKey().trim();
+            JsonElement value = entry.getValue();
+            if (name.isEmpty() || value == null || !value.isJsonPrimitive()
+                    || !value.getAsJsonPrimitive().isNumber()) {
+                YSMEpicFightCompat.LOGGER.warn(
+                        "YSM-EF Compat: physics override file {} has a '{}' entry that is not a "
+                                + "number of degrees: '{}' - skipped",
+                        fileFor(dir, modelId), LIMIT_KEY, name);
+                continue;
+            }
+            float degrees = value.getAsFloat();
+            if (!Float.isFinite(degrees) || degrees <= 0.0F) {
+                YSMEpicFightCompat.LOGGER.warn(
+                        "YSM-EF Compat: physics override file {} has '{}' {} set to {} - a ceiling "
+                                + "must be a positive number of degrees, so it is skipped",
+                        fileFor(dir, modelId), LIMIT_KEY, name, degrees);
+                continue;
+            }
+            out.put(name.toLowerCase(Locale.ROOT), (float) Math.toRadians(degrees));
+        }
+        return Map.copyOf(out);
+    }
+
+    /**
+     * The parsed object of one model's override file, or null when there is nothing to read. The one
+     * place a file that is not an object, or cannot be read at all, is reported - and it is reported
+     * only when the file carries <b>neither</b> of the two keys this format knows, so a file that
+     * uses only one of them is not scolded for the other.
+     *
+     * @param askedFor the key whose reader is asking, named in the warning
+     */
+    private static JsonObject rootOf(Path dir, String modelId, String askedFor) {
         Path file = fileFor(dir, modelId);
         if (file == null || !Files.isRegularFile(file)) {
-            return Set.of();
+            return null;
         }
         try {
             String text = Files.readString(file, StandardCharsets.UTF_8);
@@ -237,33 +447,23 @@ public final class YsmPhysicsOverrides {
             if (!parsed.isJsonObject()) {
                 YSMEpicFightCompat.LOGGER.warn(
                         "YSM-EF Compat: physics override file {} is not a JSON object - ignored", file);
-                return Set.of();
+                return null;
             }
             JsonObject root = parsed.getAsJsonObject();
-            JsonElement element = root.get(RIGID_KEY);
-            if (element == null || !element.isJsonArray()) {
-                // Said out loud rather than treated as an empty list: a misspelled key is the one
-                // mistake the format cannot otherwise distinguish from "hold nothing", and its
-                // symptom on screen is the defect the file was written to fix.
+            // Warned about by the first reader only - the frame path always asks the rigid list
+            // first - so a file that uses neither key is reported once rather than once per key.
+            if (!root.has(RIGID_KEY) && !root.has(LIMIT_KEY) && RIGID_KEY.equals(askedFor)) {
                 YSMEpicFightCompat.LOGGER.warn(
-                        "YSM-EF Compat: physics override file {} has no '{}' array of bone names - ignored",
-                        file, RIGID_KEY);
-                return Set.of();
+                        "YSM-EF Compat: physics override file {} has neither a '{}' array of bone "
+                                + "names nor a '{}' object of bone name to degrees - ignored",
+                        file, RIGID_KEY, LIMIT_KEY);
+                return null;
             }
-            Set<String> names = new LinkedHashSet<>();
-            for (JsonElement item : element.getAsJsonArray()) {
-                if (item.isJsonPrimitive() && item.getAsJsonPrimitive().isString()) {
-                    String name = item.getAsString().trim();
-                    if (!name.isEmpty()) {
-                        names.add(name.toLowerCase(Locale.ROOT));
-                    }
-                }
-            }
-            return Set.copyOf(names);
+            return root;
         } catch (Throwable t) {
             YSMEpicFightCompat.LOGGER.warn(
                     "YSM-EF Compat: could not read physics override file {} - ignored", file, t);
-            return Set.of();
+            return null;
         }
     }
 
@@ -330,10 +530,32 @@ public final class YsmPhysicsOverrides {
 
     /** The names held, in segment order, for the log. */
     private static String namesOf(YsmPhysicsParts.Segment[] segments, boolean[] held) {
+        if (held == null) {
+            return "";
+        }
         StringBuilder builder = new StringBuilder();
         for (int i = 0; i < segments.length && i < held.length; i++) {
             if (held[i]) {
                 builder.append(builder.length() == 0 ? "" : ", ").append(segments[i].boneName());
+            }
+        }
+        return builder.toString();
+    }
+
+    /** The ceilings in force, in segment order, for the log: {@code Tail5<=8.0deg, ...}. */
+    private static String ceilingsOf(YsmPhysicsParts.Segment[] segments, float[] limits) {
+        if (limits == null) {
+            return "";
+        }
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < segments.length && i < limits.length; i++) {
+            if (limits[i] > 0.0F) {
+                if (builder.length() > 0) {
+                    builder.append(", ");
+                }
+                builder.append(segments[i].boneName()).append("<=")
+                        .append(String.format(Locale.ROOT, "%.1f", Math.toDegrees(limits[i])))
+                        .append("deg");
             }
         }
         return builder.toString();
@@ -354,6 +576,7 @@ public final class YsmPhysicsOverrides {
     /** Drop every cache; the files are re-read on the next mesh that needs them. */
     public static synchronized void invalidate() {
         RIGID_CACHE.clear();
+        LIMIT_CACHE.clear();
         LOGGED_MODELS.clear();
     }
 

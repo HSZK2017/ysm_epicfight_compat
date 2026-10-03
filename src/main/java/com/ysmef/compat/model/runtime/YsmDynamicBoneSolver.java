@@ -1,5 +1,6 @@
 package com.ysmef.compat.model.runtime;
 
+import org.joml.Matrix4f;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 
@@ -507,6 +508,198 @@ public final class YsmDynamicBoneSolver {
     private final Vector3f before = new Vector3f();
     private final Vector3f contactAxis = new Vector3f();
     private final Vector3f restCentre = new Vector3f();
+    /**
+     * The rest direction the returned rotation actually produces, {@code swing x restDir} - the vector
+     * the rest centre, the collision response's axis and the limit's cone are all measured from. See
+     * {@link #resolveCollisions}: built here rather than read from the deformation so that one
+     * derivation answers all of them.
+     */
+    private final Vector3f rotatedRest = new Vector3f();
+    /**
+     * The pivot, carried into the frame the piece is drawn in - the same rigid motion the tested point
+     * gets. A scratch rather than a local, because this runs per segment per frame on the render
+     * thread and the solver is shared; the method is not reentrant and never was.
+     */
+    private final Vector3f pivotInBody = new Vector3f();
+    /** The inverse of the frame's rotation, for carrying a correction back. See #resolveCollisions. */
+    private final Matrix4f ancestorFrameInverse = new Matrix4f();
+    /** The rotation this call returns, in JOML form, so the collision test can use the same one. */
+    private final Quaternionf rotationOut = new Quaternionf();
+    /**
+     * Which segment the frame path is resolving, for {@link YsmMeshSecondaryMotion#PROBE_TESTED_POINTS};
+     * -1 for a caller that is not the frame path, which is every caller but one. A parameter in
+     * substance and a field only because it is a fact about the caller rather than about the piece.
+     */
+    private int probeSegment = -1;
+
+    /** See {@link #probeSegment}. */
+    public void setProbeSegment(int index) {
+        this.probeSegment = index;
+        if (index >= 0 && index < PROBE_LAST_FRAME.length) {
+            PROBE_LAST_FRAME[index] = probeFrame;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // The collision QUESTION, recorded where it is built.
+    //
+    // A measurement of "is the point a volume is asked about the point the piece is drawn at" is only
+    // as good as its answer to two questions: which piece, and which frame. The previous hook answered
+    // the first (the point is built where the solver builds it) and could not answer the second: it was
+    // a `Map<Integer, Vector3f>` overwritten on every collision iteration and never cleared by the
+    // frame path, so a piece the solver did not reach this frame left last frame's point behind and a
+    // reader had no way to tell. `ProbeQuestion` is the same fact with its provenance attached, and it
+    // is a LIST rather than a map so that nothing can be silently overwritten.
+    //
+    // One record per piece per frame, appended in `resolveCollisions` before the first volume is
+    // consulted and finished after the last one. Its fields are the quantities the point was BUILT
+    // from - not values that can be re-derived from a state the response has since moved - so a
+    // reader can check the invariant that defines the point without re-running the frame.
+    //
+    // Cost when no probe is attached: one comparison per collision question, and nothing else.
+    // ------------------------------------------------------------------
+
+    /**
+     * One collision question, with everything the point was built from.
+     *
+     * <p>The solver holds the centre of mass on a sphere of radius `lever` about `modelPivot` - its own
+     * frame - and the mesh draws the piece in the ancestors' frame, so the point that is carried to the
+     * volumes is that point under the ancestors' frame. Both are recorded, because they are two
+     * different points and mixing them is exactly how a measurement of this gap goes wrong:
+     *
+     * <pre>
+     *   model      ==  modelPivot      + direction      * lever
+     *   transformed == transformedPivot + ancestorRotation(direction) * lever
+     * </pre>
+     *
+     * <p>`asked.point` is what the volumes were handed; `anchor.point` is where the call started, before
+     * any push, which is the same question a no-collision arm poses. `restDir` is the pose's own
+     * direction, model space, kept so the swing the piece was asked at can be measured without reading
+     * the state, which the response mutates in place.
+     */
+    public static final class ProbeQuestion {
+        /** Which pass over the segments this question belongs to; see {@link #advanceProbeFrame()}. */
+        public final int frame;
+        /** The piece's index in the simulated set - the same index the frame path resolves. */
+        public final int index;
+        /** The radius the piece is held on, blocks. */
+        public final float lever;
+        /** The pivot in the solver's own frame, as the state holds it. */
+        public final Vector3f modelPivot = new Vector3f();
+        /** The same pivot under the ancestors' frame - the one the volumes are handed. */
+        public final Vector3f transformedPivot = new Vector3f();
+        /** The ancestors' composed delta, copied; identity for a piece with no chain. */
+        public final Matrix4f ancestorFrame = new Matrix4f();
+        /** Whether {@link #ancestorFrame} is a real chain or the identity of a root piece. */
+        public boolean carried;
+        /** The pose's rest direction for this piece, model space, unit. */
+        public final Vector3f restDir = new Vector3f();
+        /** Where the call started, model space: before any volume has had a chance to push. */
+        public final Vector3f anchorDirection = new Vector3f();
+        /** {@link #anchorDirection} in the solver's frame; equals {@link #anchorModelPoint()}. */
+        public final Vector3f anchorModelPoint = new Vector3f();
+        /** The last direction a volume was asked about, model space, or the anchor's if none was. */
+        public final Vector3f askedDirection = new Vector3f();
+        /** {@link #askedDirection} in the solver's frame; equals {@link #askedModelPoint()}. */
+        public final Vector3f askedModelPoint = new Vector3f();
+        /** The last point a volume was actually asked about, in the frame the piece is drawn in. */
+        public final Vector3f askedPoint = new Vector3f();
+        /**
+         * 0 while no volume has been asked yet, then the loop iteration that last asked one. A reader
+         * that wants "the question the frame path posed" takes {@link #askedPoint}; a reader that wants
+         * "where the piece was tested before collision answered" takes {@link #anchorTransformed()}.
+         */
+        public int phase;
+        /** How many volumes were skipped for this piece on the last iteration - diagnostic only. */
+        public int skipped;
+        /** How many volumes were consulted on the last iteration - diagnostic only. */
+        public int consulted;
+
+        ProbeQuestion(int frame, int index, float lever) {
+            this.frame = frame;
+            this.index = index;
+            this.lever = lever;
+        }
+
+        /** {@link #modelPivot} plus {@link #anchorDirection} times {@link #lever}. */
+        public Vector3f anchorModelPoint() {
+            return new Vector3f(this.anchorDirection).mul(this.lever).add(this.modelPivot);
+        }
+
+        /** {@link #modelPivot} plus {@link #askedDirection} times {@link #lever}. */
+        public Vector3f askedModelPoint() {
+            return new Vector3f(this.askedDirection).mul(this.lever).add(this.modelPivot);
+        }
+
+        /** The anchor question carried to the volumes' frame. */
+        public Vector3f anchorTransformed() {
+            return this.carried
+                    ? this.ancestorFrame.transformPosition(anchorModelPoint())
+                    : anchorModelPoint();
+        }
+
+        /** The direction the volumes were given, in their own frame. */
+        public Vector3f askedTransformedDirection() {
+            return this.carried
+                    ? this.ancestorFrame.transformDirection(new Vector3f(this.askedDirection))
+                    : new Vector3f(this.askedDirection);
+        }
+    }
+
+    /** Every collision question of the pass being run; see {@link #ProbeQuestion}. */
+    public static final java.util.List<ProbeQuestion> PROBE_QUESTIONS = new java.util.ArrayList<>();
+
+    /** The pass over the segments the frame path is on; 0 for a caller that is not the frame path. */
+    private static int probeFrame;
+
+    /** The pass each piece was last asked about, so "was this piece asked about this frame" is a fact. */
+    private static final int[] PROBE_LAST_FRAME = new int[256];
+
+    /**
+     * Start a new pass over the segments: the frame path calls this once per frame, before the first
+     * segment, and nothing on the frame path calls it otherwise.
+     *
+     * <p>The records are NOT cleared here. A reader wants the pass it just ran, and a frame path that
+     * deleted its own evidence at the top of the next frame would make a stale read impossible to
+     * diagnose - which is the fault this class of record exists to end. {@link #resetProbe()} is what
+     * a test calls between runs.
+     */
+    public static void advanceProbeFrame() {
+        probeFrame++;
+    }
+
+    /** Forget every recorded question and start again at frame 0. For a test, between runs. */
+    public static void resetProbe() {
+        PROBE_QUESTIONS.clear();
+        java.util.Arrays.fill(PROBE_LAST_FRAME, 0);
+        probeFrame = 0;
+    }
+
+    /** The pass {@link #ProbeQuestion}s are being tagged with. */
+    public static int probeFrame() {
+        return probeFrame;
+    }
+
+    /** The frame {@code index} was last asked about, or 0 if it never was. */
+    public static int probeFrameOf(int index) {
+        return index >= 0 && index < PROBE_LAST_FRAME.length ? PROBE_LAST_FRAME[index] : 0;
+    }
+
+    /**
+     * The question recorded for {@code index} during the pass just run, or null if the piece was not
+     * asked about in it. There is at most one such record per pass, by construction.
+     */
+    public static ProbeQuestion probeQuestionFor(int index) {
+        java.util.List<ProbeQuestion> all = PROBE_QUESTIONS;
+        for (int i = all.size() - 1; i >= 0; i--) {
+            ProbeQuestion question = all.get(i);
+            if (question.index == index) {
+                return question.frame == probeFrame ? question : null;
+            }
+        }
+        return null;
+    }
+
     /** The direction collision found the piece in, so the log can report what collision did. */
     private final Vector3f entryDirection = new Vector3f();
     /**
@@ -699,7 +892,7 @@ public final class YsmDynamicBoneSolver {
                        boolean[] collideAgainst, float dt, Quaternionf out) {
         update(state, gravity, airDrag, verticalFollow, downTarget, pivot, restDir, lever, frequency,
                 damping, mass, maxAngle, bodyVelocity, colliders, segmentRadius, collideAgainst,
-                0.0F, 0.0F, dt, out);
+                0.0F, 0.0F, dt, out, null, null);
     }
 
     /**
@@ -725,7 +918,7 @@ public final class YsmDynamicBoneSolver {
                        Quaternionf pivotDelta) {
         update(state, gravity, airDrag, verticalFollow, downTarget, pivot, restDir, lever, frequency,
                 damping, mass, maxAngle, bodyVelocity, colliders, segmentRadius, collideAgainst,
-                0.0F, 0.0F, dt, out, pivotDelta);
+                0.0F, 0.0F, dt, out, pivotDelta, null);
     }
 
     /**
@@ -791,6 +984,38 @@ public final class YsmDynamicBoneSolver {
                        Vector3f bodyVelocity, Colliders colliders, float segmentRadius,
                        boolean[] collideAgainst, float bodyYawRate, float bodyYawAccel,
                        float dt, Quaternionf out, Quaternionf pivotDelta) {
+        update(state, gravity, airDrag, verticalFollow, downTarget, pivot, restDir, lever, frequency,
+                damping, mass, maxAngle, bodyVelocity, colliders, segmentRadius, collideAgainst,
+                bodyYawRate, bodyYawAccel, dt, out, pivotDelta, null);
+    }
+
+    /**
+     * The same, with the rigid motion the piece's <b>ancestors</b> apply to it - the frame the mesh
+     * draws it in.
+     *
+     * <p>The solver answers one question: which way this piece swings about its own bind pivot. The
+     * mesh does not draw the piece at that answer, it draws it at that answer carried by every
+     * ancestor's delta as well ({@code YsmMeshSecondaryMotion} composes each delta under its
+     * parent's), so without this parameter the collision test asks about a piece that is not on
+     * screen. Measured before the parameter existed, the point a volume was asked about sat 0.489
+     * blocks from the centre of mass the mesh drew, on a panel of the reported model.
+     *
+     * <p>The frame is applied to the collision QUESTION and to nothing else. Integration and the
+     * persistent state stay in the model's frame, and because the frame is rigid the correction comes
+     * back by the same map - a rotation is unchanged by turning the space it acts in - so no state
+     * moves and no caller other than the frame path has to know this exists.
+     *
+     * @param ancestorFrame the ancestors' composed delta, or null for a piece with no chain, which is
+     *                      bit for bit the behaviour this method had before the parameter existed
+     */
+    public void update(SegmentState state, float gravity, float airDrag,
+                       float verticalFollow, Vector3f downTarget,
+                       Vector3f pivot,
+                       Vector3f restDir, float lever,
+                       float frequency, float damping, float mass, float maxAngle,
+                       Vector3f bodyVelocity, Colliders colliders, float segmentRadius,
+                       boolean[] collideAgainst, float bodyYawRate, float bodyYawAccel,
+                       float dt, Quaternionf out, Quaternionf pivotDelta, Matrix4f ancestorFrame) {
         out.identity();
         if (state == null || pivot == null || restDir == null) {
             return;
@@ -1021,8 +1246,35 @@ public final class YsmDynamicBoneSolver {
         // The swing limit is the one constraint that follows the target, and the measurements behind
         // that are in applySwingLimit's own comment: a cone about the pose cannot deliver the rest
         // angle a weight asks for, and rests the piece on the stop instead of on the balance.
+        //
+        // ------------------------------------------------------------------
+        // The limit is applied BEFORE the collision test, and this is the one place the old order
+        // was wrong.
+        //
+        // Both calls write `state.direction`, and both the mesh the piece is drawn from and the
+        // rotation this method returns come from what is left afterwards. Running the collision
+        // test first therefore asked the volumes about a direction the piece may never keep: on the
+        // reported model `LeftSideHair` sat exactly at its 20.000-degree ceiling and was tested 0.41
+        // blocks from where it is drawn, with no contact anywhere and no other symptom. Testing the
+        // free direction and then clamping it is asking about a pose that does not exist.
+        //
+        // Applying the limit first fixes that and loses nothing, because the limit is a projection
+        // onto a cone: `clamp(clamp(d)) == clamp(d)`, so the piece leaves this call inside the cone
+        // exactly as it did before. What changes is the direction the collision test is asked about -
+        // now the drawn one - and the direction the correction is measured from: the limit may only
+        // ever turn the piece back toward the pose, and it does.
+        //
+        // The order the 99.4-degree measurement above warns about is preserved in the part that
+        // matters: the limit is still applied last, so a correction can never leave the piece past
+        // its ceiling for the frame that is drawn.
+        // ------------------------------------------------------------------
+        applySwingLimit(state, this.target, maxAngle);
+        // The rotation this call will return, computed here so the collision test is asked about the
+        // same direction and measured from the same rest vector as the transform it produces. See
+        // resolveCollisions: it uses this for the rest centre and the returned quaternion alike.
+        rotationFromTo(this.rotationOut, this.rest, state.direction);
         resolveCollisions(state, pivot, this.rest, lever, maxAngle, colliders, segmentRadius,
-                this.target);
+                this.target, this.rotationOut, ancestorFrame);
         applySwingLimit(state, this.target, maxAngle);
 
         state.lastAngle = angleBetween(this.rest, state.direction);
@@ -1144,16 +1396,30 @@ public final class YsmDynamicBoneSolver {
      */
     private void resolveCollisions(SegmentState state, Vector3f pivot, Vector3f restDir, float lever,
                                    float maxAngle, Colliders colliders, float segmentRadius,
-                                   Vector3f coneAxis) {
+                                   Vector3f coneAxis, Quaternionf swing, Matrix4f ancestorFrame) {
         state.lastContact = 0.0F;
         if (colliders == null || colliders.count() == 0) {
             return;
         }
+        // The rotation the caller will return this frame, imported into JOML once and used for both
+        // questions below: it is the SAME rotation that turns `rest` into `direction`
+        // (`rotationFromTo` is its own statement, just above), so the centre of mass built from it is
+        // the one the piece is drawn at.
+        swing.set(this.rotationOut);
         // Where the piece sits when the pose is taken at its word. A volume that already contains
         // this point is one the model itself intersects at rest - a skirt around the hips, long
         // hair down the back - and pushing the piece out of it is ejection rather than collision.
         // See Colliders#skipFor.
-        this.restCentre.set(restDir).mul(lever).add(pivot);
+        //
+        // `swing x restDir` and not `restDir`: the rotation this method returns, the collision
+        // response's axis and the swing limit's cone are all measured from the ROTATED rest direction,
+        // and the two vectors - the deformation's own read of the bind rest vector, and the rotation's
+        // action on it - are the same direction but not the same vector to the last bit. Building the
+        // rest centre from one and the returned rotation from the other made the point asked about and
+        // the point drawn two derivations of the same quantity; this is one derivation of one vector.
+        this.rotatedRest.set(restDir);
+        swing.transform(this.rotatedRest);
+        this.restCentre.set(this.rotatedRest).mul(lever).add(pivot);
         // How far the centre of mass can travel from that point within the swing limit, blocks.
         //
         // The limit is a cone about `coneAxis` and the piece starts at `restDir`, so the reach is
@@ -1179,17 +1445,98 @@ public final class YsmDynamicBoneSolver {
         // of the body and left hanging in the air beside it, which is what this bound is for.
         float maxStep = COLLISION_STEP_FRACTION * Math.max(maxAngle, MIN_COLLISION_STEP);
         float budget = maxStep;
+        // ------------------------------------------------------------------
+        // The frame the mesh draws this piece in.
+        //
+        // The solver's own state answers one question - which way the piece swings about its bind
+        // pivot - and this method turns that answer into the point to test. The mesh does not draw the
+        // piece there: it draws it turned by its ancestors' deltas as well (`YsmMeshSecondaryMotion`
+        // composes each delta under its parent's), so the point a volume is asked about and the point
+        // the piece is drawn at were two different points and the collision test was about a piece
+        // that is not on screen. `ancestorFrame` is those ancestors, as the rigid motion they are:
+        // null for a piece with no chain, which is bit for bit the behaviour this method always had.
+        //
+        // Applied to the QUESTION only. The integration and the persistent state stay in the model's
+        // frame, and the frame is rigid, so the response comes back by the same map: `push' - pivot'`
+        // is `push - pivot` turned, and a rotation is unchanged by turning the space it acts in. One
+        // transform per volume, no state moved.
+        // ------------------------------------------------------------------
+        this.pivotInBody.set(pivot);
+        if (ancestorFrame != null) {
+            // The frame's inverse, once per call: the response is a direction, so only its rotation
+            // part is wanted, and `transformDirection` reads exactly that. Built rather than assumed
+            // orthogonal - the frame is a product of deltas, which are rotations, but one inverse per
+            // call is cheaper than being wrong about it.
+            this.ancestorFrameInverse.set(ancestorFrame).invert();
+            ancestorFrame.transformPosition(this.pivotInBody);
+        }
         this.entryDirection.set(state.direction);
+        // The question, recorded where it is built and with the quantities it is built from. The
+        // anchor record is finished here, before any volume is consulted, so it is the point the
+        // solver holds when the collision test cannot fire at all - which is the question the
+        // no-collision arm of a measurement is about. Everything below overwrites `asked` only.
+        ProbeQuestion question = null;
+        if (this.probeSegment >= 0) {
+            question = new ProbeQuestion(probeFrame, this.probeSegment, lever);
+            question.modelPivot.set(pivot);
+            question.transformedPivot.set(this.pivotInBody);
+            question.carried = ancestorFrame != null;
+            if (ancestorFrame != null) {
+                question.ancestorFrame.set(ancestorFrame);
+            }
+            question.restDir.set(restDir);
+            question.anchorDirection.set(state.direction);
+            question.anchorModelPoint.set(question.anchorModelPoint());
+            question.askedDirection.set(state.direction);
+            question.askedModelPoint.set(question.anchorModelPoint);
+            question.askedPoint.set(question.carried
+                    ? ancestorFrame.transformPosition(new Vector3f(question.askedModelPoint))
+                    : question.askedModelPoint);
+            PROBE_QUESTIONS.add(question);
+        }
         int count = colliders.count();
         boolean touched = false;
+        // Whether THIS call built the correction axis it is about to read, and therefore whether it
+        // has one to read at all. A local, not a field: the question is about one call, and a field
+        // would be the very carry the guard at the end of this method exists to prevent. See the two
+        // exits below that leave the loop after `touched` became true without reaching the write.
+        boolean wroteContactAxis = false;
         for (int iteration = 0; iteration < COLLISION_ITERATIONS; iteration++) {
+            // The point the solver holds the piece on, in the frame the piece is drawn in. Built from
+            // the state's own direction, so the invariant that the centre of mass is `lever` from the
+            // pivot is exactly as true here as it is in the model's frame.
             this.com.set(state.direction).mul(lever).add(pivot);
+            if (ancestorFrame != null) {
+                ancestorFrame.transformPosition(this.com);
+            }
+            if (question != null) {
+                // The direction as it is at the moment the point is built, COPIED: the collision
+                // response below rotates `state.direction` in place, so a record that stored the live
+                // vector would describe a direction the volumes were never asked about.
+                question.phase = iteration + 1;
+                question.askedDirection.set(state.direction);
+                question.askedModelPoint.set(question.askedModelPoint());
+                if (question.carried) {
+                    ancestorFrame.transformPosition(question.askedModelPoint, question.askedPoint);
+                } else {
+                    question.askedPoint.set(question.askedModelPoint);
+                }
+            }
+            // What the volumes are about to be asked about, kept before any of them moves it: the
+            // QUESTION, not the answer, and the one quantity a measurement cannot honestly re-derive
+            // for itself. Written only when a caller has said which segment it is resolving, so the
+            // frame path pays one comparison per iteration and nothing else.
+            if (this.probeSegment >= 0) {
+                YsmMeshSecondaryMotion.PROBE_TESTED_POINTS.put(this.probeSegment, new Vector3f(this.com));
+            }
             // The contact velocity is the centre of mass's own motion, not the pivot's: the
             // pivot is driven by the body, and damping it would fight the animation.
             this.relative.set(state.angularVelocity).cross(state.direction).mul(-lever);
             float push = 0.0F;
+            int skippedNow = 0;
             for (int i = 0; i < count; i++) {
-                if (colliders.skipFor(pivot, this.restCentre, swingReach, i)) {
+                if (colliders.skipFor(this.pivotInBody, this.restCentre, swingReach, i)) {
+                    skippedNow++;
                     continue;
                 }
                 this.before.set(this.com);
@@ -1197,11 +1544,24 @@ public final class YsmDynamicBoneSolver {
                     push += this.before.distance(this.com);
                 }
             }
+            if (question != null) {
+                question.skipped = skippedNow;
+                question.consulted = count - skippedNow;
+            }
             if (push <= EPSILON) {
                 break;
             }
             touched = true;
-            this.axis.set(this.com).sub(pivot);
+            // The correction axis, in the model's frame: the volume answered about a turned point,
+            // and the direction that point has to move in is the same direction unturned. The
+            // rotation is undone about the frame's own origin, and the pivot is the same point in
+            // both frames only up to that offset - so the difference is taken from `pivotInBody`,
+            // never from the model-frame pivot.
+            this.before.set(this.com).sub(this.pivotInBody);
+            if (ancestorFrame != null) {
+                this.ancestorFrameInverse.transformDirection(this.before);
+            }
+            this.axis.set(this.before);
             if (this.axis.lengthSquared() < EPSILON) {
                 break;
             }
@@ -1242,6 +1602,7 @@ public final class YsmDynamicBoneSolver {
             this.before.set(state.direction).cross(this.axis);
             if (this.before.lengthSquared() > EPSILON * EPSILON) {
                 this.contactAxis.set(this.before).normalize();
+                wroteContactAxis = true;
             }
             state.direction.set(this.axis);
             if (budget <= EPSILON) {
@@ -1258,7 +1619,19 @@ public final class YsmDynamicBoneSolver {
         if (!touched) {
             return;
         }
-        state.angularVelocity.fma(-state.angularVelocity.dot(this.contactAxis), this.contactAxis);
+        if (wroteContactAxis) {
+            // The response, and the guard is the point of it. The axis is built on one branch of one
+            // iteration above, and two of the loop's exits leave with `touched` true without reaching
+            // that write: `this.axis` degenerate at the pivot, and the radial correction no rotation
+            // can apply. `contactAxis` is a field on this singleton, shared by every piece, every
+            // model and every frame, so without the guard the call reads whatever the last writer
+            // left - an earlier iteration, an earlier piece, an earlier frame or an earlier model -
+            // and removes the whole component of the angular velocity along it. That is a wrong-axis
+            // damping of up to the entire approach velocity, not a no-op: measured on the reported
+            // model, it was the whole of a 0.175 divergence between two states handed identical
+            // inputs, and it is why a piece could be damped along a contact it never made.
+            state.angularVelocity.fma(-state.angularVelocity.dot(this.contactAxis), this.contactAxis);
+        }
         // Friction, and the only energy the solver takes out on purpose: the piece is sliding
         // along a surface, and a surface slows what slides on it. The approach velocity was
         // removed exactly on the line above, so this is tangential only and cannot make the
@@ -1407,6 +1780,26 @@ public final class YsmDynamicBoneSolver {
 
     private static float clamp(float value, float min, float max) {
         return value < min ? min : (value > max ? max : value);
+    }
+
+    /**
+     * The cosine of the angle between two directions, normalised, in -1..1 - the quantity
+     * {@link #angleBetween} takes {@code acos} of, exposed un-acos'd because {@code acos} has no
+     * resolution near 1 and "is this piece at its pose" is exactly the question that has to stay
+     * readable there.
+     *
+     * <p>Not read on the frame path: it exists so a measurement can state {@code dot(rest, direction)}
+     * beside the angle the solver reported for the same pair, which is what makes the two checkable
+     * against each other instead of one being taken on trust. A caller with a degenerate vector gets
+     * zero, the same answer {@link #angleBetween} gives.
+     */
+    public static float alignment(Vector3f a, Vector3f b) {
+        float lengthA = a.length();
+        float lengthB = b.length();
+        if (lengthA < EPSILON || lengthB < EPSILON) {
+            return 0.0F;
+        }
+        return Math.max(-1.0F, Math.min(1.0F, a.dot(b) / (lengthA * lengthB)));
     }
 
     /** The angle between two directions, radians, in 0..pi. */

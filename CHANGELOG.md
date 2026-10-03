@@ -4,6 +4,10 @@
 
 ### 中文
 
+#### 已知限制记入文档：EF 站姿与模型裙摆余量的冲突（按限制结案，不修）
+
+Epic Fight 的 idle/移动姿态是"迈步站姿"，而部分 YSM 模型按"双腿并拢直立"建模、裙摆与腿仅约 0.10 格余量（例：`wine_fox/01_taisho_maid`），于是 EF 接管动画后腿会从裙摆穿出，站立不动即可见。两条物理途径均被测量否决：腿部碰撞胶囊放大 2.0× 触及 **0/36** 片布；布片重绑到最近的腿在 EF walk/run/fall/jump 与合成步态下、任何混合比例（0.2–1.0）都不增加间隙。结论：模型余量与 EF 姿态幅度的固有冲突，模组侧不可修；仅模型几何或 EF 站姿可解。已记入 README「已知限制」第 13 条。测量：`build/reports/ysm-ef-skirt-round.md`、`build/reports/ysm-rebind-round.md`
+
 #### 第二十六轮：四个系统开关统一取值语义（`=false` 曾是"开"）
 
 这四个开关此前都在调用点用 `System.getProperty(名) != null` 判断——**属性的"存在"就是信号**，于是启动参数里写 `-Dysm_ef_compat.disable_gpu=false`（想撤销）反而保持禁用，`-D…force_cpu_render=false` 反而强制 CPU 路径。写 `=false` 去撤销一个开关是人第一件会试的事，而它做的事恰好相反；四处各有一份拷贝，四处同坑。
