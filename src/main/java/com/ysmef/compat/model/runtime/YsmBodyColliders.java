@@ -526,8 +526,23 @@ public final class YsmBodyColliders implements YsmDynamicBoneSolver.Colliders {
         if (pivot == null || index < 0 || index >= count) {
             return true;
         }
+        // A skirt root may sit inside a thigh's swept capsule while the fabric's centre is
+        // outside it. Skipping that thigh solely because of the root leaves the entire panel
+        // without leg collision for the frame. The torso still uses the attachment check.
+        Vector3f attachment = isLimbJoint(bindVolumes.get(index).joint()) ? null : pivot;
+        if (!placed) {
+            BindVolume volume = bindVolumes.get(index);
+            float half = volume.halfLength();
+            return volumeIsInsideWorkspace(attachment, restCentre, swingReach,
+                    volume.x() - volume.axisX() * half,
+                    volume.y() - volume.axisY() * half,
+                    volume.z() - volume.axisZ() * half,
+                    volume.x() + volume.axisX() * half,
+                    volume.y() + volume.axisY() * half,
+                    volume.z() + volume.axisZ() * half, volume.radius());
+        }
         int base = index * 8;
-        return volumeIsInsideWorkspace(pivot, restCentre, swingReach,
+        return volumeIsInsideWorkspace(attachment, restCentre, swingReach,
                 resolved[base], resolved[base + 1], resolved[base + 2],
                 resolved[base + 4], resolved[base + 5], resolved[base + 6],
                 resolved[base + 7]);

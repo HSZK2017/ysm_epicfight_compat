@@ -232,7 +232,7 @@ public class YSMPlayerRenderer extends PHumanoidRenderer<AbstractClientPlayer, A
      */
     private static boolean handles(AbstractClientPlayer player) {
         try {
-            return YSMMeshSelector.selectMesh(player) != null;
+            return YSMMeshSelector.hasMesh(player);
         } catch (Throwable t) {
             return false;
         }

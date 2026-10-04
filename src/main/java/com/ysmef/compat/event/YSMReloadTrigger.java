@@ -67,7 +67,7 @@ public class YSMReloadTrigger {
         // through it that entity's ClientLevel and chunks. Each draw clears it, but the last draw of
         // a session is the one that never finished when the world is left mid-frame - so clear it
         // here as well, or the old level is retained until the next mesh is drawn.
-        com.ysmef.compat.model.runtime.YSMRuntimeBridge.clearCurrentEntity();
+        com.ysmef.compat.model.runtime.YSMRuntimeBridge.resetCurrentEntities();
     }
 
     @SubscribeEvent

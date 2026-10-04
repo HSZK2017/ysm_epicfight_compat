@@ -42,6 +42,64 @@ class ManifestStoreMergeTest {
     private static final String NEW_MODEL = "manifest-merge-new.ysm";
 
     @Test
+    @DisplayName("an update during the writer's final handoff is persisted")
+    void finalWriterHandoffDoesNotDropAnUpdate() throws Exception {
+        Assumptions.assumeTrue(Files.isDirectory(Paths.get("src", "main", "java")));
+        java.lang.reflect.Field writeLockField = ManifestStore.class.getDeclaredField("MANIFEST_WRITE_LOCK");
+        java.lang.reflect.Field inFlightField = ManifestStore.class.getDeclaredField("manifestWriteInFlight");
+        writeLockField.setAccessible(true);
+        inFlightField.setAccessible(true);
+        Object writeLock = writeLockField.get(null);
+        long deadline = System.nanoTime() + 10_000_000_000L;
+        while ((boolean) inFlightField.get(null) && System.nanoTime() < deadline) {
+            Thread.sleep(10L);
+        }
+        assertTrue(!(boolean) inFlightField.get(null), "a previous manifest write did not finish");
+
+        byte[] previous = Files.isRegularFile(MANIFEST) ? Files.readAllBytes(MANIFEST) : null;
+        String first = "manifest-handoff-first.ysm";
+        String last = "manifest-handoff-last.ysm";
+        try {
+            synchronized (writeLock) {
+                ManifestStore.update(first, entryOf(first));
+                // The writer can write its first snapshot but must wait at its
+                // final state transition until this test releases the lock.
+                deadline = System.nanoTime() + 10_000_000_000L;
+                while (!manifestWriterBlocked() && System.nanoTime() < deadline) {
+                    Thread.sleep(10L);
+                }
+                assertTrue(manifestWriterBlocked(), "the manifest writer did not reach its final handoff");
+                ManifestStore.update(last, entryOf(last));
+            }
+            JsonObject saved = awaitManifest(last);
+            assertNotNull(saved);
+            assertTrue(saved.getAsJsonObject("models").has(last),
+                    "the update that arrived during the final handoff was not persisted");
+        } finally {
+            deadline = System.nanoTime() + 10_000_000_000L;
+            while ((boolean) inFlightField.get(null) && System.nanoTime() < deadline) {
+                Thread.sleep(10L);
+            }
+            if (previous == null) {
+                Files.deleteIfExists(MANIFEST);
+            } else {
+                Files.write(MANIFEST, previous);
+            }
+            deleteIfEmpty(MANIFEST.getParent());
+            deleteIfEmpty(MANIFEST.getParent() == null ? null : MANIFEST.getParent().getParent());
+        }
+    }
+
+    private static boolean manifestWriterBlocked() {
+        for (Thread thread : Thread.getAllStackTraces().keySet()) {
+            if (thread.getName().equals("ysm-ef-manifest") && thread.getState() == Thread.State.BLOCKED) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @Test
     @DisplayName("a lazy conversion keeps the entries this session never read")
     void entriesTheSessionNeverReadSurviveALazyConversion() throws Exception {
         // Only meaningful where the store's own relative path resolves to this project; a test run

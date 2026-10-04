@@ -18,6 +18,7 @@
 | 编译项目 | [构建与测试](#构建与测试) |
 | 理解代码、修改功能 | [项目如何工作](#项目如何工作) → [开发入口](#开发入口) |
 | 查类职责、渲染细节和验证记录 | [技术参考](docs/technical-reference.md) |
+| 规划扩展或调整模块边界 | [架构设计与演进约束](docs/ARCHITECTURE.md) |
 
 ## 安装与使用
 
@@ -117,6 +118,13 @@ Epic Fight 和 zstd-jni 由 Gradle 获取。运行时女仆联动仍为可选功
 .\gradlew.bat test "-Dysmef.golden.ysm=C:\path\to\model.ysm"
 ```
 
+升级 OpenYSM 或 ModernYSM 时，可用对应源码检查 Mixin 目标的方法签名：
+
+```powershell
+.\gradlew.bat test "-Dysmef.fork=open" "-Dysmef.fork.source=C:\path\to\OpenYSM" --tests com.ysmef.compat.contract.MixinTargetSignatureTest
+.\gradlew.bat test "-Dysmef.fork=modern" "-Dysmef.fork.source=C:\path\to\ModernYSM" --tests com.ysmef.compat.contract.MixinTargetSignatureTest
+```
+
 单元测试无需启动 Minecraft，覆盖解析、Molang、哈希、路径校验等逻辑；渲染效果仍需进入游戏验证。测试分类见[技术参考](docs/technical-reference.md)。
 
 ## 项目如何工作
@@ -183,6 +191,7 @@ Java 包根目录为 `src/main/java/com/ysmef/compat/`。
 
 ## 更多资料
 
+- [架构设计与演进约束](docs/ARCHITECTURE.md)
 - [技术参考：类职责、Mixin、性能、调试参数与完整限制](docs/technical-reference.md)
 - [更新记录](CHANGELOG.md)
 - [MIT 许可证](LICENSE)

@@ -1,6 +1,7 @@
 package com.ysmef.compat.model.runtime;
 
 import org.joml.Vector3f;
+import org.joml.Quaternionf;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -26,6 +27,38 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * converges.
  */
 class FabricCoherenceTest {
+
+    @Test
+    void neighbouringPanelsKeepTheirAuthoredSpreadWhileSharingASwing() {
+        Vector3f restA = tilted(0.12F);
+        Vector3f restB = tilted(-0.23F);
+        YsmPhysicsParts.Segment a = new YsmPhysicsParts.Segment(0, "SkirtA", 7,
+                new Vector3f(0.0F, 1.0F, 0.0F), restA, 0.1F, 0.03F, 1.0F,
+                2.36F, 0.5F, 1.0F, -1, new int[]{0}, true, new int[0]);
+        YsmPhysicsParts.Segment b = new YsmPhysicsParts.Segment(1, "SkirtB", 7,
+                new Vector3f(0.05F, 1.0F, 0.0F), restB, 0.1F, 0.03F, 1.0F,
+                2.36F, 0.5F, 1.0F, -1, new int[]{1}, true, new int[0]);
+        YsmMeshSecondaryMotion.State state = new YsmMeshSecondaryMotion.State(
+                new YsmPhysicsParts.Model(new YsmPhysicsParts.Segment[]{a, b},
+                        YsmPhysicsParts.Source.AUTHORED, 0), null, 1.0F);
+        state.restDirections[0].set(restA);
+        state.restDirections[1].set(restB);
+        state.integrated[0] = true;
+        state.integrated[1] = true;
+        Quaternionf sharedSwing = new Quaternionf().rotateZ(0.25F);
+        state.states[0].direction.set(restA).rotate(sharedSwing);
+        state.states[1].direction.set(restB).rotate(sharedSwing);
+        Vector3f expected = new Vector3f(state.states[0].direction);
+
+        YsmPhysicsCoupling.relaxTowardsNeighbours(state, 0, 0.02F);
+        assertTrue(YsmDynamicBoneSolver.angleBetween(expected, state.states[0].direction) < 0.003F,
+                "sharing one swing must preserve the skirt panels' 0.35 radian authored spread");
+
+        state.states[0].direction.set(restA);
+        YsmPhysicsCoupling.relaxTowardsNeighbours(state, 0, 0.02F);
+        assertTrue(YsmDynamicBoneSolver.angleBetween(restA, state.states[0].direction) > 0.03F,
+                "a still panel must follow a swinging neighbour instead of remaining detached");
+    }
 
     private static final Vector3f DOWN = new Vector3f(0.0F, -1.0F, 0.0F);
 

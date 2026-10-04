@@ -21,21 +21,33 @@ import java.util.Map;
  */
 public final class YSMRuntimeBridge {
 
-    private static final ThreadLocal<LivingEntity> CURRENT_ENTITY = new ThreadLocal<>();
+    private static final ThreadLocal<java.util.ArrayDeque<LivingEntity>> CURRENT_ENTITIES =
+            ThreadLocal.withInitial(java.util.ArrayDeque::new);
 
     private YSMRuntimeBridge() {}
 
     public static void setCurrentEntity(LivingEntity entity) {
-        CURRENT_ENTITY.set(entity);
+        CURRENT_ENTITIES.get().push(entity);
     }
 
     public static void clearCurrentEntity() {
-        CURRENT_ENTITY.remove();
+        java.util.ArrayDeque<LivingEntity> entities = CURRENT_ENTITIES.get();
+        if (!entities.isEmpty()) {
+            entities.pop();
+        }
+        if (entities.isEmpty()) {
+            CURRENT_ENTITIES.remove();
+        }
+    }
+
+    /** Discard all unfinished render scopes when the client leaves a world. */
+    public static void resetCurrentEntities() {
+        CURRENT_ENTITIES.remove();
     }
 
     /** The entity currently being drawn (null outside the mesh draw call). */
     public static LivingEntity getCurrentEntity() {
-        return CURRENT_ENTITY.get();
+        return CURRENT_ENTITIES.get().peek();
     }
 
     /**
@@ -53,7 +65,7 @@ public final class YSMRuntimeBridge {
         if (modelId == null) {
             return;
         }
-        LivingEntity entity = CURRENT_ENTITY.get();
+        LivingEntity entity = getCurrentEntity();
         if (entity == null) {
             return;
         }

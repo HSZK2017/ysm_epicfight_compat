@@ -49,6 +49,24 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class MaidSkirtCollisionTest {
 
+    @Test
+    void aThighStillCollidesWhenTheSkirtsAttachmentIsInsideIt() throws IOException {
+        YsmBodyColliders colliders = thighVolume();
+        int index = thighIndex(colliders);
+        float[] volume = colliders.resolvedVolume(index);
+        Vector3f pivot = new Vector3f(volume[0], volume[1], volume[2]);
+        Vector3f axis = new Vector3f(volume[4] - volume[0],
+                volume[5] - volume[1], volume[6] - volume[2]).normalize();
+        Vector3f radial = new Vector3f(1.0F, 0.0F, 0.0F);
+        radial.fma(-radial.dot(axis), axis).normalize();
+        Vector3f restCentre = new Vector3f(pivot).fma(volume[7] + 0.08F, radial);
+
+        assertTrue(!colliders.skipFor(pivot, restCentre, 0.1F, index),
+                "a cloth root inside the thigh must not disable collision for its hem outside it");
+        assertTrue(colliders.skipFor(pivot, pivot, 0.1F, index),
+                "a panel whose rest centre is already inside the thigh cannot be ejected");
+    }
+
     /** joint, x, y, z, radius - straight from the shipped log. */
     private static final float[][] LOGGED_VOLUMES = {
             {1, 0.13F, 0.57F, 0.0F, 0.14F},

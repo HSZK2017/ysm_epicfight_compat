@@ -689,8 +689,8 @@ public final class YSMRuntimeModel {
 
     private static final Map<String, YSMRuntimeModel> CACHE = new HashMap<>();
 
-    /** Models whose runtime JSON is being compiled on a background thread. */
-    private static final java.util.Set<String> PRELOADING = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** Model -> in-flight compile ticket; invalidation revokes the ticket. */
+    private static final Map<String, Object> PRELOADING = new ConcurrentHashMap<>();
 
     /**
      * Models whose runtime JSON compilation failed. Failed compiles are not cached as
@@ -724,7 +724,7 @@ public final class YSMRuntimeModel {
                 return CACHE.get(modelId);
             }
         }
-        if (PRELOADING.contains(modelId)) {
+        if (PRELOADING.containsKey(modelId)) {
             return null;
         }
         Long retryAt = FAILED_UNTIL.get(modelId);
@@ -736,46 +736,70 @@ public final class YSMRuntimeModel {
 
     /**
      * Background preload: compile the runtime model off the render thread.
-     * Called from the conversion pool right after the runtime JSON was written,
-     * and (submitted) when a model is restored from the verified on-disk cache,
+     * Called after conversion and cache restoration,
      * so the first draw finds the compiled model instead of compiling inline.
      *
      * Deduplicated via {@link #PRELOADING}; the result is only cached when the
      * task is still the current one (reloads/re-conversions drop stale results,
      * the next {@link #get} then compiles synchronously as the fallback).
      */
-    public static void preload(String modelId) {
+    /** Mark the model as preloading before a worker is queued. */
+    public static void preloadAsync(String modelId, java.util.concurrent.Executor executor) {
+        PreloadJob job = beginPreload(modelId);
+        if (job == null) {
+            return;
+        }
+        try {
+            executor.execute(() -> runPreload(modelId, job));
+        } catch (RuntimeException e) {
+            synchronized (CACHE) {
+                PRELOADING.remove(modelId, job.ticket());
+            }
+            throw e;
+        }
+    }
+
+    private record PreloadJob(Object ticket, int generation) {}
+
+    private static PreloadJob beginPreload(String modelId) {
+        Object ticket = new Object();
         synchronized (CACHE) {
-            if (CACHE.containsKey(modelId)) {
+            if (CACHE.containsKey(modelId) || PRELOADING.putIfAbsent(modelId, ticket) != null) {
+                return null;
+            }
+            return new PreloadJob(ticket, RELOAD_GENERATION.get());
+        }
+    }
+
+    private static void runPreload(String modelId, PreloadJob job) {
+        synchronized (CACHE) {
+            if (PRELOADING.get(modelId) != job.ticket()
+                    || job.generation() != RELOAD_GENERATION.get()) {
                 return;
             }
         }
-        if (!PRELOADING.add(modelId)) {
-            return;
-        }
-        int generation = RELOAD_GENERATION.get();
         try {
             YSMRuntimeModel model = loadAndCompile(modelId);
-            if (model != null) {
-                FAILED_UNTIL.remove(modelId);
-                if (PRELOADING.remove(modelId) && generation == RELOAD_GENERATION.get()) {
-                    synchronized (CACHE) {
+            synchronized (CACHE) {
+                // The same lock guards publication and invalidation: a revoked
+                // ticket can never put an old model back after invalidate().
+                if (PRELOADING.remove(modelId, job.ticket())
+                        && job.generation() == RELOAD_GENERATION.get()) {
+                    if (model != null) {
                         CACHE.put(modelId, model);
+                        FAILED_UNTIL.remove(modelId);
+                    } else {
+                        // A later lookup may retry once the output is available.
+                        FAILED_UNTIL.put(modelId, System.nanoTime() + RETRY_DELAY_NANOS);
                     }
-                }
-            } else {
-                // Do not cache a failed compile as null: mark it for delayed retry so a
-                // later lookup (after the file becomes available) can try again. A stale
-                // failure from a previous reload generation must not suppress a fresh retry.
-                PRELOADING.remove(modelId);
-                if (generation == RELOAD_GENERATION.get()) {
-                    FAILED_UNTIL.put(modelId, System.nanoTime() + RETRY_DELAY_NANOS);
                 }
             }
         } catch (Throwable t) {
-            PRELOADING.remove(modelId);
-            if (generation == RELOAD_GENERATION.get()) {
-                FAILED_UNTIL.put(modelId, System.nanoTime() + RETRY_DELAY_NANOS);
+            synchronized (CACHE) {
+                if (PRELOADING.remove(modelId, job.ticket())
+                        && job.generation() == RELOAD_GENERATION.get()) {
+                    FAILED_UNTIL.put(modelId, System.nanoTime() + RETRY_DELAY_NANOS);
+                }
             }
         }
     }
@@ -784,6 +808,10 @@ public final class YSMRuntimeModel {
         synchronized (CACHE) {
             if (CACHE.containsKey(modelId)) {
                 return CACHE.get(modelId);
+            }
+            // A preload may have been claimed after get() checked the map.
+            if (PRELOADING.containsKey(modelId)) {
+                return null;
             }
             YSMRuntimeModel model = loadAndCompile(modelId);
             if (model != null) {
@@ -811,19 +839,19 @@ public final class YSMRuntimeModel {
     public static void invalidate(String modelId) {
         synchronized (CACHE) {
             CACHE.remove(modelId);
+            PRELOADING.remove(modelId);
+            FAILED_UNTIL.remove(modelId);
         }
-        PRELOADING.remove(modelId);
-        FAILED_UNTIL.remove(modelId);
     }
 
     /** Forget all cached runtime models (called when meshes are regenerated). */
     public static void invalidateAll() {
         synchronized (CACHE) {
+            RELOAD_GENERATION.incrementAndGet();
             CACHE.clear();
+            PRELOADING.clear();
+            FAILED_UNTIL.clear();
         }
-        PRELOADING.clear();
-        FAILED_UNTIL.clear();
-        RELOAD_GENERATION.incrementAndGet();
     }
 
     private static YSMRuntimeModel compile(String modelId, JsonObject root) {

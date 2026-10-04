@@ -6,12 +6,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.resources.ResourceLocation;
 
-import javax.imageio.ImageIO;
-import java.awt.image.BufferedImage;
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -23,13 +18,15 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Texture pipeline of the generated-mesh cache, extracted from the former
- * YSMMeshLibrary god class: raw texture bytes, decoded NativeImages, GL uploads
+ * YSMMeshLibrary: raw texture bytes, decoded NativeImages, GL uploads
  * (with a per-frame time budget), delayed releases, translucency flags and the
  * pack/cache file layout ("textures/&lt;model&gt;/...", the texturecache dir
- * and the generated resource pack root).
+ * and the generated resource pack root). CPU image decoding lives in
+ * {@link TextureDecoder}; this class owns the handoff to the upload queue.
  *
  * Threading contract (unchanged from the original): byte registration and
  * image DECODING run on the background decode pool; GL uploads and releases
@@ -54,19 +51,6 @@ public final class TextureStore {
     private static final Map<String, int[]> TEXTURE_INFO = new ConcurrentHashMap<>();
 
     /**
-     * OpenYSM/ModernYSM ship the ImageStream decoders (WebP/AVIF) inside their
-     * jar (jar-in-jar). The compat mod cannot compile against them (the libs
-     * YSM jar is obfuscated), so they are looked up reflectively at runtime.
-     * Null when a legacy fork without ImageStream is installed.
-     */
-    private static final Class<?> YSM_WEBP_DECODER_CLASS = findImageStreamDecoder("rip.ysm.imagestream.webp.WebpDecoder");
-    private static final Class<?> YSM_AVIF_DECODER_CLASS = findImageStreamDecoder("rip.ysm.imagestream.avif.AvifDecoder");
-    private static final Map<Class<?>, Method> IMAGE_STREAM_READ_METHODS = new ConcurrentHashMap<>();
-    private static final Map<Class<?>, Constructor<?>> IMAGE_STREAM_CTORS = new ConcurrentHashMap<>();
-    private static volatile boolean IMAGE_STREAM_MISSING_LOGGED = false;
-    private static volatile boolean IMAGE_STREAM_FAILED_LOGGED = false;
-
-    /**
      * modelId + '#' + textureName -> textureRL. Kept as a lock-guarded
      * LinkedHashMap: findTexture's fallback returns the model's first texture
      * and relies on insertion order. Every access must hold the map's monitor -
@@ -84,23 +68,20 @@ public final class TextureStore {
      * hitch the first draw. Texture releases are delayed a few ticks so a
      * texture still referenced by the current frame is never dropped mid-frame.
      */
-    private static final Set<String> PENDING_TEXTURE_DECODES = ConcurrentHashMap.newKeySet();
+    /** A new token is assigned whenever a texture's bytes are replaced. */
+    private static final AtomicLong NEXT_TEXTURE_TOKEN = new AtomicLong();
+    private static final Map<String, Long> TEXTURE_TOKENS = new ConcurrentHashMap<>();
+    private static final Map<String, Long> PENDING_TEXTURE_DECODES = new ConcurrentHashMap<>();
     private static final java.util.Queue<TextureUploadTask> COMPLETED_UPLOADS = new java.util.concurrent.ConcurrentLinkedQueue<>();
     private static final Map<String, Integer> PENDING_RELEASES = new ConcurrentHashMap<>();
-    /**
-     * Evicted shared meshes whose GL resources are released a few ticks later
-     * (see {@link #processPendingMeshReleases}): the instance may still be
-     * drawn later in the current frame by entities that selected it earlier.
-     * Same delayed-release pattern as {@link #PENDING_RELEASES}.
-     */
-    private static final Map<YSMMesh, Integer> PENDING_MESH_RELEASES = new ConcurrentHashMap<>();
     private static final int RELEASE_DELAY_TICKS = 5;
     private static final long TEXTURE_UPLOAD_BUDGET_NANOS = 10_000_000L;
 
     /** textureRL string -> true when the texture has translucent pixels (alpha < 253). */
     private static final Map<String, Boolean> TEXTURE_TRANSLUCENT = new ConcurrentHashMap<>();
 
-    private record TextureUploadTask(ResourceLocation location, NativeImage image, boolean translucent) {}
+    private record TextureUploadTask(ResourceLocation location, NativeImage image,
+                                     boolean translucent, long token) {}
 
     /** Background decode pool (image decoding is pure CPU work). */
     private static final ExecutorService DECODE_POOL = Executors.newFixedThreadPool(
@@ -178,8 +159,19 @@ public final class TextureStore {
     public static ResourceLocation registerTextureBytes(String relativePath, byte[] data) {
         ResourceLocation rl = ResourceLocation.fromNamespaceAndPath(MESH_NAMESPACE,
                 "textures/" + relativePath + ".png");
-        TEXTURE_DATA.put(rl.toString(), data);
+        registerBytes(rl.toString(), data);
         return rl;
+    }
+
+    private static void registerBytes(String key, byte[] data) {
+        TEXTURE_DATA.put(key, data);
+        TEXTURE_TOKENS.put(key, NEXT_TEXTURE_TOKEN.incrementAndGet());
+        PENDING_TEXTURE_DECODES.remove(key);
+        UPLOADED_TEXTURES.remove(key);
+    }
+
+    private static boolean isCurrentTexture(String key, long token) {
+        return Long.valueOf(token).equals(TEXTURE_TOKENS.get(key));
     }
 
     /** Register one converted model's texture entry (locations/data/info tables). */
@@ -188,7 +180,7 @@ public final class TextureStore {
         synchronized (TEXTURE_LOCATIONS) {
             TEXTURE_LOCATIONS.put(modelId + "#" + textureName, location);
         }
-        TEXTURE_DATA.put(location.toString(), data);
+        registerBytes(location.toString(), data);
         if (info != null) {
             TEXTURE_INFO.put(location.toString(), info);
         }
@@ -216,6 +208,8 @@ public final class TextureStore {
         for (ResourceLocation rl : toRelease) {
             String key = rl.toString();
             TEXTURE_DATA.remove(key);
+            TEXTURE_TOKENS.remove(key);
+            PENDING_TEXTURE_DECODES.remove(key);
             TEXTURE_INFO.remove(key);
             UPLOADED_TEXTURES.remove(key);
             TEXTURE_TRANSLUCENT.remove(key);
@@ -235,6 +229,12 @@ public final class TextureStore {
         }
         TEXTURE_DATA.clear();
         TEXTURE_DATA.putAll(data);
+        TEXTURE_TOKENS.clear();
+        PENDING_TEXTURE_DECODES.clear();
+        closeQueuedUploads();
+        for (String key : data.keySet()) {
+            TEXTURE_TOKENS.put(key, NEXT_TEXTURE_TOKEN.incrementAndGet());
+        }
         TEXTURE_INFO.clear();
         TEXTURE_INFO.putAll(info);
         UPLOADED_TEXTURES.clear();
@@ -242,6 +242,9 @@ public final class TextureStore {
 
     /** Drop every texture registration and pending release (resource reload). */
     public static void invalidateAll() {
+        java.util.Set<String> textureKeys = new java.util.HashSet<>(UPLOADED_TEXTURES.keySet());
+        textureKeys.addAll(PENDING_RELEASES.keySet());
+        TEXTURE_TOKENS.clear();
         TEXTURE_DATA.clear();
         TEXTURE_INFO.clear();
         synchronized (TEXTURE_LOCATIONS) {
@@ -250,11 +253,26 @@ public final class TextureStore {
         UPLOADED_TEXTURES.clear();
         TEXTURE_TRANSLUCENT.clear();
         PENDING_TEXTURE_DECODES.clear();
-        COMPLETED_UPLOADS.clear();
+        closeQueuedUploads();
         PENDING_RELEASES.clear();
-        // Delayed-released meshes are covered by the mesh library's disposeAll;
-        // drop the queue so they are not destroyed a second time on a later tick.
-        PENDING_MESH_RELEASES.clear();
+        for (String key : textureKeys) {
+            try {
+                Minecraft.getInstance().getTextureManager().release(ResourceLocation.parse(key));
+            } catch (Throwable t) {
+                YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to release texture {} on reload", key, t);
+            }
+        }
+    }
+
+    private static void closeQueuedUploads() {
+        TextureUploadTask task;
+        while ((task = COMPLETED_UPLOADS.poll()) != null) {
+            try {
+                task.image().close();
+            } catch (Throwable t) {
+                YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to close decoded texture {}", task.location(), t);
+            }
+        }
     }
 
     /**
@@ -312,29 +330,42 @@ public final class TextureStore {
         if (data == null) {
             return;
         }
-        if (!PENDING_TEXTURE_DECODES.add(key)) {
+        Long token = TEXTURE_TOKENS.get(key);
+        if (token == null || TEXTURE_DATA.get(key) != data
+                || PENDING_TEXTURE_DECODES.putIfAbsent(key, token) != null) {
             return;
         }
         // a re-upload cancels any delayed release of the same resource location
         PENDING_RELEASES.remove(key);
         DECODE_POOL.submit(() -> {
+            NativeImage image = null;
             try {
-                NativeImage image = decodeTexture(rl, data);
+                image = TextureDecoder.decodeTexture(rl, data, TEXTURE_INFO.get(key));
                 if (image == null) {
-                    UPLOADED_TEXTURES.put(key, Boolean.TRUE);
+                    if (isCurrentTexture(key, token)) {
+                        UPLOADED_TEXTURES.put(key, Boolean.TRUE);
+                    }
                 } else {
                     // The translucency scan runs here (decode worker thread), not
                     // on the render thread: the per-frame upload drain has a small
                     // time budget and must not spend it scanning millions of pixels.
-                    boolean translucent = hasTranslucentPixels(image);
-                    COMPLETED_UPLOADS.add(new TextureUploadTask(rl, image, translucent));
-                    Minecraft.getInstance().execute(TextureStore::processPendingTextureUploads);
+                    boolean translucent = TextureDecoder.hasTranslucentPixels(image);
+                    if (isCurrentTexture(key, token)) {
+                        COMPLETED_UPLOADS.add(new TextureUploadTask(rl, image, translucent, token));
+                        image = null; // the upload queue now owns it
+                        Minecraft.getInstance().execute(TextureStore::processPendingTextureUploads);
+                    }
                 }
             } catch (Throwable t) {
                 YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to decode texture {}", rl, t);
-                UPLOADED_TEXTURES.put(key, Boolean.TRUE);
+                if (isCurrentTexture(key, token)) {
+                    UPLOADED_TEXTURES.put(key, Boolean.TRUE);
+                }
             } finally {
-                PENDING_TEXTURE_DECODES.remove(key);
+                if (image != null) {
+                    image.close();
+                }
+                PENDING_TEXTURE_DECODES.remove(key, token);
             }
         });
     }
@@ -352,9 +383,27 @@ public final class TextureStore {
                 return;
             }
             String key = task.location().toString();
+            if (!isCurrentTexture(key, task.token())) {
+                task.image().close();
+                continue;
+            }
             PENDING_RELEASES.remove(key);
+            DynamicTexture texture;
+            try {
+                texture = new DynamicTexture(task.image());
+            } catch (Throwable t) {
+                task.image().close();
+                YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to create texture {}", task.location(), t);
+                continue;
+            }
+            try {
+                Minecraft.getInstance().getTextureManager().register(task.location(), texture);
+            } catch (Throwable t) {
+                texture.close();
+                YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to upload texture {}", task.location(), t);
+                continue;
+            }
             TEXTURE_TRANSLUCENT.put(key, task.translucent());
-            Minecraft.getInstance().getTextureManager().register(task.location(), new DynamicTexture(task.image()));
             UPLOADED_TEXTURES.put(key, Boolean.TRUE);
             if (System.nanoTime() > deadline) {
                 // leftover tasks stay queued: re-post the drain for the next frame
@@ -386,44 +435,6 @@ public final class TextureStore {
                 entry.setValue(left);
             }
         }
-    }
-
-    /**
-     * Release evicted meshes whose delay elapsed (same cadence as
-     * {@link #processPendingTextureReleases}, called from the client tick).
-     * Must run on the render thread: the GL deletions require it. The mesh was
-     * already removed from Epic Fight's mesh cache by the eviction, so any
-     * later draw uses a freshly rebuilt instance.
-     */
-    public static void processPendingMeshReleases() {
-        if (PENDING_MESH_RELEASES.isEmpty()) {
-            return;
-        }
-        for (java.util.Iterator<Map.Entry<YSMMesh, Integer>> it = PENDING_MESH_RELEASES.entrySet().iterator(); it.hasNext(); ) {
-            Map.Entry<YSMMesh, Integer> entry = it.next();
-            int left = entry.getValue() - 1;
-            if (left <= 0) {
-                it.remove();
-                releaseMesh(entry.getKey());
-            } else {
-                entry.setValue(left);
-            }
-        }
-    }
-
-    /** Release one mesh's GL resources across every render path (render thread). */
-    private static void releaseMesh(YSMMesh mesh) {
-        try {
-            mesh.destroy();
-            YSMMeshLibrary.releaseMeshAcrossPaths(mesh);
-        } catch (Throwable t) {
-            YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to release evicted mesh", t);
-        }
-    }
-
-    /** Queue one evicted mesh for the delayed release (eviction path). */
-    public static void scheduleMeshRelease(YSMMesh mesh) {
-        PENDING_MESH_RELEASES.put(mesh, RELEASE_DELAY_TICKS);
     }
 
     // ------------------------------------------------------------------
@@ -519,14 +530,7 @@ public final class TextureStore {
             // WebP/AVIF must be decoded before they are written into the pack:
             // the previous code treated those bytes as raw RGBA and wrote a
             // valid but fully transparent PNG (mesh visible, texture missing).
-            NativeImage image = null;
-            if (isRiffWebp(data)) {
-                image = decodeWithImageStream(YSM_WEBP_DECODER_CLASS, data, "WebP");
-            } else if (isFtypAvif(data)) {
-                image = decodeWithImageStream(YSM_AVIF_DECODER_CLASS, data, "AVIF");
-            } else {
-                image = readRawRgba(data, info != null ? info[0] : 0, info != null ? info[1] : 0);
-            }
+            NativeImage image = TextureDecoder.decodePackTexture(data, info);
             if (image != null) {
                 try {
                     image.writeToFile(file);
@@ -608,206 +612,14 @@ public final class TextureStore {
         }
     }
 
-    // ------------------------------------------------------------------
-    // Decoding
-    // ------------------------------------------------------------------
-
-    /**
-     * One-time full scan of the decoded texture for translucent pixels
-     * (alpha &lt; 253). Runs on the texture decode worker thread (see
-     * ensureTextureUploaded) - every pixel is checked, because a strided
-     * sampling misses small translucent regions (hair strands, gradients) and
-     * the GPU path's first pass then discards them (alphaMode == 1).
-     */
-    private static boolean hasTranslucentPixels(NativeImage image) {
-        int width = image.getWidth();
-        int height = image.getHeight();
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                if (((image.getPixelRGBA(x, y) >>> 24) & 0xFF) < 253) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Decode texture bytes into a NativeImage, supporting PNG/JPEG encoded data,
-     * WebP/AVIF (through YSM's ImageStream, reflectively) and raw RGBA pixels
-     * (legacy .ysm binary textures).
-     *
-     * Uses the InputStream-based read: NativeImage.read(byte[]) copies the whole
-     * array onto the 64KB LWJGL MemoryStack, which overflows for large textures
-     * ("Out of stack space"), while the InputStream overload buffers off-heap.
-     */
-    private static NativeImage decodeTexture(ResourceLocation rl, byte[] data) throws IOException {
-        if (data.length >= 4 && (data[0] & 0xFF) == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47) {
-            return NativeImage.read(new ByteArrayInputStream(data));
-        }
-        if (data.length >= 2 && (data[0] & 0xFF) == 0xFF && (data[1] & 0xFF) == 0xD8) {
-            return NativeImage.read(new ByteArrayInputStream(data));
-        }
-        if (isRiffWebp(data)) {
-            return decodeWithImageStream(YSM_WEBP_DECODER_CLASS, data, "WebP");
-        }
-        if (isFtypAvif(data)) {
-            return decodeWithImageStream(YSM_AVIF_DECODER_CLASS, data, "AVIF");
-        }
-
-        int[] info = TEXTURE_INFO.get(rl.toString());
-        if (info != null && info[2] == -1) {
-            return readRawRgba(data, info[0], info[1]);
-        }
-
-        if (data.length % 4 == 0) {
-            int pixels = data.length / 4;
-            int side = (int) Math.round(Math.sqrt(pixels));
-            if ((long) side * side == pixels) {
-                return readRawRgba(data, side, side);
-            }
-        }
-        YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: unsupported texture format for {}", rl);
-        return null;
-    }
-
-    /**
-     * Interpret the bytes as raw RGBA pixels (YSM legacy texture format) and
-     * build a NativeImage (Minecraft packs pixels as ABGR).
-     */
-    private static NativeImage readRawRgba(byte[] data, int width, int height) throws IOException {
-        if (width <= 0 || height <= 0 || (long) width * height * 4 > data.length) {
-            int side = (int) Math.round(Math.sqrt(data.length / 4.0));
-            width = side;
-            height = side;
-        }
-        NativeImage image = new NativeImage(NativeImage.Format.RGBA, width, height, true);
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                int i = (y * width + x) * 4;
-                int r = data[i] & 0xFF;
-                int g = data[i + 1] & 0xFF;
-                int b = data[i + 2] & 0xFF;
-                int a = data[i + 3] & 0xFF;
-                image.setPixelRGBA(x, y, (a << 24) | (b << 16) | (g << 8) | r);
-            }
-        }
-        return image;
-    }
-
-    private static Class<?> findImageStreamDecoder(String className) {
-        try {
-            return Class.forName(className, false, TextureStore.class.getClassLoader());
-        } catch (Throwable ignored) {
-            try {
-                ClassLoader contextLoader = Thread.currentThread().getContextClassLoader();
-                return contextLoader != null
-                        ? Class.forName(className, false, contextLoader)
-                        : Class.forName(className);
-            } catch (Throwable t) {
-                return null;
-            }
-        }
-    }
-
+    /** Kept as the public format probe for existing callers. */
     public static boolean isRiffWebp(byte[] data) {
-        return data.length >= 12
-                && data[0] == 'R' && data[1] == 'I' && data[2] == 'F' && data[3] == 'F'
-                && data[8] == 'W' && data[9] == 'E' && data[10] == 'B' && data[11] == 'P';
+        return TextureDecoder.isRiffWebp(data);
     }
 
+    /** Kept as the public format probe for existing callers. */
     public static boolean isFtypAvif(byte[] data) {
-        return data.length >= 12
-                && data[4] == 'f' && data[5] == 't' && data[6] == 'y' && data[7] == 'p';
-    }
-
-    /**
-     * Decode WebP/AVIF with OpenYSM/ModernYSM's ImageStream decoders
-     * (rip.ysm.imagestream.*). Those classes are loaded from the YSM jar at
-     * runtime; reflection keeps the compat mod buildable against the obfuscated
-     * release jar and still works on LegacyYSM when the classes are absent
-     * (returns null and the model keeps its mesh with an untextured/fallback
-     * texture instead of crashing).
-     */
-    private static NativeImage decodeWithImageStream(Class<?> decoderClass, byte[] data, String formatName) {
-        if (decoderClass == null) {
-            // Some YSM forks register ImageStream as an ImageIO plugin rather
-            // than exposing the decoder class directly.
-            try {
-                BufferedImage imageIoImage = ImageIO.read(new ByteArrayInputStream(data));
-                if (imageIoImage != null) {
-                    return bufferedImageToNative(imageIoImage);
-                }
-            } catch (Throwable ignored) {
-            }
-            if (!IMAGE_STREAM_MISSING_LOGGED) {
-                IMAGE_STREAM_MISSING_LOGGED = true;
-                YSMEpicFightCompat.LOGGER.warn(
-                        "YSM-EF Compat: {} texture found but the YSM ImageStream decoder is not available; "
-                                + "the model will render without this texture", formatName);
-            }
-            return null;
-        }
-        try {
-            Method read = IMAGE_STREAM_READ_METHODS.get(decoderClass);
-            if (read == null) {
-                for (Method candidate : decoderClass.getMethods()) {
-                    if ("read".equals(candidate.getName())
-                            && candidate.getParameterCount() == 1
-                            && candidate.getParameterTypes()[0] == byte[].class
-                            && BufferedImage.class.isAssignableFrom(candidate.getReturnType())) {
-                        read = candidate;
-                        break;
-                    }
-                }
-                if (read == null) {
-                    if (!IMAGE_STREAM_FAILED_LOGGED) {
-                        IMAGE_STREAM_FAILED_LOGGED = true;
-                        YSMEpicFightCompat.LOGGER.warn(
-                                "YSM-EF Compat: cannot find read(byte[]) on {}; {} textures will be skipped",
-                                decoderClass.getName(), formatName);
-                    }
-                    return null;
-                }
-                IMAGE_STREAM_READ_METHODS.put(decoderClass, read);
-            }
-            Constructor<?> ctor = IMAGE_STREAM_CTORS.get(decoderClass);
-            if (ctor == null) {
-                ctor = decoderClass.getDeclaredConstructor();
-                IMAGE_STREAM_CTORS.put(decoderClass, ctor);
-            }
-            Object image = read.invoke(ctor.newInstance(), (Object) data);
-            return image instanceof BufferedImage bufferedImage
-                    ? bufferedImageToNative(bufferedImage)
-                    : null;
-        } catch (Throwable t) {
-            if (!IMAGE_STREAM_FAILED_LOGGED) {
-                IMAGE_STREAM_FAILED_LOGGED = true;
-                YSMEpicFightCompat.LOGGER.warn(
-                        "YSM-EF Compat: failed to decode {} texture with {}", formatName, decoderClass.getName(), t);
-            }
-            return null;
-        }
-    }
-
-    /** Convert an ImageStream BufferedImage to Minecraft's ABGR NativeImage. */
-    private static NativeImage bufferedImageToNative(BufferedImage image) {
-        int width = image.getWidth();
-        int height = image.getHeight();
-        NativeImage out = new NativeImage(NativeImage.Format.RGBA, width, height, true);
-        int[] argb = image.getRGB(0, 0, width, height, null, 0, width);
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                int pixel = argb[y * width + x];
-                int a = (pixel >>> 24) & 0xFF;
-                int r = (pixel >>> 16) & 0xFF;
-                int g = (pixel >>> 8) & 0xFF;
-                int b = pixel & 0xFF;
-                // NativeImage packs pixels as ABGR.
-                out.setPixelRGBA(x, y, (a << 24) | (b << 16) | (g << 8) | r);
-            }
-        }
-        return out;
+        return TextureDecoder.isFtypAvif(data);
     }
 
     // ------------------------------------------------------------------

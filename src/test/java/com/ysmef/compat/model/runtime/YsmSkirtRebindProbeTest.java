@@ -29,6 +29,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * The re-binding question, measured before it is implemented: if a lower skirt panel were bound to
@@ -77,17 +78,11 @@ class YsmSkirtRebindProbeTest {
 
     private static final String MAID = "wine_fox/01_taisho_maid";
 
-    /** The packaged snapshot of the converted artefacts: the fallback, see {@link Artefacts}. */
-    private static final Path SNAPSHOT_DIR = Paths.get("src", "test", "resources", "cloth");
-    private static final Path SNAPSHOT_MESH = SNAPSHOT_DIR.resolve("taisho_mesh.json");
-    private static final Path SNAPSHOT_RUNTIME = SNAPSHOT_DIR.resolve("taisho_runtime.json");
-
     /**
      * The converted artefacts this probe measures: the <b>deployed</b> pair - the one the running
      * game loads - resolved from {@code YSMEF_YSM_CONFIG_ROOT} / {@code -Dysmef.ysm.configRoot} and
      * verified against {@code config/ysm_epicfight_compat/manifest.json}'s own sizes and hashes
-     * before use, falling back to the bundled snapshot (and saying so) when that pair is absent or
-     * does not verify.
+     * before use. Without that pair, this environment-dependent probe is skipped.
      *
      * <p>Why not the bundled snapshot alone: it is a <b>stale</b> revision of the same model. Its
      * bone table carries no {@code scale} section at all, and it binds the panels to joint 8 (Chest),
@@ -100,14 +95,10 @@ class YsmSkirtRebindProbeTest {
         final Path mesh;
         final Path runtime;
         final String source;
-        /** True when the pair is the deployed one, so the report can name what it measured. */
-        final boolean deployed;
-
-        private Artefacts(Path mesh, Path runtime, String source, boolean deployed) {
+        private Artefacts(Path mesh, Path runtime, String source) {
             this.mesh = mesh;
             this.runtime = runtime;
             this.source = source;
-            this.deployed = deployed;
         }
     }
 
@@ -1547,8 +1538,8 @@ class YsmSkirtRebindProbeTest {
     // ------------------------------------------------------------------
 
     /**
-     * The pair of converted artefacts to measure: the deployed one when it is there and its own
-     * manifest entry agrees with the files on disk, the bundled snapshot otherwise.
+     * The deployed pair of converted artefacts. The bundled snapshot predates the scale and
+     * garment rules, so it cannot produce a valid result for this probe.
      */
     private static Artefacts artefacts() throws Exception {
         String root = System.getProperty("ysmef.ysm.configRoot", "");
@@ -1556,29 +1547,20 @@ class YsmSkirtRebindProbeTest {
             String fromEnvironment = System.getenv("YSMEF_YSM_CONFIG_ROOT");
             root = fromEnvironment == null ? "" : fromEnvironment;
         }
-        if (!root.isEmpty()) {
-            Path config = Paths.get(root).toAbsolutePath().getParent();
-            Path assets = config.resolve("ysm_epicfight_compat").resolve("resourcepack")
-                    .resolve("assets").resolve("ysm_epicfight_compat");
-            Path mesh = assets.resolve("animmodels/entity").resolve(MAID + ".json");
-            Path runtime = assets.resolve("ysm_runtime/entity").resolve(MAID + ".json");
-            Path manifest = config.resolve("ysm_epicfight_compat").resolve("manifest.json");
-            if (Files.isRegularFile(mesh) && Files.isRegularFile(runtime)
-                    && manifestAgrees(manifest, mesh, runtime)) {
-                return new Artefacts(mesh, runtime,
-                        "the deployed pair under " + assets.getParent().getParent()
-                                + ", verified against manifest.json", true);
-            }
-            System.out.println("YSREBIND-NOTE the deployed artefacts at " + assets
-                    + " are absent or do not match manifest.json; falling back to the bundled "
-                    + "snapshot, whose bone table predates the scale section and the garment rule");
-        } else {
-            System.out.println("YSREBIND-NOTE no YSMEF_YSM_CONFIG_ROOT given; measuring the bundled "
-                    + "snapshot, which is a stale revision of this model");
-        }
-        return new Artefacts(SNAPSHOT_MESH, SNAPSHOT_RUNTIME,
-                "the bundled snapshot `src/test/resources/cloth/taisho_{mesh,runtime}.json`, which "
-                        + "predates the scale section and the hip-relative garment rule", false);
+        assumeTrue(!root.isEmpty(), "set YSMEF_YSM_CONFIG_ROOT to run the deployed skirt probe");
+        Path config = Paths.get(root).toAbsolutePath().getParent();
+        assumeTrue(config != null, "YSM config root has no parent directory");
+        Path assets = config.resolve("ysm_epicfight_compat").resolve("resourcepack")
+                .resolve("assets").resolve("ysm_epicfight_compat");
+        Path mesh = assets.resolve("animmodels/entity").resolve(MAID + ".json");
+        Path runtime = assets.resolve("ysm_runtime/entity").resolve(MAID + ".json");
+        Path manifest = config.resolve("ysm_epicfight_compat").resolve("manifest.json");
+        assumeTrue(Files.isRegularFile(mesh) && Files.isRegularFile(runtime)
+                        && manifestAgrees(manifest, mesh, runtime),
+                "deployed skirt artefacts are absent or disagree with manifest.json under " + assets);
+        return new Artefacts(mesh, runtime,
+                "the deployed pair under " + assets.getParent().getParent()
+                        + ", verified against manifest.json");
     }
 
     /** Whether the manifest's entry for this model names these two files' own sizes and hashes. */

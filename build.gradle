@@ -249,6 +249,10 @@ test {
     // the local YSM folder; it is skipped unless the path is given explicitly:
     //   gradlew test -Dysmef.golden.ysm="C:\...\config\yes_steve_model\custom\xxx.ysm"
     systemProperty 'ysmef.golden.ysm', System.getProperty('ysmef.golden.ysm', '')
+    // Optional fork-signature contract: -Dysmef.fork=open|modern -Dysmef.fork.jar=<path>
+    systemProperty 'ysmef.fork', System.getProperty('ysmef.fork', '')
+    systemProperty 'ysmef.fork.jar', System.getProperty('ysmef.fork.jar', '')
+    systemProperty 'ysmef.fork.source', System.getProperty('ysmef.fork.source', '')
 }
 
 jar.finalizedBy('reobfJar')

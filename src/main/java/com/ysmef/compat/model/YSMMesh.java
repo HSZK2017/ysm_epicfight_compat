@@ -166,52 +166,54 @@ public class YSMMesh extends HumanoidMesh {
 
     @Override
     public void draw(PoseStack poseStack, MultiBufferSource bufferSources, RenderType renderType,
-                     Mesh.DrawingFunction drawingFunction, int packedLight, float r, float g, float b, float a,
-                     int overlay, @Nullable Armature armature, OpenMatrix4f[] poses) {
-        // 体型适配：Epic Fight 的战斗动画围绕绑定姿势（Steve 体型）的关节旋转，
-        // 而转换后的 YSM 网格按自身关节轴心刚性蒙皮，挥砍时四肢会绕 Steve 的
-        // 关节位置旋转导致与身体分离。这里将动画姿势重新求值到该模型自己的
-        // YSM 绑定骨架（关节平移来自 YSM 骨骼 pivot，旋转帧与拓扑不变），使
-        // 旋转轴心落在模型的真实关节上；绑定姿势不变式（pose x toOrigin = I）
-        // 保证静止形态不受影响。仅当 poses 是当前 armature 的实时姿势矩阵时
-        // 才生效（EntitySnapshot 等快照路径传独立数组，保持原样）。
-        boolean rebindApplied = false;
-        if (this.runtimeModelId != null && armature != null && poses != null
-                && poses == armature.getPoseMatrices()) {
-            yesman.epicfight.api.animation.Pose captured = YsmBindArmature.findPose(armature);
-            if (captured != null) {
-                yesman.epicfight.model.armature.HumanoidArmature bind = YsmBindArmature.getArmature(this.runtimeModelId, this);
-                if (bind != null) {
-                    bind.setPose(captured);
-                    armature = bind;
-                    poses = bind.getPoseMatrices();
-                    rebindApplied = true;
+                      Mesh.DrawingFunction drawingFunction, int packedLight, float r, float g, float b, float a,
+                      int overlay, @Nullable Armature armature, OpenMatrix4f[] poses) {
+        boolean posePushed = false;
+        try {
+            // 体型适配：Epic Fight 的战斗动画围绕绑定姿势（Steve 体型）的关节旋转，
+            // 而转换后的 YSM 网格按自身关节轴心刚性蒙皮，挥砍时四肢会绕 Steve 的
+            // 关节位置旋转导致与身体分离。这里将动画姿势重新求值到该模型自己的
+            // YSM 绑定骨架（关节平移来自 YSM 骨骼 pivot，旋转帧与拓扑不变），使
+            // 旋转轴心落在模型的真实关节上；绑定姿势不变式（pose x toOrigin = I）
+            // 保证静止形态不受影响。仅当 poses 是当前 armature 的实时姿势矩阵时
+            // 才生效（EntitySnapshot 等快照路径传独立数组，保持原样）。
+            boolean rebindApplied = false;
+            if (this.runtimeModelId != null && armature != null && poses != null
+                    && poses == armature.getPoseMatrices()) {
+                yesman.epicfight.api.animation.Pose captured = YsmBindArmature.findPose(armature);
+                if (captured != null) {
+                    yesman.epicfight.model.armature.HumanoidArmature bind = YsmBindArmature.getArmature(this.runtimeModelId, this);
+                    if (bind != null) {
+                        bind.setPose(captured);
+                        armature = bind;
+                        poses = bind.getPoseMatrices();
+                        rebindApplied = true;
+                    }
                 }
             }
-        }
-        // 防御：EntitySnapshot（残影/特效快照）捕获时的 poseMatrices 基于当时的
-        // armature 生成；若女仆在战斗中切换武器（EFTLM 按物品切换 armature），
-        // 渲染时 armature 关节数变小，poses 比关节多，Epic Fight 的 compute 路径
-        // 会因 searchJointById(i) 返回 null 而崩溃。这里将 poses 裁剪到当前
-        // armature 的关节数（同时保证 YSMRuntimeBridge 与 compute 路径拿到一致数据）。
-        if (armature != null && poses != null && poses.length > armature.getJointNumber()) {
-            poses = java.util.Arrays.copyOf(poses, armature.getJointNumber());
-        }
-        boolean maidEntity = isMaidEntity();
-        YSMRuntimeBridge.apply(this, armature, poses);
-        ResourceLocation texture = resolveTexture();
-        // EpicFight_TouhouLittleMaid renders maids through its MaidPatch with a
-        // built-in 0.8 model-matrix scale (MaidPatch#getModelMatrix), tuned for
-        // its own maid-sized meshes (~1.37 blocks tall). Our converted YSM meshes
-        // are authored at the model's native (player-sized) scale, so that same
-        // shrink would render a maid's YSM model noticeably too small compared to
-        // its non-battle YSM render. Counter the scale around the entity origin
-        // (feet) so battle mode shows the model at its native size again.
-        if (maidEntity) {
-            poseStack.pushPose();
-            poseStack.scale(MAID_SCALE_COMPENSATION, MAID_SCALE_COMPENSATION, MAID_SCALE_COMPENSATION);
-        }
-        try {
+            // 防御：EntitySnapshot（残影/特效快照）捕获时的 poseMatrices 基于当时的
+            // armature 生成；若女仆在战斗中切换武器（EFTLM 按物品切换 armature），
+            // 渲染时 armature 关节数变小，poses 比关节多，Epic Fight 的 compute 路径
+            // 会因 searchJointById(i) 返回 null 而崩溃。这里将 poses 裁剪到当前
+            // armature 的关节数（同时保证 YSMRuntimeBridge 与 compute 路径拿到一致数据）。
+            if (armature != null && poses != null && poses.length > armature.getJointNumber()) {
+                poses = java.util.Arrays.copyOf(poses, armature.getJointNumber());
+            }
+            boolean maidEntity = isMaidEntity();
+            YSMRuntimeBridge.apply(this, armature, poses);
+            ResourceLocation texture = resolveTexture();
+            // EpicFight_TouhouLittleMaid renders maids through its MaidPatch with a
+            // built-in 0.8 model-matrix scale (MaidPatch#getModelMatrix), tuned for
+            // its own maid-sized meshes (~1.37 blocks tall). Our converted YSM meshes
+            // are authored at the model's native (player-sized) scale, so that same
+            // shrink would render a maid's YSM model noticeably too small compared to
+            // its non-battle YSM render. Counter the scale around the entity origin
+            // (feet) so battle mode shows the model at its native size again.
+            if (maidEntity) {
+                poseStack.pushPose();
+                posePushed = true;
+                poseStack.scale(MAID_SCALE_COMPENSATION, MAID_SCALE_COMPENSATION, MAID_SCALE_COMPENSATION);
+            }
             // Real Camera's vertex-catcher passes (its tetrahedral binding
             // probes and its first-person body render) only see vertices
             // written into their own buffer source: the direct-GL paths (GPU
@@ -244,7 +246,6 @@ public class YSMMesh extends HumanoidMesh {
                     }
                 }
                 logDrawDiagOnce(runtimeModelId, armature, poses, rebindApplied, maidEntity, "realcamera", poseStack);
-                com.ysmef.compat.YsmDiag.onMeshDrawEnd();
                 return;
             }
             // ModernYSM-style direct GPU skinning path (bone SSBO + skinning shader):
@@ -255,7 +256,6 @@ public class YSMMesh extends HumanoidMesh {
             if (texture != null && gpu != null && gpu.tryRender(this, poseStack, bufferSources, texture,
                     packedLight, r, g, b, a, overlay, armature, poses)) {
                 logDrawDiagOnce(runtimeModelId, armature, poses, rebindApplied, maidEntity, "gpu", poseStack);
-                com.ysmef.compat.YsmDiag.onMeshDrawEnd();
                 return;
             }
             RenderType finalRenderType = texture != null
@@ -265,15 +265,15 @@ public class YSMMesh extends HumanoidMesh {
                     packedLight, r, g, b, a, overlay, armature, poses);
             logDrawDiagOnce(runtimeModelId, armature, poses, rebindApplied, maidEntity, "compute", poseStack);
         } finally {
-            if (maidEntity) {
-                poseStack.popPose();
+            try {
+                if (posePushed) {
+                    poseStack.popPose();
+                }
+            } finally {
+                YSMRuntimeBridge.clearCurrentEntity();
+                com.ysmef.compat.YsmDiag.onMeshDrawEnd();
             }
-            // The current-entity ThreadLocal is set by YSMMeshSelector before this
-            // draw and must not keep a stale entity (or player/maid) referenced
-            // after the draw returns - including the early camera/GPU returns.
-            YSMRuntimeBridge.clearCurrentEntity();
         }
-        com.ysmef.compat.YsmDiag.onMeshDrawEnd();
     }
 
     /** Once per model: which render path draws it and with which armature/pose data. */

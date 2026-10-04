@@ -17,7 +17,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -34,11 +33,10 @@ import java.util.concurrent.Executors;
  * stores it in the generated pack under
  * assets/&lt;modid&gt;/animmodels/animations/public/.
  *
- * Similar sampled actions are deduplicated: the first clip becomes the public
- * template, later clips whose per-frame local animation is within the similarity
- * thresholds reuse that template. The model -> template mapping is persisted in
+ * Generated frame clips are deduplicated only when their emitted joint matrices
+ * match exactly. The model -> template mapping is persisted in
  * config/ysm_epicfight_compat/extra_animation_mappings.json and the template
- * descriptors (used for approximate matching across sessions) in
+ * legacy source descriptors in
  * extra_animation_templates.json.
  *
  * Generated JSONs carry Epic Fight's resourcepack-animation "constructor"
@@ -153,14 +151,9 @@ public final class YsmExtraAnimationLibrary {
     }
 
     private static synchronized TemplateDescriptor findOrCreateTemplate(YsmExtraFrameWriter.Clip clip) {
-        String hash = exactHash(clip);
+        String hash = YsmWheelFrameHash.of(clip);
         for (TemplateDescriptor descriptor : TEMPLATES.values()) {
             if (descriptor.hash().equals(hash)) {
-                return descriptor;
-            }
-        }
-        for (TemplateDescriptor descriptor : TEMPLATES.values()) {
-            if (isSimilar(descriptor, clip)) {
                 return descriptor;
             }
         }
@@ -172,9 +165,8 @@ public final class YsmExtraAnimationLibrary {
             for (int i = 0; i < values.length; i++) {
                 sanitized[i] = finite(values[i]);
             }
-            // Stored downsampled - see DESCRIPTOR_SAMPLING (keeps the
-            // descriptor file and the similarity scan small; exact matching
-            // still uses the full-clip SHA-256 above).
+            // Preserve compact source descriptors for legacy file compatibility;
+            // only the emitted matrices determine template reuse.
             joints.put(jointName(entry.getKey()), downsample(sanitized, DESCRIPTOR_SAMPLING));
         }
         TemplateDescriptor descriptor = new TemplateDescriptor(
@@ -210,17 +202,13 @@ public final class YsmExtraAnimationLibrary {
     }
 
     // ------------------------------------------------------------------
-    // Template similarity / exact hash
+    // Compact legacy source descriptors
     // ------------------------------------------------------------------
 
     /**
-     * Similarity descriptors are stored DOWNSAMPLED: every Nth frame instead of
-     * the full per-frame data (a 120s clip at 60fps is 7201 frames x 9 floats x
-     * 20 joints ~ 5 MB per template). The old full-frame descriptor file grew
-     * to hundreds of MB and its in-memory JSON tree could OOM the client; the
-     * downsampled comparison is still frame-accurate enough for the loose
-     * similarity thresholds below, and the exact SHA-256 hash (computed over
-     * the FULL clip) still deduplicates identical animations bit-for-bit.
+     * Legacy source descriptors are stored downsampled: every Nth frame instead of
+     * full per-frame data. They remain for reading existing descriptor files;
+     * template identity now uses the emitted matrices in YsmWheelFrameHash.
      */
     private static final int DESCRIPTOR_SAMPLING = 8;
 
@@ -238,111 +226,6 @@ public final class YsmExtraAnimationLibrary {
             System.arraycopy(full, src, out, f * 9, 9);
         }
         return out;
-    }
-
-    private static String exactHash(YsmExtraFrameWriter.Clip clip) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            digest.update((byte) clip.loop);
-            // One reused scratch buffer: the old code allocated a ByteBuffer per
-            // float, i.e. millions of small heap objects for a long clip.
-            java.nio.ByteBuffer buffer = java.nio.ByteBuffer.allocate(8);
-            buffer.putInt(Float.floatToIntBits(clip.length));
-            buffer.putInt(clip.frameCount);
-            buffer.flip();
-            digest.update(buffer);
-            for (Map.Entry<Integer, float[]> entry : clip.sourceDescriptor.entrySet()) {
-                digest.update((byte) entry.getKey().intValue());
-                for (float value : entry.getValue()) {
-                    buffer.clear();
-                    buffer.putInt(Float.floatToIntBits(finite(value)));
-                    buffer.flip();
-                    digest.update(buffer);
-                }
-            }
-            StringBuilder sb = new StringBuilder();
-            for (byte b : digest.digest()) {
-                sb.append(Character.forDigit((b >> 4) & 0xF, 16));
-                sb.append(Character.forDigit(b & 0xF, 16));
-            }
-            return sb.toString();
-        } catch (Exception e) {
-            return Integer.toHexString(System.identityHashCode(clip));
-        }
-    }
-
-    private static final float MAX_AVG_ROT = 5.0f;       // Bedrock degrees per frame
-    private static final float MAX_MAX_ROT = 20.0f;      // worst-frame degrees
-    private static final float MAX_AVG_POS = 2.0f;       // Bedrock pixels
-    private static final float MAX_MAX_POS = 8.0f;
-    private static final float MAX_AVG_SCALE = 0.05f;
-    private static final float MAX_MAX_SCALE = 0.2f;
-
-    private static boolean isSimilar(TemplateDescriptor descriptor, YsmExtraFrameWriter.Clip clip) {
-        if (descriptor.loop() != clip.loop || descriptor.frameCount() != clip.frameCount
-                || Math.abs(descriptor.length() - clip.length) > 0.05f) {
-            return false;
-        }
-        if (!descriptor.joints().keySet().equals(jointNamesOf(clip.sourceDescriptor))) {
-            return false;
-        }
-        double rotSum = 0.0;
-        double posSum = 0.0;
-        double scaleSum = 0.0;
-        float maxRot = 0.0f;
-        float maxPos = 0.0f;
-        float maxScale = 0.0f;
-        int samples = 0;
-        for (Map.Entry<String, float[]> templateJoint : descriptor.joints().entrySet()) {
-            float[] template = templateJoint.getValue();
-            float[] candidate = clip.sourceDescriptor.get(jointIdOf(templateJoint.getKey()));
-            if (candidate == null || template.length > candidate.length) {
-                return false;
-            }
-            // template is downsampled (DESCRIPTOR_SAMPLING): compare against the
-            // full clip at the same stride.
-            int candidateFrames = candidate.length / 9;
-            for (int i = 0; i < template.length; i += 9) {
-                int src = Math.min((i / 9) * DESCRIPTOR_SAMPLING, candidateFrames - 1) * 9;
-                float dx = finite(template[i]) - finite(candidate[src]);
-                float dy = finite(template[i + 1]) - finite(candidate[src + 1]);
-                float dz = finite(template[i + 2]) - finite(candidate[src + 2]);
-                float rot = finite((float) Math.sqrt(dx * dx + dy * dy + dz * dz));
-                float pdx = finite(template[i + 3]) - finite(candidate[src + 3]);
-                float pdy = finite(template[i + 4]) - finite(candidate[src + 4]);
-                float pdz = finite(template[i + 5]) - finite(candidate[src + 5]);
-                float pos = finite((float) Math.sqrt(pdx * pdx + pdy * pdy + pdz * pdz));
-                float sdx = finite(template[i + 6]) - finite(candidate[src + 6]);
-                float sdy = finite(template[i + 7]) - finite(candidate[src + 7]);
-                float sdz = finite(template[i + 8]) - finite(candidate[src + 8]);
-                float scale = Math.max(Math.abs(sdx), Math.max(Math.abs(sdy), Math.abs(sdz)));
-                rotSum += rot;
-                posSum += pos;
-                scaleSum += scale;
-                maxRot = Math.max(maxRot, rot);
-                maxPos = Math.max(maxPos, pos);
-                maxScale = Math.max(maxScale, scale);
-                samples++;
-            }
-        }
-        if (samples == 0) {
-            return false;
-        }
-        return (rotSum / samples) <= MAX_AVG_ROT && maxRot <= MAX_MAX_ROT
-                && (posSum / samples) <= MAX_AVG_POS && maxPos <= MAX_MAX_POS
-                && (scaleSum / samples) <= MAX_AVG_SCALE && maxScale <= MAX_MAX_SCALE;
-    }
-
-    private static java.util.Set<String> jointNamesOf(Map<Integer, float[]> descriptor) {
-        java.util.Set<String> names = new java.util.HashSet<>();
-        for (Integer joint : descriptor.keySet()) {
-            names.add(jointName(joint));
-        }
-        return names;
-    }
-
-    private static int jointIdOf(String name) {
-        return JointTable.idOf(name);
     }
 
     // ------------------------------------------------------------------

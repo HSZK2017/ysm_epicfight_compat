@@ -1282,6 +1282,30 @@ public final class YsmDynamicBoneSolver {
     }
 
     /**
+     * Recheck body contact after neighbouring cloth panels have pulled this direction.
+     * {@link #update} already prepared the pose's target and integrated the segment; this
+     * method only projects the changed direction and keeps the same swing constraint.
+     */
+    void projectCoupledCloth(SegmentState state, Vector3f pivot, Vector3f restDir,
+                              float lever, float maxAngle, Colliders colliders,
+                              float segmentRadius, Quaternionf out, Matrix4f ancestorFrame) {
+        if (state == null || pivot == null || restDir == null || colliders == null
+                || colliders.count() == 0) {
+            return;
+        }
+        float priorContact = state.lastContact;
+        this.rest.set(restDir).normalize();
+        applySwingLimit(state, this.target, maxAngle);
+        rotationFromTo(this.rotationOut, this.rest, state.direction);
+        resolveCollisions(state, pivot, this.rest, lever, maxAngle, colliders,
+                segmentRadius, this.target, this.rotationOut, ancestorFrame);
+        applySwingLimit(state, this.target, maxAngle);
+        state.lastContact += priorContact;
+        state.lastAngle = angleBetween(this.rest, state.direction);
+        rotationFromTo(out, this.rest, state.direction);
+    }
+
+    /**
      * One substep: accumulate every torque, divide by the inertia, integrate, rotate.
      *
      * @param springStiffness the author's own restoring stiffness, {@code omega_n^2}, NOT including

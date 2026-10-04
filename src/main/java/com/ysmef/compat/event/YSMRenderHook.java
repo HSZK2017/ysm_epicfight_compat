@@ -21,7 +21,7 @@ import yesman.epicfight.world.capabilities.entitypatch.LivingEntityPatch;
  * mode that renderer is undesirable: it re-posts a RenderLivingEvent.Pre with a
  * renderer whose layer list lacks PlayerItemInHandLayer, so Epic Fight's
  * PatchedItemInHandLayer never runs on that path and the held weapon never renders
- * (YsmPlayerRenderMixin / OpenYsmPlayerRenderMixin / ModernYsmPlayerRenderMixin
+ * (YsmPlayerRenderMixin / OpenYsmPlayerRenderMixin
  * suppress YSM's interception for the same reason).
  *
  * This handler therefore takes over the player draw at HIGHEST priority in battle

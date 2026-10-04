@@ -186,15 +186,13 @@ public final class YsmMeshSecondaryMotion {
          * {@link YsmPhysicsChains#sewnTogether} for why they belong in, and
          * {@link #relaxTowardsNeighbours} for what is done with them.
          */
-        final Knits knits;
+        final YsmPhysicsTopology.Knits knits;
         /**
          * How far this segment's piece may bend as a whole, radians, per segment.
          *
-         * <p>Per piece, not one number for the model: a piece's total is scaled by how many joints
-         * it has ({@link YsmPhysicsParts#chainLimitFor}), because one flat per-joint limit shared
-         * over a long chain makes the chain <i>stiffer</i> the longer it is - a seven-bone tail at
-         * 8.6 degrees a bone is a tail nobody sees move. A table rather than a computation in the
-         * frame loop, so the frame allocates nothing and the answer cannot drift frame to frame.
+         * <p>Per piece, not one number for the model: tails retain a joint-count-scaled total,
+         * while garments keep one total for the connected sheet. See
+         * {@link YsmPhysicsMotionLimits#pieceLimit}. Computed once rather than in every frame.
          */
         final float[] pieceLimit;
         /** How many joints each segment's piece has in all; the log reads it beside the limit. */
@@ -252,14 +250,14 @@ public final class YsmMeshSecondaryMotion {
             this.lastChainAngle = new float[count];
             this.chainBudget = new float[count];
             this.chainUsed = new float[count];
-            PieceTable pieces = piecesOf(parts.segments());
+            YsmPhysicsTopology.PieceTable pieces = YsmPhysicsTopology.piecesOf(parts.segments());
             this.jointsLeft = pieces.jointsLeft;
             this.jointsInPiece = pieces.jointsInPiece;
-            this.knits = knitsOf(parts.segments());
+            this.knits = YsmPhysicsTopology.knitsOf(parts.segments());
             this.pieceLimit = new float[count];
             for (int i = 0; i < count; i++) {
-                this.pieceLimit[i] = YsmPhysicsParts.chainLimitFor(
-                        pieces.jointsInPiece[i], maxAnglePerJoint);
+                this.pieceLimit[i] = YsmPhysicsMotionLimits.pieceLimit(
+                        parts.segments()[i], pieces.jointsInPiece[i], maxAnglePerJoint);
             }
             this.lastAxis = new Vector3f[count];
             this.lastRest = new Vector3f[count];
@@ -276,221 +274,6 @@ public final class YsmMeshSecondaryMotion {
                 this.lastAxis[i] = new Vector3f();
                 this.lastRest[i] = new Vector3f();
                 this.pivotRotations[i] = new Quaternionf();
-            }
-        }
-    }
-
-    /** Per segment: how many joints its piece has, and how many of them are at or below it. */
-    private static final class PieceTable {
-        final int[] jointsInPiece;
-        final int[] jointsLeft;
-
-        PieceTable(int[] jointsInPiece, int[] jointsLeft) {
-            this.jointsInPiece = jointsInPiece;
-            this.jointsLeft = jointsLeft;
-        }
-    }
-
-    /**
-     * The piece each segment belongs to, as counts rather than as a list.
-     *
-     * <p>Walked from the parent links rather than assumed from the list order, because the links are
-     * model data and a piece's bones need not be listed root first - on the shipped maid the
-     * right-hand panel is {@code RB3, RB2, RB} and the left-hand one {@code LM, LM2, LM3}. The walk
-     * is bounded, because a damaged table can contain a cycle and this runs on the render thread's
-     * path to a model's first frame.
-     *
-     * <p>The counts are of <b>segments</b>: the bones that are really simulated, which is what the
-     * piece's allowance is shared among. A bone in the skeleton's subtree that produced no segment -
-     * geometry that is not its own, a mapped body part, a bracket over two panels - must not raise
-     * the allowance of the chain it hangs near.
-     */
-    private static PieceTable piecesOf(YsmPhysicsParts.Segment[] segments) {
-        int count = segments.length;
-        int[] depth = new int[count];
-        int[] root = new int[count];
-        int[] size = new int[count];
-        for (int i = 0; i < count; i++) {
-            int top = i;
-            int guard = 0;
-            for (int parent = segments[i].parent();
-                 parent >= 0 && parent < count && parent != top && guard++ <= count;
-                 parent = segments[parent].parent()) {
-                top = parent;
-                depth[i]++;
-            }
-            root[i] = top;
-        }
-        for (int i = 0; i < count; i++) {
-            size[root[i]]++;
-        }
-        int[] inPiece = new int[count];
-        int[] left = new int[count];
-        for (int i = 0; i < count; i++) {
-            inPiece[i] = Math.max(1, size[root[i]]);
-            left[i] = Math.max(1, size[root[i]] - depth[i]);
-        }
-        return new PieceTable(inPiece, left);
-    }
-
-    /**
-     * Which segments are sewn to which.
-     *
-     * <p>A flat array rather than a list of lists because it is read once per segment per frame and
-     * the frame allocates nothing: {@code partners} is a run {@code [start[i], start[i] + count[i])}
-     * for each segment. A pair is stored on <b>both</b> sides - each of the two is pulled toward the
-     * other's direction, so they meet in the middle and neither is the only one that gives way.
-     */
-    static final class Knits {
-        final int[] partners;
-        final int[] start;
-        final int[] count;
-
-        Knits(int[] partners, int[] start, int[] count) {
-            this.partners = partners;
-            this.start = start;
-            this.count = count;
-        }
-    }
-
-    /**
-     * Build the coupling graph from the model's own geometry.
-     *
-     * <p>The sewn relation is {@link YsmPhysicsChains#sewnTogether}, in one place so the rule can be
-     * read and tested without a frame: a parent and its child are always sewn (they are the same
-     * piece of cloth), and two segments that are not related are sewn when their pivots are within
-     * {@code KNIT_RADIUS} and their rest directions within {@code KNIT_MAX_ANGLE}.
-     *
-     * <p>The candidate set is the union of the parent/child links and the nearest few by pivot
-     * distance, capped at {@code KNIT_COUNT} + 1 partners. A cap rather than a threshold alone,
-     * because a skirt's waistband puts a dozen pivots inside the radius and a per-frame loop over
-     * all of them is work the model did not ask for; the nearest few are the panels actually beside
-     * each other.
-     *
-     * <p>Bounded by the segment count, because the parent links are model data and a damaged table
-     * can contain a cycle; this runs on the render thread's path to a model's first frame.
-     */
-    private static Knits knitsOf(YsmPhysicsParts.Segment[] segments) {
-        int count = segments.length;
-        int slotCount = YsmPhysicsChains.KNIT_COUNT;
-        int[] depth = new int[count];
-        int[] parentOf = new int[count];
-        for (int i = 0; i < count; i++) {
-            parentOf[i] = parentOf(segments, i);
-        }
-        for (int i = 0; i < count; i++) {
-            int guard = 0;
-            for (int parent = parentOf[i]; parent >= 0 && guard++ <= count;
-                 parent = parentOf[parent]) {
-                depth[i]++;
-            }
-        }
-        // One partner slot per knit, plus the parent and the child, which the cap must never drop:
-        // they are the same piece of cloth and the reason this table exists.
-        int[] partners = new int[count * (slotCount + 2)];
-        int[] start = new int[count];
-        int[] size = new int[count];
-        int[] best = new int[slotCount];
-        float[] bestDistance = new float[slotCount];
-        int cursor = 0;
-        for (int i = 0; i < count; i++) {
-            start[i] = cursor;
-            java.util.Arrays.fill(best, -1);
-            java.util.Arrays.fill(bestDistance, Float.MAX_VALUE);
-            for (int j = 0; j < count; j++) {
-                if (i == j) {
-                    continue;
-                }
-                // A parent/child link is recorded on the PARENT's side only, and that is not a
-                // detail of the data structure - it is what keeps the chain's composition honest.
-                // A child is resolved after its parent and composes its delta under the parent's,
-                // so its own swing IS its angle relative to the parent; pulling the parent toward
-                // the child is what closes that angle, and the child has nothing to gain from a
-                // pull in the other direction. Recording it on the child's side as well makes the
-                // parent's relaxation depend on a partner that has not been resolved yet, and the
-                // child then composes under a stale parent - which doubles the composed angle per
-                // level, the exact "tail folds onto the lower body" this file was fixed for. The
-                // measurement that caught it is in tmp_verify/T8_delta_probe.txt.
-                boolean child = j == parentOf[i];
-                if (child) {
-                    partners[cursor++] = j;
-                    size[i]++;
-                    continue;
-                }
-                if (i == parentOf[j]) {
-                    // This segment is the parent: the link is on the child's side, not here.
-                    continue;
-                }
-                float distance = Float.MAX_VALUE;
-                if (segments[i].bindPivot() != null && segments[j].bindPivot() != null) {
-                    distance = segments[i].bindPivot().distance(segments[j].bindPivot());
-                }
-                if (distance > YsmPhysicsChains.KNIT_RADIUS
-                        || segments[i].bindRest() == null || segments[j].bindRest() == null
-                        || YsmDynamicBoneSolver.angleBetween(segments[i].bindRest(),
-                                segments[j].bindRest()) > YsmPhysicsChains.KNIT_MAX_ANGLE) {
-                    continue;
-                }
-                for (int slot = 0; slot < slotCount; slot++) {
-                    if (distance < bestDistance[slot]) {
-                        for (int shift = slotCount - 1; shift > slot; shift--) {
-                            best[shift] = best[shift - 1];
-                            bestDistance[shift] = bestDistance[shift - 1];
-                        }
-                        best[slot] = j;
-                        bestDistance[slot] = distance;
-                        break;
-                    }
-                }
-            }
-            for (int slot = 0; slot < slotCount; slot++) {
-                if (best[slot] < 0) {
-                    continue;
-                }
-                partners[cursor++] = best[slot];
-                size[i]++;
-            }
-        }
-        // Every segment of a coupled garment is relaxed toward its partners, the top of a piece
-        // included: the hips are where a skirt's panels are sewn to each other, so the panel that
-        // is a root is the one with the most to gain from being held by the ones beside it.
-        return new Knits(java.util.Arrays.copyOf(partners, cursor), start, size);
-    }
-
-    /** A segment's parent index when it is a usable one, else -1. */
-    private static int parentOf(YsmPhysicsParts.Segment[] segments, int index) {
-        if (index < 0 || index >= segments.length) {
-            return -1;
-        }
-        int parent = segments[index].parent();
-        return parent >= 0 && parent < segments.length && parent != index ? parent : -1;
-    }
-
-    /**
-     * Resolve the panels sewn to this one, so the coupling below reads this frame's directions.
-     *
-     * <p><b>Not called any more, and the reason is worth more than the method.</b> It was added so
-     * the relaxation would read this frame's directions rather than last frame's, and it breaks the
-     * chain instead: a knit partner is very often this segment's own child, and resolving the child
-     * first makes the child compose its delta under a parent that has not been built yet. The
-     * composed angle then doubles per level - the reported "tail folds onto the lower body" - while
-     * every individual number still looks plausible. The coupling tolerates a partner that is a
-     * frame behind; a chain does not tolerate a composition against a stale parent. Kept as a
-     * written-down dead end so it is not re-invented.
-     */
-    @SuppressWarnings("unused")
-    private static void resolveKnitPartners(State state, PoseSource poses, int index, float dt,
-                                            Vector3f bodyVelocity, float[] turn,
-                                            YsmDynamicBoneSolver.Colliders colliders) {
-        Knits knits = state.knits;
-        if (knits == null || index < 0 || index >= knits.count.length || knits.count[index] == 0) {
-            return;
-        }
-        int start = knits.start[index];
-        for (int slot = 0; slot < knits.count[index]; slot++) {
-            int partner = knits.partners[start + slot];
-            if (partner >= 0 && partner < state.states.length && !state.resolved[partner]) {
-                resolveSegment(state, poses, partner, dt, bodyVelocity, turn, colliders);
             }
         }
     }
@@ -1513,6 +1296,19 @@ public final class YsmMeshSecondaryMotion {
         }
         restDir.normalize();
 
+        // The collision solver must see the same remaining chain allowance as the final mesh
+        // transform. Otherwise it can push a panel clear of a leg using an angle that the
+        // subsequent chain clamp discards, putting the drawn panel back inside the leg.
+        float used = hasParent ? state.chainUsed[parent] : 0.0F;
+        float allowed = YsmPhysicsParts.chainAllowance(segment.maxAngle(), state.pieceLimit[index],
+                used, state.jointsLeft[index]);
+        // A model-specific bone ceiling must also reach the collision solver. Applying it
+        // only to the final mesh rotation could undo the solver's leg clearance.
+        float ceiling = state.limit[index];
+        if (ceiling > 0.0F && ceiling < allowed) {
+            allowed = ceiling;
+        }
+
         // A child is *already* carried by its parent: the delta written below is composed under the
         // parent's, which is what keeps a chain connected and makes a nested piece follow the one it
         // hangs from. An earlier build also rotated this segment's simulated direction by the
@@ -1554,41 +1350,34 @@ public final class YsmMeshSecondaryMotion {
         YsmDynamicBoneSolver.INSTANCE.setProbeSegment(index);
         YsmDynamicBoneSolver.INSTANCE.update(state.states[index],
                 (float) YsmPhysicsTuning.gravityAcceleration(),
-                (float) YsmPhysicsTuning.airDrag(),
+                YsmPhysicsMotionLimits.airDrag(segment, (float) YsmPhysicsTuning.airDrag()),
                 segment.verticalFollow(), DOWN_IN_MODEL_SPACE,
                 pivot, restDir,
                 segment.lever(), segment.frequency(), segment.coefficient(), segment.mass(),
-                segment.maxAngle(), bodyVelocity, colliders, segment.radius(), null,
+                allowed, bodyVelocity, colliders, segment.radius(), null,
                 turn[0], turn[1], dt, scratch, state.pivotRotations[index], ancestorFrame);
         // Recorded here, at the one place a segment is handed to the solver, so "this piece was
         // integrated" is a fact about what ran rather than about what the code looks like.
         state.integrated[index] = true;
 
+        // Fabric continuity. The topology includes both nearby panels and parent/child links,
+        // but each segment remains a separate pendulum. Coupling transfers the neighbours'
+        // swings relative to their own rest directions; copying their absolute directions
+        // would flatten the skirt's authored spread into parallel strips.
+        boolean coupled = relaxTowardsNeighbours(state, index, dt);
+
+        if (coupled && segment.category() == YsmPhysicsParts.Category.CLOTH) {
+            YsmDynamicBoneSolver.INSTANCE.projectCoupledCloth(state.states[index], pivot, restDir,
+                    segment.lever(), allowed, colliders, segment.radius(), scratch, ancestorFrame);
+        }
+
         float ownAngle = state.states[index].lastAngle;
-
-        // Fabric continuity. Every panel of this skirt is solved as its own pendulum, and the
-        // coupling that ties one to the next is the one in YsmPhysicsParts#wireNeighbours - which
-        // has no say at all inside a chain, because it excludes the parent/child pairs and a panel
-        // skirt is exactly a chain of panels. On the real maid skirt the shipped numbers are a 20.0
-        // degree front panel next to a 5.1 degree one, and 12.1 next to 4.6: a fifteen degree
-        // disagreement between neighbours of the same garment. Because the panels are separate mesh
-        // parts with no geometry between them, that disagreement is not a smooth curve, it is a gap
-        // - which is what "the pieces spread apart" is. See #knitsOf.
-        //
-        // Cloth does not do that: it is continuous, and a panel is held by the ones sewn to it.
-        // The relaxation below is that hold, applied as an angular pull toward the average of the
-        // segment's knit partners. It is deliberately a pull and not a constraint: a panel still
-        // leads when it is genuinely pushed, the others simply follow rather than staying behind.
-        relaxTowardsNeighbours(state, index, ownAngle, dt);
-
-        ownAngle = state.states[index].lastAngle;
 
         // Two ceilings, kept apart on purpose, and a third number that used to be confused with one
         // of them. This joint's own allowance is firm at the base of a piece and loose for the
-        // strands below it. The piece as a whole may bend by ITS OWN total - which grows with how
-        // many joints it has, so a long chain is not shared into stillness - and what is left of
-        // that total is SHARED OUT among the joints that still have to bend inside it. See
-        // YsmPhysicsParts#chainLimitFor for the total and #chainAllowance for the division.
+        // strands below it. The piece as a whole uses its category's total: garment sheets have
+        // one total, while tails grow their budget with chain length. What remains is shared
+        // among the joints still to resolve. See YsmPhysicsMotionLimits#pieceLimit.
         //
         // What is spent so far is the sum of the ancestors' own granted angles, not their composed
         // chain angle. The composed angle is what the piece reads as on screen (and what the log
@@ -1596,22 +1385,17 @@ public final class YsmMeshSecondaryMotion {
         // budget measured from it is spent faster than the joints spend it, which is how a chain
         // whose joints had each turned 18.4 degrees reported 73.6 degrees of bend and then froze
         // every joint below the third.
-        float used = hasParent ? state.chainUsed[parent] : 0.0F;
-        float allowed = YsmPhysicsParts.chainAllowance(segment.maxAngle(), state.pieceLimit[index],
-                used, state.jointsLeft[index]);
-        // The user's own ceiling for this bone, if the model's override file names it. Applied after
-        // the chain's own allowance and before the angle is clamped, so it can only ever tighten what
-        // the chain granted - and, because `chainUsed` below is written from the clamped angle, a
-        // capped link hands the rest of its budget to the joints under it rather than spending it.
-        // Zero (every model without a file) leaves `allowed` exactly as it was.
-        float ceiling = state.limit[index];
-        if (ceiling > 0.0F && ceiling < allowed) {
-            allowed = ceiling;
-        }
+        // Coupling changes the direction after the solver has produced its quaternion. Derive
+        // the rendered rotation from that final direction, then keep the state at the same
+        // angle if the shared chain budget has to trim it. A visual-only clamp made the next
+        // frame start from a different direction than the one the player actually saw.
+        YsmDynamicBoneSolver.rotationFromTo(scratch, restDir, state.states[index].direction);
         if (ownAngle > allowed && ownAngle > 1.0E-4F) {
             scratch.set(scratch).slerp(IDENTITY, 1.0F - allowed / ownAngle);
+            state.states[index].direction.set(restDir).rotate(scratch).normalize();
             ownAngle = allowed;
         }
+        state.states[index].lastAngle = ownAngle;
         state.chainBudget[index] = allowed;
         // Written after the clamp, because it is the budget the joints below will be measured
         // against: what this joint was actually allowed, not what it asked for.
@@ -1704,144 +1488,17 @@ public final class YsmMeshSecondaryMotion {
         return Float.isFinite(angle) ? angle : 0.0F;
     }
 
-    /**
-     * Pull a segment's swing toward the average of the panels sewn to it.
-     *
-     * <p>Applied after the segment's own dynamics, so it shapes the result rather than replacing
-     * it: a panel that is genuinely pushed still leads, and its neighbours follow it instead of
-     * staying where they were.
-     *
-     * <p>The partners are fixed at build time from the model's own geometry and its parent links
-     * ({@link #knitsOf}), so this costs one pass over a short list per segment and allocates
-     * nothing. A segment further from its piece's root than its parent is - which is every joint
-     * of a chain - is the side that moves; the root is pulled toward its own neighbours instead.
-     *
-     * <h2>Why the factor is per second and not per frame</h2>
-     *
-     * <p>The pull was a flat quarter of the disagreement per frame, which is a different coupling
-     * at 30 fps than at 240: at 240 the garment converges in half the time, so the same model
-     * behaves differently on two machines and neither number is the one that was tuned. It is the
-     * fraction of the disagreement that closes in one step of length {@code dt}, so
-     * {@code 1 - 2^(-dt/H)}: with {@code H} = 0.03 s a tenth of a second closes 90 per cent of the
-     * disagreement at any frame rate, and a long frame cannot overshoot because the factor is
-     * bounded by one.
-     *
-     * <h2>Why it does not fight the collision</h2>
-     *
-     * <p>Nothing here writes state the solver owns: it rotates {@code direction} - the swing - and
-     * leaves the velocity in {@link YsmDynamicBoneSolver.SegmentState} alone, so a panel a thigh is
-     * holding is pulled by its neighbours <i>and</i> pushed by the collider on the next frame, and
-     * the collider is a hard projection while this is a fraction of an angle. Measured on a pair
-     * held against a leg, the blocked panel keeps its displacement and its neighbour comes to it;
-     * see {@code MaidSkirtCoherenceTest}. The one case the pull cannot win is a neighbour that is
-     * itself held on its stop, and there both panels are already at their limits and the gap
-     * between them is the budget's business, not the coupling's.
-     */
-    private static void relaxTowardsNeighbours(State state, int index, float ownAngle, float dt) {
-        Knits knits = state.knits;
-        if (knits == null || index < 0 || index >= knits.count.length
-                || knits.count[index] == 0 || ownAngle < 1.0E-4F) {
-            return;
-        }
-        Vector3f mean = coherenceMean;
-        mean.zero();
-        int used = 0;
-        int start = knits.start[index];
-        for (int slot = 0; slot < knits.count[index]; slot++) {
-            int partner = knits.partners[start + slot];
-            if (partner < 0 || partner >= state.states.length || !state.integrated[partner]) {
-                // A partner with no pose this frame has no direction to be pulled toward; its
-                // stale one is what a garment must not follow.
-                continue;
-            }
-            mean.add(state.states[partner].direction);
-            used++;
-        }
-        if (used == 0 || mean.lengthSquared() < 1.0E-8F) {
-            return;
-        }
-        mean.normalize();
-
-        Vector3f direction = state.states[index].direction;
-        float disagreement = YsmDynamicBoneSolver.angleBetween(direction, mean);
-        if (disagreement < COHERENCE_DEADBAND) {
-            return;
-        }
-        // Rotate the piece a fraction of the way toward where the fabric around it points. A
-        // rotation rather than a blend of positions: the segment keeps its lever and its state,
-        // it simply aims where its neighbours aim.
-        relaxDirection(direction, mean, coherenceFactor(dt));
-        state.states[index].lastAngle = YsmDynamicBoneSolver.angleBetween(state.restDirections[index], direction);
+    private static boolean relaxTowardsNeighbours(State state, int index, float dt) {
+        return YsmPhysicsCoupling.relaxTowardsNeighbours(state, index, dt);
     }
 
-    /**
-     * The fraction of the neighbours' disagreement that closes in one frame of {@code dt} seconds.
-     *
-     * <p>{@code 1 - 2^(-dt/H)}: the coupling's time constant is {@link #COHERENCE_HALF_LIFE_SECONDS},
-     * expressed as a half-life because that is the form whose meaning does not depend on the frame
-     * rate. Zero for a frame with no time in it, which leaves the garment exactly as it is rather
-     * than pulling it by an amount nobody asked for.
-     */
     static float coherenceFactor(float dt) {
-        if (!(dt > 0.0F) || !Float.isFinite(dt)) {
-            return 0.0F;
-        }
-        double fraction = 1.0 - Math.pow(2.0, -dt / COHERENCE_HALF_LIFE_SECONDS);
-        return (float) Math.max(0.0, Math.min(1.0, fraction));
+        return YsmPhysicsCoupling.coherenceFactor(dt);
     }
 
-    /**
-     * Turn {@code direction} a fraction of the way toward {@code target}.
-     *
-     * <p>The coupling's whole mechanism, extracted so its two properties can be tested: it is a
-     * <b>pull</b>, so one application closes exactly {@code factor} of the disagreement and never
-     * overshoots, and repeated application converges rather than oscillating. A constraint
-     * (snapping to the target) would make a panel that is genuinely pushed unable to lead, and
-     * cloth does lead where it is pushed - the rest of the garment follows it.
-     *
-     * <p>Written as an explicit axis-and-angle rotation rather than a quaternion slerp. The
-     * fraction is the whole point of the method, and getting it wrong is invisible - the piece
-     * simply snaps to its neighbours instead of being pulled toward them, which reads as the
-     * garment having no give at all - so it is done in the one form whose meaning is unambiguous
-     * from the line itself.
-     */
     static void relaxDirection(Vector3f direction, Vector3f target, float factor) {
-        if (direction == null || target == null || factor <= 0.0F) {
-            return;
-        }
-        float angle = YsmDynamicBoneSolver.angleBetween(direction, target);
-        if (angle < 1.0E-4F) {
-            return;
-        }
-        coherenceAxis.set(direction).cross(target);
-        if (coherenceAxis.lengthSquared() < 1.0E-10F) {
-            // Exactly opposed: there is no shortest way round, and a pull has no business
-            // inventing one. The piece keeps the direction it is in.
-            return;
-        }
-        coherenceAxis.normalize();
-        direction.rotateAxis(angle * Math.min(1.0F, factor),
-                coherenceAxis.x, coherenceAxis.y, coherenceAxis.z);
-        direction.normalize();
+        YsmPhysicsCoupling.relaxDirection(direction, target, factor);
     }
-
-    /**
-     * The time constant of the panel coupling, as the time in which half the disagreement between
-     * two neighbours is closed.
-     *
-     * <p>Thirty milliseconds: a tenth of a second closes 90 per cent of it, which is well inside
-     * the time a viewer reads a garment as one object, while a panel that is genuinely being pushed
-     * is still free to lead for several frames. This replaces a flat quarter-per-frame, which was
-     * 0.25 at 60 fps and 0.5 at 120 - two different garments on two machines, and neither one the
-     * number anybody tuned. See {@link #coherenceFactor}.
-     */
-    private static final float COHERENCE_HALF_LIFE_SECONDS = 0.03F;
-
-    /** Disagreement below this is left alone, so a settled garment is exactly still. */
-    private static final float COHERENCE_DEADBAND = 0.01F;
-
-    private static final Vector3f coherenceMean = new Vector3f();
-    private static final Vector3f coherenceAxis = new Vector3f();
 
     // Scratch, so a per-frame update allocates nothing.
     private static final Quaternionf scratch = new Quaternionf();

@@ -19,6 +19,7 @@ import java.util.Locale;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -42,6 +43,56 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * FL2 0.128 -> 0.089, RB3 0.125 -> 0.090 - which is the model's own {@code width_scale}.
  */
 class T8_PanelGapProbeTest {
+
+    @Test
+    void runningMaidPanelsKeepOneClothBudgetAndOnePhysicalDirection() throws IOException {
+        List<YsmPhysicsParts.Segment> panels = Shape.load().panels();
+        YsmPhysicsParts.Model model = new YsmPhysicsParts.Model(
+                panels.toArray(new YsmPhysicsParts.Segment[0]), YsmPhysicsParts.Source.AUTHORED, 0);
+        YsmMeshSecondaryMotion.State state = new YsmMeshSecondaryMotion.State(model, null,
+                (float) Math.toRadians(60.0D));
+        for (int frame = 0; frame < 120; frame++) {
+            YsmMeshSecondaryMotion.simulate(state, new IdentityPose(), FRAME,
+                    new Vector3f(0.0F, 0.0F, -5.0F), new float[2],
+                    YsmDynamicBoneSolver.NO_COLLIDERS);
+        }
+
+        int cloth = 0;
+        for (int i = 0; i < panels.size(); i++) {
+            if (panels.get(i).category() != YsmPhysicsParts.Category.CLOTH) {
+                continue;
+            }
+            cloth++;
+            YsmPhysicsParts.Segment panel = panels.get(i);
+            float dragAtReportedSetting = YsmPhysicsMotionLimits.airDrag(panel, 4.0F);
+            float frequency = (float) (2.0D * Math.PI * panel.frequency());
+            float restoring = frequency * frequency
+                    + (float) YsmPhysicsTuning.gravityAcceleration() / panel.lever();
+            float freeTrail = (float) Math.atan(dragAtReportedSetting * 25.0F
+                    / (panel.mass() * panel.lever() * restoring));
+            assertTrue(freeTrail <= Math.toRadians(18.0D) + 1.0E-3F,
+                    panel.boneName() + " is driven past the skirt's free-run trail by the logged drag 4.0");
+            assertTrue(state.pieceLimit[i] <= Math.toRadians(60.0D) + 1.0E-4F,
+                    panels.get(i).boneName() + " was given a tail-sized chain budget");
+            assertTrue(state.chainAngle[i] <= Math.toRadians(60.0D) + 0.02F,
+                    panels.get(i).boneName() + " folded into a strip at "
+                            + Math.toDegrees(state.chainAngle[i]) + " degrees");
+            float directionAngle = YsmDynamicBoneSolver.angleBetween(
+                    state.restDirections[i], state.states[i].direction);
+            assertEquals(state.lastDegrees[i], Math.toDegrees(directionAngle), 0.2D,
+                    panels.get(i).boneName() + " has different simulated and reported directions");
+            Matrix4f own = new Matrix4f(state.jomlDeltas[i]);
+            int parent = panels.get(i).parent();
+            if (parent >= 0) {
+                own.set(state.jomlDeltas[parent]).invert().mul(state.jomlDeltas[i]);
+            }
+            float cosine = Math.max(-1.0F, Math.min(1.0F,
+                    (own.m00() + own.m11() + own.m22() - 1.0F) * 0.5F));
+            assertEquals(state.lastDegrees[i], Math.toDegrees(Math.acos(cosine)), 0.3D,
+                    panels.get(i).boneName() + " drew a rotation from before neighbour coupling");
+        }
+        assertTrue(cloth >= 20, "the regression must include the maid skirt, got " + cloth);
+    }
 
     private static final String MODEL = "/golden/maid/models/main.json";
 
@@ -361,9 +412,17 @@ class T8_PanelGapProbeTest {
                 float lever = rest.length();
                 boolean root = bone.parent == null || bone.parent.mapped || !hangs(bone.parent.name);
                 float limit = (float) Math.toRadians(root ? 20.0F : 60.0F);
-                out.add(new YsmPhysicsParts.Segment(0, bone.name, bone.joint, pivot, rest, lever,
-                        0.05F, Math.max(0.25F, Math.min(4.0F, bone.vertices.size() / 64.0F)),
-                        2.36F, 0.5F, limit, parent, new int[0], true, new int[0]));
+                YsmPhysicsParts.Category category = YsmPhysicsParts.Category.UNKNOWN;
+                for (Bone at = bone; at != null && !at.mapped; at = at.parent) {
+                    category = YsmPhysicsParts.categoryOf(at.name);
+                    if (category != YsmPhysicsParts.Category.UNKNOWN) {
+                        break;
+                    }
+                }
+                out.add(new YsmPhysicsParts.Segment(0, bone.name, bone.joint, pivot, pivot,
+                        rest, lever, 0.05F,
+                        Math.max(0.25F, Math.min(4.0F, bone.vertices.size() / 64.0F)),
+                        2.36F, 0.5F, limit, parent, new int[0], true, new int[0], category));
             }
             cachedPanels = out;
             return out;
@@ -431,7 +490,7 @@ class T8_PanelGapProbeTest {
 
         /** Whether the production coupling table holds the two as partners. */
         boolean knit(YsmMeshSecondaryMotion.State state, int a, int b) {
-            YsmMeshSecondaryMotion.Knits knits = state.knits;
+            YsmPhysicsTopology.Knits knits = state.knits;
             for (int slot = 0; slot < knits.count[a]; slot++) {
                 if (knits.partners[knits.start[a] + slot] == b) {
                     return true;

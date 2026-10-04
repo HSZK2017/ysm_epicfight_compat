@@ -238,7 +238,7 @@ public final class ManifestStore {
             new java.util.concurrent.atomic.AtomicInteger();
 
     private static final Object MANIFEST_WRITE_LOCK = new Object();
-    private static volatile boolean manifestWriteInFlight = false;
+    private static boolean manifestWriteInFlight = false;
 
     /** Dedicated single writer: manifest persists never block the mesh pool or the render thread. */
     private static final java.util.concurrent.ExecutorService WRITER =
@@ -335,9 +335,6 @@ public final class ManifestStore {
      * holds the mesh library's class lock.
      */
     private static void scheduleWrite() {
-        if (manifestWriteInFlight) {
-            return;
-        }
         synchronized (MANIFEST_WRITE_LOCK) {
             if (manifestWriteInFlight) {
                 return;
@@ -348,14 +345,20 @@ public final class ManifestStore {
                     while (true) {
                         int version = MANIFEST_VERSION.get();
                         writeSnapshot(true);
-                        if (MANIFEST_VERSION.get() == version) {
-                            break;
+                        // The last version check and the handoff to a future
+                        // writer must be atomic with scheduleWrite(). Otherwise
+                        // an update between the check and clearing the flag is
+                        // left in memory with no write scheduled for it.
+                        synchronized (MANIFEST_WRITE_LOCK) {
+                            if (MANIFEST_VERSION.get() == version) {
+                                manifestWriteInFlight = false;
+                                return;
+                            }
                         }
                         // Entries changed while writing: persist again (coalesced).
                     }
                 } catch (Throwable t) {
                     YSMEpicFightCompat.LOGGER.warn("YSM-EF Compat: failed to write generation manifest", t);
-                } finally {
                     synchronized (MANIFEST_WRITE_LOCK) {
                         manifestWriteInFlight = false;
                     }

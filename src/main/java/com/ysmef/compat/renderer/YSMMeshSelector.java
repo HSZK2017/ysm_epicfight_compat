@@ -66,6 +66,17 @@ public final class YSMMeshSelector {
                 player.getGameProfile().getName());
     }
 
+    /** Probe renderer ownership without mutating a shared mesh or render context. */
+    public static boolean hasMesh(AbstractClientPlayer player) {
+        if (player == null || com.ysmef.compat.compat.LookOwners.ownsLook(player)) {
+            return false;
+        }
+        YSMModelAccess.YSMModelRef modelRef = YSMModelAccess.getCurrentModel(player);
+        return modelRef != null
+                && !YSMModelAccess.isVanillaPlayerModelId(modelRef.modelId())
+                && YSMMeshLibrary.findMesh(modelRef.modelId()) != null;
+    }
+
     /** Once per player: another mod owns the look, so this mod abstains. */
     private static final Map<java.util.UUID, String> LOGGED_LOOK_OWNER = new ConcurrentHashMap<>();
 
@@ -147,12 +158,12 @@ public final class YSMMeshSelector {
             YSMMesh mesh = accessor.get();
             YSMMeshLibrary.markMeshLoaded(modelId);
             mesh.setRuntimeModelId(modelId);
-            YSMRuntimeBridge.setCurrentEntity(entity);
             if (texture != null) {
                 YSMMeshLibrary.ensureTextureUploaded(texture);
-                mesh.setTextureOverride(texture);
             }
+            mesh.setTextureOverride(texture);
             logMeshUsedOnce(entity, modelId, textureName, texture, displayName);
+            YSMRuntimeBridge.setCurrentEntity(entity);
         } catch (Throwable t) {
             YSMEpicFightCompat.LOGGER.warn(
                     "YSM-EF Compat: failed to load generated mesh for '{}', falling back to Epic Fight default mesh",

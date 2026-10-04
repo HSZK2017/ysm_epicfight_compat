@@ -6,14 +6,12 @@ import com.ysmef.compat.model.EFMeshJsonWriter;
 import com.ysmef.compat.model.YSMMesh;
 import com.ysmef.compat.ysm.script.Molang;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.CameraType;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
 import net.minecraftforge.registries.ForgeRegistries;
 import org.joml.Matrix4f;
 import org.joml.Quaternionf;
@@ -48,7 +46,6 @@ import java.util.Map;
 public final class YSMPlayerAnimator implements Molang.Env {
 
     private static final double HIDE_SCALE_EPSILON = 0.01;
-    private static final float MIN_SPEED = 0.05F;
 
     private final YSMRuntimeModel model;
 
@@ -144,11 +141,8 @@ public final class YSMPlayerAnimator implements Molang.Env {
      * chainDeltaBuf/effMinScaleBuf). The first evaluation of each animator stays
      * synchronous so the mesh never starts in an un-evaluated state.
      *
-     * Minecraft / gameRenderer / camera state is never read on this pool: those
-     * values are captured on the render thread when the evaluation is submitted
-     * (see EvalInputs). Only entity state (positions, held items, pose, ...) is
-     * read by the worker - at worst one tick stale, which matches ModernYSM's
-     * own async evaluator semantics.
+     * Minecraft and entity state are captured together on the render thread
+     * (see AnimatorEvalInputs); the worker evaluates only that snapshot.
      */
     private static final java.util.concurrent.ExecutorService SCRIPT_POOL = java.util.concurrent.Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "ysm-ef-script");
@@ -263,11 +257,12 @@ public final class YSMPlayerAnimator implements Molang.Env {
         long t0 = com.ysmef.compat.YsmDiag.isEnabled() ? System.nanoTime() : 0L;
         double now = (entity.tickCount + partialTick) / 20.0;
         if (shouldFullEval(entity)) {
-            EvalInputs inputs = captureEvalInputs(entity);
-            if (!evaluatedOnce || !useAsyncEval(entity)) {
-                evaluateSync(entity, partialTick, now, inputs);
+            boolean asynchronous = evaluatedOnce && useAsyncEval(entity);
+            AnimatorEvalInputs inputs = AnimatorEvalInputs.capture(entity, partialTick, asynchronous);
+            if (asynchronous) {
+                submitAsyncEval(now, inputs);
             } else {
-                submitAsyncEval(entity, partialTick, now, inputs);
+                evaluateSync(now, inputs);
             }
         }
         pushToMesh(mesh);
@@ -284,12 +279,12 @@ public final class YSMPlayerAnimator implements Molang.Env {
      * the HashMap. Skipping one frame is invisible (the in-flight worker's
      * result is published when it finishes; the next sync frame re-evaluates).
      */
-    private void evaluateSync(LivingEntity entity, float partialTick, double now, EvalInputs inputs) {
+    private void evaluateSync(double now, AnimatorEvalInputs inputs) {
         if (!evalPending.compareAndSet(false, true)) {
             return;
         }
         try {
-            evaluate(entity, partialTick, now, inputs);
+            evaluate(now, inputs);
             evaluatedOnce = true;
         } catch (Throwable t) {
             // Never break the render path: keep the last published result.
@@ -316,38 +311,19 @@ public final class YSMPlayerAnimator implements Molang.Env {
     }
 
     /**
-     * Render-thread-only evaluation inputs, captured when the evaluation is
-     * scheduled. The script pool must never read Minecraft / gameRenderer /
-     * camera state: those are updated by the render loop every frame and an
-     * off-thread read would race with it (the camera entity's position and the
-     * frame time are plain non-volatile fields).
-     */
-    private record EvalInputs(double cameraDistance, float frameTime, boolean firstPerson) {}
-
-    private static EvalInputs captureEvalInputs(LivingEntity entity) {
-        Minecraft mc = Minecraft.getInstance();
-        double cameraDistance = -1.0;
-        if (mc.gameRenderer != null && mc.gameRenderer.getMainCamera() != null) {
-            cameraDistance = mc.gameRenderer.getMainCamera().getPosition().distanceTo(entity.position());
-        }
-        return new EvalInputs(cameraDistance, mc.getFrameTime(),
-                mc.options.getCameraType() == CameraType.FIRST_PERSON);
-    }
-
-    /**
      * Submit one evaluation to the script pool (deduped: at most one in flight
      * per animator). Runs the same evaluate() as the synchronous path; the
      * double-buffered result state is published via the volatile readyBuffer.
      * The inputs were captured on the render thread, so the worker never
      * touches Minecraft/render-system state.
      */
-    private void submitAsyncEval(LivingEntity entity, float partialTick, double now, EvalInputs inputs) {
+    private void submitAsyncEval(double now, AnimatorEvalInputs inputs) {
         if (!evalPending.compareAndSet(false, true)) {
             return;
         }
         SCRIPT_POOL.execute(() -> {
             try {
-                evaluate(entity, partialTick, now, inputs);
+                evaluate(now, inputs);
                 evaluatedOnce = true;
             } catch (Throwable t) {
                 // never leave the render path broken: fall back to synchronous
@@ -444,20 +420,20 @@ public final class YSMPlayerAnimator implements Molang.Env {
      * (held items, position delta, ...) happen here, so the whole evaluation is
      * self-contained and can run on the script pool; render-thread-only state
      * (camera distance, frame time, perspective) arrives pre-captured via
-     * {@link EvalInputs}.
+     * {@link AnimatorEvalInputs}.
      */
-    private void evaluate(LivingEntity entity, float partialTick, double now, EvalInputs inputs) {
+    private void evaluate(double now, AnimatorEvalInputs inputs) {
         writeBuf = readyBuffer < 0 ? 0 : 1 - readyBuffer;
-        mainHand = entity.getItemInHand(InteractionHand.MAIN_HAND);
-        offHand = entity.getItemInHand(InteractionHand.OFF_HAND);
-        updatePosDelta(entity);
-        String state = resolveState(entity, inputs.frameTime());
+        mainHand = inputs.mainHand;
+        offHand = inputs.offHand;
+        updatePosDelta(inputs);
+        String state = resolveState(inputs);
         if (!state.equals(currentState)) {
             currentState = state;
             animStart.put(state, now);
             animLastT.remove(state);
         }
-        fillQueries(entity, partialTick, now, inputs);
+        fillQueries(now, inputs);
 
         activeAnims.clear();
         activeAnims.addAll(model.parallels);
@@ -465,7 +441,7 @@ public final class YSMPlayerAnimator implements Molang.Env {
         if (stateAnim != null) {
             activeAnims.add(stateAnim);
         }
-        YSMRuntimeModel.CompiledAnim overlay = resolveOverlay(entity, state);
+        YSMRuntimeModel.CompiledAnim overlay = resolveOverlay(inputs, state);
         if (overlay != null) {
             activeAnims.add(overlay);
         }
@@ -945,54 +921,53 @@ public final class YSMPlayerAnimator implements Molang.Env {
     // State machine (mirrors YSM's AnimationRegister predicates)
     // ------------------------------------------------------------------
 
-    private String resolveState(LivingEntity entity, float frameTime) {
-        if (entity.isDeadOrDying()) {
+    private String resolveState(AnimatorEvalInputs inputs) {
+        if (inputs.dead) {
             return "death";
         }
-        if (entity.getPose() == Pose.SLEEPING) {
+        if (inputs.pose == Pose.SLEEPING) {
             return "sleep";
         }
-        if (entity.isSwimming()) {
+        if (inputs.swimming) {
             return "swim";
         }
-        if (entity.getPose() == Pose.SWIMMING && isMoving(entity, frameTime)) {
+        if (inputs.pose == Pose.SWIMMING && inputs.moving) {
             return "climb";
         }
-        if (entity.getPose() == Pose.SWIMMING) {
+        if (inputs.pose == Pose.SWIMMING) {
             return "climbing";
         }
-        if (entity.isPassenger()) {
+        if (inputs.passenger) {
             // resolve the vehicle condition anim for the CURRENT vehicle only:
             // a previous ride's anim must never survive a vehicle change
-            ResourceLocation vehicleId = ForgeRegistries.ENTITY_TYPES.getKey(entity.getVehicle().getType());
-            String vehicleAnim = vehicleId != null ? "vehicle$" + vehicleId : null;
+            String vehicleAnim = inputs.vehicleId != null ? "vehicle$" + inputs.vehicleId : null;
             currentVehicleAnim = vehicleAnim != null && model.conditionAnims.containsKey(vehicleAnim)
                     ? vehicleAnim : null;
-            if (entity.getVehicle() instanceof net.minecraft.world.entity.vehicle.Boat) {
+            if (inputs.boat) {
                 return "boat";
             }
             return model.states.containsKey("ride") ? "ride" : "sit";
         }
         currentVehicleAnim = null;
-        if (entity instanceof Player player && player.getAbilities().flying) {
+        if (inputs.flying) {
             return "fly";
         }
-        if (entity.getPose() == Pose.FALL_FLYING && entity.isFallFlying()) {
+        if (inputs.pose == Pose.FALL_FLYING && inputs.fallFlying) {
             return "elytra_fly";
         }
-        if (entity.isInWater()) {
+        if (inputs.inWater) {
             return "swim_stand";
         }
-        if (entity.onGround() && entity.getPose() == Pose.CROUCHING && isMoving(entity, frameTime)) {
+        if (inputs.onGround && inputs.pose == Pose.CROUCHING && inputs.moving) {
             return "sneak";
         }
-        if (entity.onGround() && entity.getPose() == Pose.CROUCHING) {
+        if (inputs.onGround && inputs.pose == Pose.CROUCHING) {
             return "sneaking";
         }
-        if (entity.onGround() && entity.isSprinting()) {
+        if (inputs.onGround && inputs.sprinting) {
             return "run";
         }
-        if (entity.onGround() && isMoving(entity, frameTime)) {
+        if (inputs.onGround && inputs.moving) {
             return "walk";
         }
         if (model.states.containsKey("idle")) {
@@ -1003,26 +978,22 @@ public final class YSMPlayerAnimator implements Molang.Env {
 
     private String currentVehicleAnim = null;
 
-    private boolean isMoving(LivingEntity entity, float frameTime) {
-        return Math.abs(entity.walkAnimation.speed(frameTime)) > MIN_SPEED;
-    }
-
     /**
      * Hold/use condition overlay: played alongside the locomotion state by YSM
      * (arm/overlay layer), affecting secondary bones (magic circles, props).
      */
-    private YSMRuntimeModel.CompiledAnim resolveOverlay(LivingEntity entity, String state) {
-        if (entity.isUsingItem()) {
-            InteractionHand hand = entity.getUsedItemHand();
+    private YSMRuntimeModel.CompiledAnim resolveOverlay(AnimatorEvalInputs inputs, String state) {
+        if (inputs.usingItem) {
+            InteractionHand hand = inputs.usedItemHand;
             String prefix = hand == InteractionHand.MAIN_HAND ? "use_mainhand:" : "use_offhand:";
-            YSMRuntimeModel.CompiledAnim anim = findConditionAnim(prefix, entity.getUseItem());
+            YSMRuntimeModel.CompiledAnim anim = findConditionAnim(prefix, inputs.useItem);
             if (anim != null) {
                 return anim;
             }
             String generic = hand == InteractionHand.MAIN_HAND ? "use_mainhand" : "use_offhand";
             return model.states.get(generic);
         }
-        if (!entity.swinging) {
+        if (!inputs.swinging) {
             if (!mainHand.isEmpty()) {
                 YSMRuntimeModel.CompiledAnim anim = findConditionAnim("hold_mainhand:", mainHand);
                 if (anim != null) {
@@ -1049,7 +1020,7 @@ public final class YSMPlayerAnimator implements Molang.Env {
                 }
             }
         }
-        if (currentVehicleAnim != null && entity.isPassenger()) {
+        if (currentVehicleAnim != null && inputs.passenger) {
             return model.conditionAnims.get(currentVehicleAnim);
         }
         return null;
@@ -1244,17 +1215,17 @@ public final class YSMPlayerAnimator implements Molang.Env {
     // Query context
     // ------------------------------------------------------------------
 
-    private void updatePosDelta(LivingEntity entity) {
+    private void updatePosDelta(AnimatorEvalInputs inputs) {
         if (hasLastPos) {
-            posDelta[0] = entity.getX() - lastPosX;
-            posDelta[1] = entity.getY() - lastPosY;
-            posDelta[2] = entity.getZ() - lastPosZ;
+            posDelta[0] = inputs.x - lastPosX;
+            posDelta[1] = inputs.y - lastPosY;
+            posDelta[2] = inputs.z - lastPosZ;
         } else {
             hasLastPos = true;
         }
-        lastPosX = entity.getX();
-        lastPosY = entity.getY();
-        lastPosZ = entity.getZ();
+        lastPosX = inputs.x;
+        lastPosY = inputs.y;
+        lastPosZ = inputs.z;
     }
 
     /** Write one query slot by its interned id (grows the slot array on demand). */
@@ -1266,11 +1237,9 @@ public final class YSMPlayerAnimator implements Molang.Env {
         queriesById[id] = value;
     }
 
-    private void fillQueries(LivingEntity entity, float partialTick, double now, EvalInputs inputs) {
-        float headYaw = entity.yHeadRotO + (entity.yHeadRot - entity.yHeadRotO) * partialTick;
-        float bodyYaw = entity.yBodyRotO + (entity.yBodyRot - entity.yBodyRotO) * partialTick;
-        float netHeadYaw = net.minecraft.util.Mth.wrapDegrees(headYaw - bodyYaw);
-        float headPitch = entity.getViewXRot(partialTick);
+    private void fillQueries(double now, AnimatorEvalInputs inputs) {
+        float netHeadYaw = inputs.headYaw;
+        float headPitch = inputs.headPitch;
 
         if (lastYawSampleTime >= 0 && now > lastYawSampleTime) {
             yawSpeedDeg = (netHeadYaw - lastHeadYawDeg) / (now - lastYawSampleTime);
@@ -1278,87 +1247,83 @@ public final class YSMPlayerAnimator implements Molang.Env {
         lastHeadYawDeg = netHeadYaw;
         lastYawSampleTime = now;
 
-        double dx = entity.getX() - entity.xo;
-        double dz = entity.getZ() - entity.zo;
+        double dx = inputs.x - inputs.oldX;
+        double dz = inputs.z - inputs.oldZ;
         double groundSpeed = 20.0 * Math.sqrt(dx * dx + dz * dz);
-        double verticalSpeed = 20.0 * (entity.getY() - entity.yo);
+        double verticalSpeed = 20.0 * (inputs.y - inputs.oldY);
 
-        boolean onGround = entity.onGround();
-        boolean crouching = entity.getPose() == Pose.CROUCHING;
+        boolean onGround = inputs.onGround;
+        boolean crouching = inputs.pose == Pose.CROUCHING;
 
         setQuery("query.life_time", now);
-        setQuery("query.health", (double) entity.getHealth());
-        setQuery("query.max_health", (double) entity.getMaxHealth());
-        setQuery("query.hurt_time", (double) entity.hurtTime);
+        setQuery("query.health", inputs.health);
+        setQuery("query.max_health", inputs.maxHealth);
+        setQuery("query.hurt_time", inputs.hurtTime);
         setQuery("query.vertical_speed", verticalSpeed);
         setQuery("query.ground_speed", groundSpeed);
         setQuery("query.yaw_speed", yawSpeedDeg);
         setQuery("query.is_sneaking", onGround && crouching ? 1.0 : 0.0);
-        setQuery("query.is_swimming", entity.isSwimming() ? 1.0 : 0.0);
-        setQuery("query.is_sprinting", entity.isSprinting() ? 1.0 : 0.0);
+        setQuery("query.is_swimming", inputs.swimming ? 1.0 : 0.0);
+        setQuery("query.is_sprinting", inputs.sprinting ? 1.0 : 0.0);
         setQuery("query.is_on_ground", onGround ? 1.0 : 0.0);
-        setQuery("query.is_jumping", !isCreativeFlying(entity) && !entity.isPassenger() && !onGround && !entity.isInWater() ? 1.0 : 0.0);
-        setQuery("query.is_riding", entity.isPassenger() ? 1.0 : 0.0);
-        setQuery("query.is_sleeping", entity.isSleeping() ? 1.0 : 0.0);
-        setQuery("query.is_in_water", entity.isInWater() ? 1.0 : 0.0);
-        setQuery("query.is_in_water_or_rain", entity.isInWaterRainOrBubble() ? 1.0 : 0.0);
-        setQuery("query.is_gliding", entity.isFallFlying() ? 1.0 : 0.0);
-        setQuery("query.is_on_fire", entity.isOnFire() ? 1.0 : 0.0);
-        setQuery("query.is_playing_dead", entity.isDeadOrDying() ? 1.0 : 0.0);
+        setQuery("query.is_jumping", !inputs.flying && !inputs.passenger && !onGround && !inputs.inWater ? 1.0 : 0.0);
+        setQuery("query.is_riding", inputs.passenger ? 1.0 : 0.0);
+        setQuery("query.is_sleeping", inputs.sleeping ? 1.0 : 0.0);
+        setQuery("query.is_in_water", inputs.inWater ? 1.0 : 0.0);
+        setQuery("query.is_in_water_or_rain", inputs.inWaterRainOrBubble ? 1.0 : 0.0);
+        setQuery("query.is_gliding", inputs.fallFlying ? 1.0 : 0.0);
+        setQuery("query.is_on_fire", inputs.onFire ? 1.0 : 0.0);
+        setQuery("query.is_playing_dead", inputs.dead ? 1.0 : 0.0);
         // Previously never written, so the per-frame evaluator reported
         // is_alive = 0 (dead) while the battle-mode default-form environment
         // reports 1 (alive) - alive/dead variant scripts evaluated the wrong
         // branch at render time.
-        setQuery("query.is_alive", entity.isDeadOrDying() ? 0.0 : 1.0);
-        setQuery("query.is_spectator", entity instanceof Player player && player.isSpectator() ? 1.0 : 0.0);
-        setQuery("query.is_using_item", entity.isUsingItem() ? 1.0 : 0.0);
-        setQuery("query.is_eating", entity.getUseItem().getUseAnimation() == net.minecraft.world.item.UseAnim.EAT ? 1.0 : 0.0);
-        setQuery("query.is_first_person", inputs.firstPerson() ? 1.0 : 0.0);
-        setQuery("query.item_in_use_duration", entity.getTicksUsingItem() / 20.0);
-        setQuery("query.item_max_use_duration", entity.getUseItem().getUseDuration() / 20.0);
-        setQuery("query.item_remaining_use_duration", entity.getUseItemRemainingTicks() / 20.0);
-        setQuery("query.walk_distance", (double) entity.moveDist);
-        setQuery("query.modified_distance_moved", (double) entity.walkDist);
-        setQuery("query.body_x_rotation", (double) entity.getXRot());
-        setQuery("query.body_y_rotation", (double) net.minecraft.util.Mth.wrapDegrees(entity.getYRot()));
+        setQuery("query.is_alive", inputs.dead ? 0.0 : 1.0);
+        setQuery("query.is_spectator", inputs.spectator ? 1.0 : 0.0);
+        setQuery("query.is_using_item", inputs.usingItem ? 1.0 : 0.0);
+        setQuery("query.is_eating", inputs.eating ? 1.0 : 0.0);
+        setQuery("query.is_first_person", inputs.firstPerson ? 1.0 : 0.0);
+        setQuery("query.item_in_use_duration", inputs.ticksUsingItem / 20.0);
+        setQuery("query.item_max_use_duration", inputs.useItemDuration / 20.0);
+        setQuery("query.item_remaining_use_duration", inputs.useItemRemainingTicks / 20.0);
+        setQuery("query.walk_distance", inputs.moveDist);
+        setQuery("query.modified_distance_moved", inputs.walkDist);
+        setQuery("query.body_x_rotation", inputs.xRot);
+        setQuery("query.body_y_rotation", net.minecraft.util.Mth.wrapDegrees(inputs.yRot));
         setQuery("query.head_x_rotation", (double) netHeadYaw);
         setQuery("query.head_y_rotation", (double) headPitch);
-        setQuery("query.cardinal_facing_2d", (double) entity.getDirection().get3DDataValue());
-        setQuery("query.time_of_day", (entity.level().getDayTime() % 24000L) / 24000.0);
-        setQuery("query.time_stamp", (double) entity.level().getDayTime());
-        setQuery("query.moon_phase", (double) entity.level().getMoonPhase());
-        setQuery("query.player_level", (double) (entity instanceof Player player ? player.experienceLevel : 0));
-        setQuery("query.has_rider", entity.isVehicle() ? 1.0 : 0.0);
+        setQuery("query.cardinal_facing_2d", inputs.direction);
+        setQuery("query.time_of_day", (inputs.dayTime % 24000L) / 24000.0);
+        setQuery("query.time_stamp", inputs.dayTime);
+        setQuery("query.moon_phase", inputs.moonPhase);
+        setQuery("query.player_level", inputs.playerLevel);
+        setQuery("query.has_rider", inputs.vehicle ? 1.0 : 0.0);
         setQuery("query.actor_count", 0.0);
-        if (inputs.cameraDistance() >= 0) {
-            setQuery("query.distance_from_camera", inputs.cameraDistance());
+        if (inputs.cameraDistance >= 0) {
+            setQuery("query.distance_from_camera", inputs.cameraDistance);
         }
 
         setQuery("ysm.head_yaw", (double) netHeadYaw);
         setQuery("ysm.head_pitch", (double) headPitch);
         setQuery("ysm.has_mainhand", mainHand.isEmpty() ? 0.0 : 1.0);
         setQuery("ysm.has_offhand", offHand.isEmpty() ? 0.0 : 1.0);
-        setQuery("ysm.has_helmet", entity.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.HEAD).isEmpty() ? 0.0 : 1.0);
-        setQuery("ysm.has_chest_plate", entity.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.CHEST).isEmpty() ? 0.0 : 1.0);
-        setQuery("ysm.has_leggings", entity.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.LEGS).isEmpty() ? 0.0 : 1.0);
-        setQuery("ysm.has_boots", entity.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.FEET).isEmpty() ? 0.0 : 1.0);
-        setQuery("ysm.has_elytra", entity.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.CHEST).is(Items.ELYTRA) ? 1.0 : 0.0);
-        setQuery("ysm.is_sleep", entity.getPose() == Pose.SLEEPING ? 1.0 : 0.0);
+        setQuery("ysm.has_helmet", inputs.hasHelmet ? 1.0 : 0.0);
+        setQuery("ysm.has_chest_plate", inputs.hasChestPlate ? 1.0 : 0.0);
+        setQuery("ysm.has_leggings", inputs.hasLeggings ? 1.0 : 0.0);
+        setQuery("ysm.has_boots", inputs.hasBoots ? 1.0 : 0.0);
+        setQuery("ysm.has_elytra", inputs.hasElytra ? 1.0 : 0.0);
+        setQuery("ysm.is_sleep", inputs.pose == Pose.SLEEPING ? 1.0 : 0.0);
         setQuery("ysm.is_sneak", onGround && crouching ? 1.0 : 0.0);
-        setQuery("ysm.is_passenger", entity.isPassenger() ? 1.0 : 0.0);
-        setQuery("ysm.is_riptide", entity.isAutoSpinAttack() ? 1.0 : 0.0);
-        setQuery("ysm.armor_value", (double) entity.getArmorValue());
-        setQuery("ysm.hurt_time", (double) entity.hurtTime);
-        setQuery("ysm.food_level", (double) (entity instanceof Player player ? player.getFoodData().getFoodLevel() : 20));
+        setQuery("ysm.is_passenger", inputs.passenger ? 1.0 : 0.0);
+        setQuery("ysm.is_riptide", inputs.autoSpinAttack ? 1.0 : 0.0);
+        setQuery("ysm.armor_value", inputs.armorValue);
+        setQuery("ysm.hurt_time", inputs.hurtTime);
+        setQuery("ysm.food_level", inputs.foodLevel);
 
         setQuery("ctrl.idle", currentState.equals("idle") || currentState.equals("new_idle_empty") ? 1.0 : 0.0);
         setQuery("ctrl.run", currentState.equals("run") ? 1.0 : 0.0);
         setQuery("ctrl.walk", currentState.equals("walk") ? 1.0 : 0.0);
         setQuery("ctrl.playing_extra_animation", 0.0);
-    }
-
-    private static boolean isCreativeFlying(LivingEntity entity) {
-        return entity instanceof Player player && player.getAbilities().flying;
     }
 
     // loop-mode constants mirrored from ScriptAnim to keep switch sites readable

@@ -1,20 +1,13 @@
 package com.ysmef.compat.model;
 
-import com.google.gson.GsonBuilder;
-import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.ysmef.compat.YSMEpicFightCompat;
 import com.ysmef.compat.ysm.YsmModelPackage;
-import com.ysmef.compat.ysm.script.Molang;
 import com.ysmef.compat.ysm.script.ScriptAnim;
 import org.joml.Matrix4f;
-import org.joml.Quaternionf;
 import org.joml.Vector3f;
-import yesman.epicfight.api.asset.JsonAssetLoader;
 import yesman.epicfight.api.utils.math.OpenMatrix4f;
 
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -31,10 +24,8 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * The conversion mirrors YsmBindArmature: the sampled animation is expressed as
  * local animation deltas against the model's own YSM-pivot armature, then encoded
- * relative to Epic Fight's reference biped joint locals. The resulting clip is
- * therefore body-proportion independent and safe to share as a public template
- * between models with the same action (the per-model bind armature supplies the
- * model-specific pivots at draw time).
+ * relative to Epic Fight's reference biped joint locals. The resulting frames
+ * depend on the model's pivots; template reuse must compare the emitted matrices.
  */
 public final class YsmExtraFrameWriter {
 
@@ -42,7 +33,6 @@ public final class YsmExtraFrameWriter {
     public static final float SAMPLE_STEP = 1.0f / 60.0f;
 
     /** Longest wheel animation that is converted (guards corrupt/infinite lengths). */
-    private static final float MAX_ANIMATION_LENGTH = 120.0f;
     private static final Set<String> FRAME_PIVOT_LOG = ConcurrentHashMap.newKeySet();
 
     private static String fmtPivot(OpenMatrix4f m) {
@@ -76,36 +66,7 @@ public final class YsmExtraFrameWriter {
     private static final int JOINT_TOOL_L = JointTable.TOOL_L;
     private static final int JOINT_ELBOW_L = JointTable.ELBOW_L;
 
-    private static final String[] JOINT_NAMES = JointTable.NAMES;
-
     private static final int[] JOINT_PARENTS = JointTable.PARENTS;
-
-    /** Raw reference-biped joint transforms from assets/epicfight/animmodels/entity/biped.json. */
-    private static final float[][] REF_RAW = {
-            {1.0f, 0.0f, 0.0f, -5e-06f, 0.0f, 0.0f, -1.0f, 0.000946f, 0.0f, 1.0f, 0.0f, 0.763972f, 0.0f, 0.0f, 0.0f, 1.0f},
-            {1.0f, -0.0f, -0.0f, 0.124994f, 0.0f, -1.0f, 1e-06f, -0.002831f, -0.0f, -0.0f, -1.0f, -1.2e-05f, 0.0f, 0.0f, 0.0f, 1.0f},
-            {1.0f, 0.0f, 1e-06f, 0.0f, -0.0f, 1.0f, 0.0f, 0.37472f, -1e-06f, -0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f},
-            {1.0f, 0.0f, -0.0f, 0.0f, -0.0f, 1e-06f, -1.0f, 0.37472f, -0.0f, 1.0f, 1e-06f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f},
-            {1.0f, -0.0f, -0.0f, -0.125006f, 0.0f, -1.0f, 1e-06f, -0.002831f, -0.0f, -0.0f, -1.0f, -1.2e-05f, 0.0f, 0.0f, 0.0f, 1.0f},
-            {1.0f, 0.0f, 1e-06f, -0.0f, -0.0f, 1.0f, 0.0f, 0.37472f, -1e-06f, -0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f},
-            {1.0f, 0.0f, -0.0f, -0.0f, -0.0f, 1e-06f, -1.0f, 0.37472f, -0.0f, 1.0f, 1e-06f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f},
-            {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.05f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f},
-            {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.3f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f},
-            {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.4f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f},
-            {0.0f, 0.952114f, 0.305743f, 0.0f, 0.0f, -0.305743f, 0.952114f, 0.4f, 1.0f, 0.0f, -0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f},
-            {0.0f, -0.0f, -1.0f, -0.0f, 0.952114f, 0.305743f, 0.0f, 0.39386f, 0.305743f, -0.952114f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f},
-            {1.0f, 0.0f, 0.0f, 0.0f, -0.0f, 0.993938f, 0.109947f, 0.3f, -0.0f, -0.109947f, 0.993937f, -0.0f, 0.0f, 0.0f, 0.0f, 1.0f},
-            {1.0f, 0.0f, 0.0f, -0.0f, 0.0f, -0.999836f, 0.018122f, 0.272858f, 0.0f, -0.018122f, -0.999244f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f},
-            {-1.0f, 0.0f, -0.0f, 0.0f, 0.0f, -0.0f, -1.0f, 0.3f, -0.0f, -1.0f, 0.0f, -0.0f, 0.0f, 0.0f, 0.0f, 1.0f},
-            {-0.0f, -0.952114f, -0.305743f, 0.0f, 0.0f, -0.305743f, 0.952114f, 0.4f, -1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f},
-            {-0.0f, -0.0f, 1.0f, -0.0f, -0.952114f, 0.305743f, -0.0f, 0.39386f, -0.305743f, -0.952114f, -0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f},
-            {1.0f, 0.0f, 0.0f, -0.0f, -0.0f, 0.993937f, 0.109947f, 0.3f, -0.0f, -0.109947f, 0.993937f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f},
-            {1.0f, 0.0f, 0.0f, -0.0f, 0.0f, -0.999836f, 0.018122f, 0.272858f, 0.0f, -0.018122f, -0.999247f, -0.0f, 0.0f, 0.0f, 0.0f, 1.0f},
-            {-1.0f, 0.0f, -0.0f, -0.0f, 0.0f, -0.0f, -1.0f, 0.3f, -0.0f, -1.0f, -0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f}
-    };
-
-    /** Reference joint locals after JsonAssetLoader processing (load + transpose + root correction). */
-    private static final OpenMatrix4f[] REF_LOCALS = buildRefLocals();
 
     /** The converted model bone table, in DFS order (parents before children). */
     private static final class SampleBone {
@@ -126,9 +87,9 @@ public final class YsmExtraFrameWriter {
         public final float length;
         public final int frameCount;
         /**
-         * Joint id -> model-independent source descriptor rows (frame-major, 9
-         * floats: Bedrock rotation degrees, position pixels and scale). This is
-         * the similarity key used for public-template deduplication.
+         * Joint id -> source descriptor rows (frame-major, 9 floats: Bedrock
+         * rotation degrees, position pixels and scale). Kept for persisted
+         * descriptor compatibility; this is not the template identity.
          */
         public final Map<Integer, float[]> sourceDescriptor;
         /** Joint id -> per-frame local animation matrices (OpenMatrix4f representation). */
@@ -184,14 +145,14 @@ public final class YsmExtraFrameWriter {
             return null;
         }
 
-        float length = animationLength(anim);
+        float length = YsmWheelSampler.animationLength(anim);
         if (!Float.isFinite(length) || length < SAMPLE_STEP * 0.5f) {
             return null;
         }
         int frameCount = Math.min(Math.max(2, Math.round(length * 60.0f) + 1), 9000);
         final int sampleCount = frameCount;
 
-        SampleEnv env = new SampleEnv();
+        YsmWheelSampler.Env env = new YsmWheelSampler.Env();
         Map<Integer, OpenMatrix4f[]> localFrames = new LinkedHashMap<>();
         Map<Integer, float[]> sourceFrames = new LinkedHashMap<>();
         for (int joint : selection.joints()) {
@@ -211,7 +172,7 @@ public final class YsmExtraFrameWriter {
                 t = length;
             }
             env.animTime = t;
-            fireTimelines(anim, t, fired, env);
+            YsmWheelSampler.fireTimelines(anim, t, fired, env);
 
             for (SampleBone bone : bones) {
                 computeAnimatedBoneWorld(bones, anim, bone, env);
@@ -269,7 +230,7 @@ public final class YsmExtraFrameWriter {
         }
 
         Clip clip = new Clip(animationName, anim.loop, length, frameCount, sourceFrames, localFrames,
-                toJson(anim.loop, length, localFrames));
+                YsmWheelFrameEncoder.toJson(anim.loop, length, localFrames));
         return clip;
     }
 
@@ -293,10 +254,6 @@ public final class YsmExtraFrameWriter {
         return Float.isFinite(value) ? value : 0.0f;
     }
 
-    private static double finite(double value) {
-        return Double.isFinite(value) ? value : 0.0;
-    }
-
     private static void sanitize(float[] values) {
         for (int i = 0; i < values.length; i++) {
             values[i] = finite(values[i]);
@@ -304,98 +261,13 @@ public final class YsmExtraFrameWriter {
     }
 
     private static boolean isFinite(OpenMatrix4f m) {
-        float[] values = toArray(m);
+        float[] values = YsmWheelFrameEncoder.toArray(m);
         for (float value : values) {
             if (!Float.isFinite(value)) {
                 return false;
             }
         }
         return true;
-    }
-
-    private static JsonObject toJson(int loop, float length, Map<Integer, OpenMatrix4f[]> localFrames) {
-        JsonObject root = new JsonObject();
-        JsonObject constructor = new JsonObject();
-        boolean isRepeat = loop == ScriptAnim.LOOP_REPEAT;
-        constructor.addProperty("invocation_command",
-                "(0.15F#F," + isRepeat + "#Z,ysm_epicfight_compat:public/PLACEHOLDER#java.lang.String,"
-                        + "epicfight:entity/biped#yesman.epicfight.api.model.Armature,0#I)"
-                        + "#com.ysmef.compat.animation.YsmWheelAnimation");
-        root.add("constructor", constructor);
-
-        JsonArray animation = new JsonArray();
-        // Root must come first: the JSON loader applies the Blender -> Minecraft
-        // coordinate correction to the first entry only.
-        for (int joint : jointOrder()) {
-            OpenMatrix4f[] frames = localFrames.get(joint);
-            if (frames == null) {
-                continue;
-            }
-            JsonObject entry = new JsonObject();
-            entry.addProperty("name", JOINT_NAMES[joint]);
-            JsonArray times = new JsonArray();
-            JsonArray transforms = new JsonArray();
-            for (int frame = 0; frame < frames.length; frame++) {
-                float time = frame == frames.length - 1 ? length : frame * SAMPLE_STEP;
-                times.add((double) Math.round(time * 1_000_000.0) / 1_000_000.0);
-                JsonArray raw = new JsonArray();
-                float[] encoded = encode(frames[frame], REF_LOCALS[joint], joint == JOINT_ROOT);
-                for (float value : encoded) {
-                    raw.add((double) Math.round(value * 1_000_000.0) / 1_000_000.0);
-                }
-                transforms.add(raw);
-            }
-            entry.add("time", times);
-            entry.add("transform", transforms);
-            animation.add(entry);
-        }
-        root.add("animation", animation);
-        return root;
-    }
-
-    private static int[] jointOrder() {
-        int[] order = new int[JOINT_COUNT];
-        for (int i = 0; i < JOINT_COUNT; i++) {
-            order[i] = i;
-        }
-        // Root already id 0; children are in increasing id order.
-        return order;
-    }
-
-    /**
-     * Encode a desired local-animation matrix back into the raw matrix layout of an
-     * Epic Fight animation JSON (inverse of JsonAssetLoader#getTransformSheet):
-     * loader: raw -> transpose -> optional root B2M correction -> * inv(refLocal).
-     */
-    private static float[] encode(OpenMatrix4f desired, OpenMatrix4f refLocal, boolean root) {
-        OpenMatrix4f m = OpenMatrix4f.mul(refLocal, desired, null);
-        if (root) {
-            m = OpenMatrix4f.mul(OpenMatrix4f.invert(JsonAssetLoader.BLENDER_TO_MINECRAFT_COORD, null), m, null);
-        }
-        m.transpose();
-        return toArray(m);
-    }
-
-    private static float[] toArray(OpenMatrix4f m) {
-        return new float[]{
-                m.m00, m.m01, m.m02, m.m03,
-                m.m10, m.m11, m.m12, m.m13,
-                m.m20, m.m21, m.m22, m.m23,
-                m.m30, m.m31, m.m32, m.m33
-        };
-    }
-
-    private static OpenMatrix4f[] buildRefLocals() {
-        OpenMatrix4f[] locals = new OpenMatrix4f[JOINT_COUNT];
-        for (int joint = 0; joint < JOINT_COUNT; joint++) {
-            OpenMatrix4f local = OpenMatrix4f.load(null, REF_RAW[joint]);
-            local.transpose();
-            if (joint == JOINT_ROOT) {
-                local.mulFront(JsonAssetLoader.BLENDER_TO_MINECRAFT_COORD);
-            }
-            locals[joint] = local;
-        }
-        return locals;
     }
 
     // ------------------------------------------------------------------
@@ -452,7 +324,7 @@ public final class YsmExtraFrameWriter {
         } else {
             bind.identity();
         }
-        applyLocal(bind, bone.bone.pivotX, bone.bone.pivotY, bone.bone.pivotZ,
+        YsmWheelBoneTransform.apply(bind, bone.bone, 0, 0, 0,
                 bone.bone.rotX, bone.bone.rotY, bone.bone.rotZ, 1.0f, 1.0f, 1.0f);
         return bind;
     }
@@ -461,24 +333,14 @@ public final class YsmExtraFrameWriter {
         return new Vector3f(source.x * scaleW, source.y * scaleH, source.z * scaleW);
     }
 
-    private static void applyLocal(Matrix4f m, float px, float py, float pz,
-                                   float rx, float ry, float rz, float sx, float sy, float sz) {
-        m.translate(px, py, pz);
-        m.rotateZ(rz);
-        m.rotateY(ry);
-        m.rotateX(rx);
-        m.scale(sx, sy, sz);
-        m.translate(-px, -py, -pz);
-    }
-
     private static void computeAnimatedBoneWorld(SampleBone[] bones, ScriptAnim anim, SampleBone bone,
-                                                 SampleEnv env) {
+                                                 YsmWheelSampler.Env env) {
         float rx = bone.bone.rotX;
         float ry = bone.bone.rotY;
         float rz = bone.bone.rotZ;
-        float px = bone.bone.pivotX;
-        float py = bone.bone.pivotY;
-        float pz = bone.bone.pivotZ;
+        float tx = 0.0f;
+        float ty = 0.0f;
+        float tz = 0.0f;
         float sx = 1.0f;
         float sy = 1.0f;
         float sz = 1.0f;
@@ -491,7 +353,7 @@ public final class YsmExtraFrameWriter {
         if (channels != null) {
             if (channels.rotation != null) {
                 float[] rot = new float[3];
-                evalChannel(channels.rotation, env.animTime, env, rot);
+                YsmWheelSampler.evalChannel(channels.rotation, env.animTime, env, rot);
                 sanitize(rot);
                 raw[0] = rot[0];
                 raw[1] = rot[1];
@@ -502,18 +364,18 @@ public final class YsmExtraFrameWriter {
             }
             if (channels.position != null) {
                 float[] pos = new float[3];
-                evalChannel(channels.position, env.animTime, env, pos);
+                YsmWheelSampler.evalChannel(channels.position, env.animTime, env, pos);
                 sanitize(pos);
                 raw[3] = pos[0];
                 raw[4] = pos[1];
                 raw[5] = pos[2];
-                px += -pos[0] / 16.0f;
-                py += pos[1] / 16.0f;
-                pz += pos[2] / 16.0f;
+                tx = -pos[0] / 16.0f;
+                ty = pos[1] / 16.0f;
+                tz = pos[2] / 16.0f;
             }
             if (channels.scale != null) {
                 float[] scale = new float[3];
-                evalChannel(channels.scale, env.animTime, env, scale);
+                YsmWheelSampler.evalChannel(channels.scale, env.animTime, env, scale);
                 sanitize(scale);
                 raw[6] = scale[0];
                 raw[7] = scale[1];
@@ -530,106 +392,7 @@ public final class YsmExtraFrameWriter {
         } else {
             world.identity();
         }
-        applyLocal(world, px, py, pz, rx, ry, rz, sx, sy, sz);
-    }
-
-    private static void evalChannel(ScriptAnim.Channel channel, float t, Molang.Env env, float[] out) {
-        List<ScriptAnim.Key> keys = channel.keys;
-        int n = keys.size();
-        if (n == 0) {
-            out[0] = out[1] = out[2] = 0.0f;
-            return;
-        }
-        int right = 1;
-        while (right < n && keys.get(right).time <= t) {
-            right++;
-        }
-        if (right >= n) {
-            evalValue(keys.get(n - 1).post, env, out);
-            return;
-        }
-        if (right == 0) {
-            evalValue(keys.get(0).post, env, out);
-            return;
-        }
-        int left = right - 1;
-        ScriptAnim.Key leftKey = keys.get(left);
-        ScriptAnim.Key rightKey = keys.get(right);
-        if (rightKey.lerp == ScriptAnim.Key.LERP_STEP || rightKey.time <= leftKey.time) {
-            evalValue(leftKey.post, env, out);
-            return;
-        }
-        float alpha = Math.max(0.0f, Math.min(1.0f, (t - leftKey.time) / (rightKey.time - leftKey.time)));
-        float[] l = new float[3];
-        float[] r = new float[3];
-        evalValue(leftKey.post, env, l);
-        evalValue(rightKey.pre != null ? rightKey.pre : rightKey.post, env, r);
-        if (rightKey.lerp == ScriptAnim.Key.LERP_CATMULLROM && n >= 2) {
-            float[] p0 = new float[3];
-            float[] p3 = new float[3];
-            evalValue(keys.get(Math.max(0, left - 1)).post, env, p0);
-            evalValue(keys.get(Math.min(n - 1, right + 1)).post, env, p3);
-            for (int i = 0; i < 3; i++) {
-                out[i] = catmullRom(p0[i], l[i], r[i], p3[i], alpha);
-            }
-        } else {
-            for (int i = 0; i < 3; i++) {
-                out[i] = l[i] + (r[i] - l[i]) * alpha;
-            }
-        }
-    }
-
-    private static float catmullRom(float p0, float p1, float p2, float p3, float t) {
-        float t2 = t * t;
-        float t3 = t2 * t;
-        return 0.5f * ((2.0f * p1) + (-p0 + p2) * t + (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * t2
-                + (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t3);
-    }
-
-    private static void evalValue(ScriptAnim.Value value, Molang.Env env, float[] out) {
-        for (int axis = 0; axis < 3; axis++) {
-            if (value.expr[axis] != null) {
-                out[axis] = finite((float) Molang.compile(value.expr[axis]).eval(env));
-            } else {
-                out[axis] = finite((float) value.num[axis]);
-            }
-        }
-    }
-
-    private static void fireTimelines(ScriptAnim anim, float t, int[] fired, Molang.Env env) {
-        for (int i = 0; i < anim.timelines.size(); i++) {
-            if (fired[i] == 0 && anim.timelines.get(i).time <= t + 1e-4f) {
-                fired[i] = 1;
-                for (String code : anim.timelines.get(i).code) {
-                    Molang.compile(code).eval(env);
-                }
-            }
-        }
-    }
-
-    private static float animationLength(ScriptAnim anim) {
-        if (Float.isFinite(anim.length) && anim.length > 1e-4f) {
-            return Math.min(anim.length, MAX_ANIMATION_LENGTH);
-        }
-        // Some packages carry a corrupt/infinite animation_length. Fall back to
-        // the maximum keyframe/timeline time instead of producing an endless clip.
-        float max = 0.0f;
-        for (ScriptAnim.BoneChannels channels : anim.bones.values()) {
-            max = Math.max(max, channelMaxTime(channels.rotation));
-            max = Math.max(max, channelMaxTime(channels.position));
-            max = Math.max(max, channelMaxTime(channels.scale));
-        }
-        for (ScriptAnim.Timeline timeline : anim.timelines) {
-            max = Math.max(max, timeline.time);
-        }
-        return Float.isFinite(max) ? Math.min(max, MAX_ANIMATION_LENGTH) : 0.0f;
-    }
-
-    private static float channelMaxTime(ScriptAnim.Channel channel) {
-        if (channel == null || channel.keys.isEmpty()) {
-            return 0.0f;
-        }
-        return channel.keys.get(channel.keys.size() - 1).time;
+        YsmWheelBoneTransform.apply(world, bone.bone, tx, ty, tz, rx, ry, rz, sx, sy, sz);
     }
 
     // ------------------------------------------------------------------
@@ -690,7 +453,7 @@ public final class YsmExtraFrameWriter {
     private static void buildJointTables(int joint, Map<Integer, OpenMatrix4f> pivots, ArmatureTables tables) {
         int parent = JOINT_PARENTS[joint];
         OpenMatrix4f parentWorld = parent >= 0 ? tables.ysmWorlds[parent] : new OpenMatrix4f();
-        OpenMatrix4f local = new OpenMatrix4f(REF_LOCALS[joint]);
+        OpenMatrix4f local = new OpenMatrix4f(YsmWheelFrameEncoder.referenceLocal(joint));
         OpenMatrix4f pivot = pivots.get(joint);
         if (pivot != null) {
             if (parent < 0) {
@@ -951,81 +714,4 @@ public final class YsmExtraFrameWriter {
         return out;
     }
 
-    // ------------------------------------------------------------------
-    // Molang sampling environment
-    // ------------------------------------------------------------------
-
-    private static final class SampleEnv implements Molang.Env {
-        float animTime;
-        private final Map<Integer, Double> vars = new HashMap<>();
-
-        @Override
-        public double getVarById(int id) {
-            return vars.getOrDefault(id, 0.0);
-        }
-
-        @Override
-        public boolean hasVarById(int id) {
-            return vars.containsKey(id);
-        }
-
-        @Override
-        public void setVarById(int id, double value) {
-            vars.put(id, value);
-        }
-
-        @Override
-        public double getQueryById(int id) {
-            if (id == Molang.queryIdOf("query.anim_time")) {
-                return animTime;
-            }
-            if (id == Molang.queryIdOf("query.health") || id == Molang.queryIdOf("query.max_health")) {
-                return 20.0;
-            }
-            if (id == Molang.queryIdOf("query.is_on_ground") || id == Molang.queryIdOf("query.is_alive")) {
-                return 1.0;
-            }
-            if (id == Molang.queryIdOf("ctrl.playing_extra_animation")) {
-                return 1.0;
-            }
-            return 0.0;
-        }
-
-        @Override
-        public double callFunction(String name, double[] args, int argCount) {
-            switch (name) {
-                case "math.sin": return argCount < 1 ? 0.0 : finite(Math.sin(Math.toRadians(args[0])));
-                case "math.cos": return argCount < 1 ? 0.0 : finite(Math.cos(Math.toRadians(args[0])));
-                case "math.tan": return argCount < 1 ? 0.0 : finite(Math.tan(Math.toRadians(args[0])));
-                case "math.asin": return argCount < 1 ? 0.0 : finite(Math.toDegrees(Math.asin(args[0])));
-                case "math.acos": return argCount < 1 ? 0.0 : finite(Math.toDegrees(Math.acos(args[0])));
-                case "math.atan": return argCount < 1 ? 0.0 : finite(Math.toDegrees(Math.atan(args[0])));
-                case "math.atan2": return argCount < 2 ? 0.0 : finite(Math.toDegrees(Math.atan2(args[0], args[1])));
-                case "math.abs": return argCount < 1 ? 0.0 : finite(Math.abs(args[0]));
-                case "math.floor": return argCount < 1 ? 0.0 : finite(Math.floor(args[0]));
-                case "math.ceil": return argCount < 1 ? 0.0 : finite(Math.ceil(args[0]));
-                case "math.round": return argCount < 1 ? 0.0 : finite(Math.round(args[0]));
-                case "math.trunc": return argCount < 1 ? 0.0 : finite((long) (args[0] >= 0 ? Math.floor(args[0]) : Math.ceil(args[0])));
-                case "math.sqrt": return argCount < 1 ? 0.0 : finite(args[0] < 0 ? 0 : Math.sqrt(args[0]));
-                case "math.pow": return argCount < 2 ? 0.0 : finite(Math.pow(args[0], args[1]));
-                case "math.exp": return argCount < 1 ? 0.0 : finite(Math.exp(args[0]));
-                case "math.ln": return argCount < 1 ? 0.0 : finite(args[0] <= 0 ? 0 : Math.log(args[0]));
-                case "math.log": return argCount < 1 ? 0.0 : finite(args[0] <= 0 ? 0 : Math.log(args[0]));
-                case "math.lerp": return argCount < 3 ? 0.0 : finite(args[0] + (args[1] - args[0]) * args[2]);
-                case "math.min": return argCount < 1 ? 0.0 : finite(argCount < 2 ? args[0] : Math.min(args[0], args[1]));
-                case "math.max": return argCount < 1 ? 0.0 : finite(argCount < 2 ? args[0] : Math.max(args[0], args[1]));
-                case "math.clamp": return argCount < 3 ? 0.0 : finite(Math.max(args[1], Math.min(args[2], args[0])));
-                case "math.mod": return argCount < 2 ? 0.0 : finite(args[1] == 0 ? 0 : args[0] % args[1]);
-                case "math.random": return argCount < 2 ? 0.0 : finite((args[0] + args[1]) * 0.5);
-                case "math.pi": return Math.PI;
-                case "math.sign": return argCount < 1 ? 0.0 : finite(Math.signum(args[0]));
-                default: return 0.0;
-            }
-        }
-
-        @Override
-        public double callStringFunction(String name, String[] args) {
-            return 0.0;
-        }
-    }
 }
