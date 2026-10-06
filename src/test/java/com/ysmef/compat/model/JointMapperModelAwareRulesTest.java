@@ -111,6 +111,26 @@ class JointMapperModelAwareRulesTest {
                 "and so is its container, which is where the name walk goes wrong");
     }
 
+    @Test
+    void aTailAttachedAboveTheHipsKeepsItsChestJointWhenItsTipDrops() {
+        YSMGeoModel model = YSMGeoModel.parse(rig(
+                bone("Root", null, 0, 0),
+                bone("AllBody", "Root", 0, 1.0),
+                bone("UpBody", "AllBody", 0, 1.2),
+                bone("Tail", "UpBody", 0, 1.5, cube(-0.1, 1.45, 0, 0.2, 0.15, 0.2)),
+                bone("Tail2", "Tail", 0, 1.4, cube(-0.1, 0.85, 0, 0.2, 0.15, 0.2)),
+                bone("LeftLeg", "AllBody", -0.12, 1.0, cube(-0.2, 0.50, 0, 0.16, 0.5, 0.16)),
+                bone("LeftLowerLeg", "LeftLeg", -0.12, 0.5, cube(-0.2, 0.00, 0, 0.16, 0.5, 0.16)),
+                bone("RightLeg", "AllBody", 0.12, 1.0, cube(0.04, 0.50, 0, 0.16, 0.5, 0.16)),
+                bone("RightLowerLeg", "RightLeg", 0.12, 0.5, cube(0.04, 0.00, 0, 0.16, 0.5, 0.16))));
+
+        assertEquals(YSMJointMapper.JOINT_CHEST,
+                YSMJointMapper.resolveJointId(model.bonesByName.get("Tail"), model));
+        assertEquals(YSMJointMapper.JOINT_CHEST,
+                YSMJointMapper.resolveJointId(model.bonesByName.get("Tail2"), model),
+                "a tail's lower tip must stay on the joint where the tail is attached");
+    }
+
     /** The allowance is half a thigh above the hips, so a sash at the ribs is chest geometry. */
     @Test
     void theAllowanceIsHalfAThighAboveTheHips() {

@@ -55,6 +55,21 @@ class GarmentJointBindingTest {
         }
     }
 
+    /** One continuous tail must not switch from Torso to Chest where it curves upward. */
+    @Test
+    void theTailKeepsOneBodyJointFromRootToTip() throws IOException {
+        YSMGeoModel geometry = YSMGeoModel.parse(resource(MODEL));
+        for (int link = 1; link <= 7; link++) {
+            String name = link == 1 ? "Tail" : "Tail" + link;
+            YSMGeoModel.Bone bone = geometry.bonesByName.get(name);
+            assertNotNull(bone, "the fixture has no tail link " + name);
+            assertEquals(YSMJointMapper.JOINT_TORSO, YSMJointMapper.resolveJointId(bone, geometry),
+                    name + " must follow the same body joint as the tail root");
+            assertEquals(YSMJointMapper.JOINT_TORSO, EFMeshJsonWriter.bakedJointId(bone, geometry),
+                    name + " must also be skinned to that joint in the drawn mesh");
+        }
+    }
+
     /** And the containers themselves, which is where the name walk goes wrong. */
     @Test
     void theGarmentContainersBindToTheHipsToo() throws IOException {

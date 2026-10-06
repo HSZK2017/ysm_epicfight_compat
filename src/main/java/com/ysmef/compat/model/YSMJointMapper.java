@@ -150,7 +150,7 @@ public final class YSMJointMapper {
      * all: geometry that sits on the centre line (a sash, a tail, a crossing strap) has no side to
      * be wrong about.
      *
-     * <h2>2. Garment: cloth at the hips belongs to the lower body</h2>
+     * <h2>2. Garment and appendage: attachment determines the body joint</h2>
      *
      * <p>A garment container is wherever the author put it in the rig, and the rig does not have
      * to agree with the anatomy. On the maid model this mod is built from, every one of its
@@ -173,6 +173,8 @@ public final class YSMJointMapper {
      * body. The hip is read from the model's own mapped thigh bones (the same measurement
      * {@code YsmBindArmature} uses for its pivots), in the same model space as the geometry, so it
      * holds for any proportions.
+     * A tail uses its first geometry-bearing link for this height test throughout the chain:
+     * its raised tip is still attached to the same body joint as its base.
      *
      * <p>What is deliberately <b>not</b> the rule is a list of container names: {@code clothe} is
      * the name this model uses; the next model calls it {@code qunzi} or {@code SkirtGroup} or
@@ -211,7 +213,13 @@ public final class YSMJointMapper {
             return joint;
         }
         Geometry geometry = geometryOf(model);
-        float height = geometry.heightOf(bone);
+        // A tail is one attached appendage even when its tip curls above the hip. Judging every
+        // link by its own centroid can bind the base to Torso and the tip to Chest. Epic Fight then
+        // moves the two halves in different frames before secondary motion is applied, leaving a
+        // visible break that no spring or per-bone swing limit can close. Use the first geometry-
+        // bearing tail link below the mapped body part as the attachment height for the whole chain.
+        YSMGeoModel.Bone attachment = tailAttachment(bone, source);
+        float height = geometry.heightOf(attachment);
         if (!Float.isFinite(height)) {
             return joint;
         }
@@ -257,6 +265,20 @@ public final class YSMJointMapper {
      * to 1.38 - is plainly outside it.
      */
     private static final float GARMENT_ABOVE_HIP_FRACTION = 0.5F;
+
+    /** The highest geometry-bearing tail bone below the mapped body joint, if this is a tail. */
+    private static YSMGeoModel.Bone tailAttachment(YSMGeoModel.Bone bone, YSMGeoModel.Bone mapped) {
+        YSMGeoModel.Bone attachment = null;
+        for (YSMGeoModel.Bone current = bone; current != null && current != mapped;
+             current = current.parent) {
+            String name = normalize(current.name);
+            if (name.contains("tail") && !name.contains("ponytail") && !name.contains("twintail")
+                    && !current.quads.isEmpty()) {
+                attachment = current;
+            }
+        }
+        return attachment == null ? bone : attachment;
+    }
 
     /**
      * The allowance used when the model's own thigh length cannot be measured, and by the
