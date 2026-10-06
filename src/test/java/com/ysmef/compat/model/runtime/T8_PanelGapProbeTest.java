@@ -20,6 +20,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -43,6 +44,52 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * FL2 0.128 -> 0.089, RB3 0.125 -> 0.090 - which is the model's own {@code width_scale}.
  */
 class T8_PanelGapProbeTest {
+
+    @Test
+    void theRealBackSkirtIsNotKnittedToTheTailBesideIt() throws IOException {
+        Shape shape = Shape.load();
+        List<YsmPhysicsParts.Segment> panels = shape.panels();
+        int back = shape.indexOf(panels, "BM");
+        int tail = shape.indexOf(panels, "Tail");
+        assertTrue(back >= 0 && tail >= 0, "the real model must contain both skirt and tail");
+        YsmPhysicsParts.Segment skirt = panels.get(back);
+        YsmPhysicsParts.Segment appendage = panels.get(tail);
+        assertEquals(YsmPhysicsParts.Category.CLOTH, skirt.category());
+        assertEquals(YsmPhysicsParts.Category.TAIL, appendage.category());
+        assertTrue(skirt.bindPivot().distance(appendage.bindPivot())
+                        < YsmPhysicsChains.KNIT_RADIUS,
+                "this regression is about the tail actually lying beside the back skirt");
+        assertTrue(YsmDynamicBoneSolver.angleBetween(skirt.bindRest(), appendage.bindRest())
+                        < YsmPhysicsChains.KNIT_MAX_ANGLE,
+                "the old knit rule must also consider their rest directions similar");
+        YsmPhysicsParts.Segment[] all = panels.toArray(new YsmPhysicsParts.Segment[0]);
+        // Give the tail a cloth category solely to replay the old proximity-only rule. If the
+        // graph still omits it, this fixture no longer reproduces the accidental garment link.
+        YsmPhysicsParts.Segment[] oldRule = all.clone();
+        oldRule[tail] = new YsmPhysicsParts.Segment(appendage.boneIndex(), appendage.boneName(),
+                appendage.joint(), appendage.bindPivot(), appendage.bindAnchor(),
+                appendage.bindRest(), appendage.lever(), appendage.radius(), appendage.mass(),
+                appendage.frequency(), appendage.coefficient(), appendage.maxAngle(),
+                appendage.parent(), appendage.parts(), appendage.authored(), appendage.neighbours(),
+                YsmPhysicsParts.Category.CLOTH);
+        YsmPhysicsTopology.Knits oldKnits = YsmPhysicsTopology.knitsOf(oldRule);
+        boolean oldTailLinked = false;
+        for (int slot = 0; slot < oldKnits.count[back]; slot++) {
+            oldTailLinked |= oldKnits.partners[oldKnits.start[back] + slot] == tail;
+        }
+        assertTrue(oldTailLinked, "the real back skirt must reproduce the former tail link");
+        YsmPhysicsTopology.Knits knits = YsmPhysicsTopology.knitsOf(
+                all);
+        boolean tailLinked = false;
+        boolean clothPartner = false;
+        for (int slot = 0; slot < knits.count[back]; slot++) {
+            int partner = knits.partners[knits.start[back] + slot];
+            tailLinked |= partner == tail;
+            clothPartner |= panels.get(partner).category() == YsmPhysicsParts.Category.CLOTH;
+        }
+        assertFalse(tailLinked, "the tail must not tug one back skirt panel away from the others");
+        assertTrue(clothPartner, "the back skirt must still be coupled to nearby cloth");
+    }
 
     @Test
     void runningMaidPanelsKeepOneClothBudgetAndOnePhysicalDirection() throws IOException {

@@ -59,12 +59,19 @@ final class YsmPhysicsCoupling {
             if (partnerRest.lengthSquared() < 1.0E-8F) {
                 continue;
             }
-            // Share the partner's SWING, not its absolute direction. Absolute directions of
-            // panels around a waist differ at rest; averaging them flattens the skirt into
-            // parallel strips even when every panel moves by the same amount.
-            YsmDynamicBoneSolver.rotationFromTo(partnerSwing, partnerRest,
-                    state.states[partner].direction);
-            partnerTarget.set(ownRest).rotate(partnerSwing);
+            if (state.parts.segments()[index].category() == YsmPhysicsParts.Category.CLOTH
+                    && partner == state.parts.segments()[index].parent()) {
+                // The child's mesh delta is composed under this parent's delta later in the
+                // frame. Its own swing is therefore a bend RELATIVE to the parent. Copying the
+                // parent's swing into that bend applies it twice and opens the hem like a strip.
+                partnerTarget.set(ownRest);
+            } else {
+                // Neighbouring panels share their SWING, not their absolute direction. Their
+                // rest directions differ around the waist and must keep that authored spread.
+                YsmDynamicBoneSolver.rotationFromTo(partnerSwing, partnerRest,
+                        state.states[partner].direction);
+                partnerTarget.set(ownRest).rotate(partnerSwing);
+            }
             mean.add(partnerTarget);
             used++;
         }

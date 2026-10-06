@@ -202,6 +202,7 @@
 12. **EF 站姿与模型裙摆余量的冲突（剩余穿模）**：Epic Fight 的默认 idle 是"一前一后"的迈步站姿，行走/冲刺/坠落也带腿部摆幅；而 `wine_fox/01_taisho_maid` 按"双腿并拢直立"的 rest 姿态建模，裙摆与腿只有约 **0.10 格**余量。EF 接管腿部动画后，腿会进入裙摆。当前骨段碰撞能约束部分布片，但不能保证整片裙摆不穿模：修正后的逐帧探针在坠落片段记录到 **7/36** 片布与腿部碰撞体发生接触；把碰撞体扩大到 2.0× 时，由于布片从一开始就在体积内，现有求解器会跳过这类初始重叠，并没有改善余量。将布片重绑到最近的腿，在 EF 走/跑/坠/跳与合成步态下、混合比例 0.2–1.0 均未增加间隙。已验证的改进方向是增加模型的裙摆与腿部间隙，或调整 EF 腿部动作；若要靠模组进一步解决，需要按裙摆表面而非单个骨段求解，并处理初始相交。测量见 `build/reports/ysm-ef-skirt-round.md`、`build/reports/ysm-rebind-round.md`。
 13. **连续尾巴的关节归属**：当尾巴从髋部向上弯曲时，不能按每段几何高度独立选择 EF 身体关节；`wine_fox/01_taisho_maid` 的旧缓存把 `Tail`–`Tail4` 放在 `Torso`，把 `Tail5`–`Tail7` 放在 `Chest`，上身动作会在尾巴中段拉开两组网格。现在整条尾巴以最靠近身体且有几何的尾巴骨骼决定身体关节；转换器源码指纹变化会令旧缓存重新生成。
 14. **布料（位置约束）求解器已实现但未接线**：`YsmMeshCloth` → `YsmClothSolver` → `YsmClothTuning` 这条"把裙摆当粒子网格约束"的链路在源码里完整存在（含 8 次约束松弛、身体体积排斥、钉住粒子的蒙皮放置），但**渲染路径没有任何地方调用它**：`YsmMeshCloth` 在整个 `src` 中唯一的出现是 `YSMReloadTrigger` 里的 `clear()`。当前所有二次运动（头发/尾巴/裙摆）都走 `YsmMeshSecondaryMotion` 的摆锤求解器。因此配置里的 `secondaryMotionMaxParticles`、`secondaryMotionIterations`、`secondaryMotionBodyRadius` 以及 `secondaryMotionGravity`（布料重力）当下**不产生可见效果**；`secondaryMotionGravity` 的注释已按此更正。接线还是删除需要一次带游戏内观察的决定，本轮只把状态写明。
+15. **裙片联动的边界与坐标系**：`YsmPhysicsTopology` 只在同一物理类别的相邻骨段之间自动建立联动；模型的 `Tail` 根部虽靠近后裙片 `BM`，仍不能作为裙片邻居。父子骨段关系保留在子段一侧，但 `YsmPhysicsCoupling` 对布片子段使用父段的零相对弯曲作为联动目标：父段的摆动已在 `YsmMeshSecondaryMotion` 的矩阵合成中传给子段，再复制到子段自身摆动会重复旋转下摆。两处约束以真实女仆模型及小型骨架测试覆盖。EF 奔跑中的大幅前倾和腿部跨步仍会造成局部穿模；当前改动针对裙片散开，不承诺完全消除裙腿相交。
 
 ## 参考实现
 

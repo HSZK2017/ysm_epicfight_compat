@@ -266,8 +266,9 @@ class YsmEfSkirtClipProbeTest {
                 "the EF run must swing the thigh further than the EF walk: run "
                         + run.thighSwingDeg + " deg, walk " + walk.thighSwingDeg + " deg");
 
-        // The mechanism: the clip drives the leg most of the way through the clearance the mesh was
-        // authored with, in the two states the user names, and barely at all in the walk.
+        // The mechanism: the larger run stride drives the leg further through the clearance the
+        // mesh was authored with. The walk can also touch the skirt: closest-vertex distance alone
+        // is near zero in both clips and does not measure how much of the clearance was lost.
         assertTrue(run.worstSkinDepth >= 0.08F, "the EF run must drive the leg through the bind "
                 + "clearance, measured " + run.worstSkinDepth + " blocks");
         assertTrue(fall.worstSkinDepth >= 0.08F, "the EF fall must drive the leg through the bind "
@@ -275,12 +276,14 @@ class YsmEfSkirtClipProbeTest {
         assertTrue(run.worstSkin < 0.02F, "the EF run must bring the drawn cloth and the drawn leg "
                 + "into contact, measured a closest pair of " + run.worstSkin + " blocks - the "
                 + "worst panel was " + worstDepthPanel(run));
-        // The run's contact must be a different regime from the walk's clearance, and the deepest
-        // panel's depth must be attainable at all: a depth larger than that panel's own
+        assertTrue(walk.worstSkin < 0.02F, "the EF walk must also report its cloth-leg contact: "
+                + walk.worstSkin);
+        assertTrue(run.worstSkinDepth > walk.worstSkinDepth + 0.01F,
+                "the larger run stride must consume more skirt clearance: "
+                        + run.worstSkinDepth + " against " + walk.worstSkinDepth);
+        // The deepest panel's depth must be attainable at all: a depth larger than that panel's own
         // nearest-vertex distance in the bind pose would mean the cloth had been carried INTO the
         // leg rather than the leg into the cloth, which no pose can do.
-        assertTrue(run.worstSkin < walk.worstSkin / 3.0F, "the run must close the cloth-leg gap far "
-                + "more than the walk does: " + run.worstSkin + " against " + walk.worstSkin);
         for (Map.Entry<String, Panel> entry : run.panels.entrySet()) {
             Panel panel = entry.getValue();
             assertTrue(panel.skinDepth <= panel.bindMin + 1.0E-4F, "panel " + entry.getKey()

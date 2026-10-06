@@ -136,6 +136,12 @@ final class YsmPhysicsTopology {
                     // This segment is the parent: the link is on the child's side, not here.
                     continue;
                 }
+                if (segments[i].category() != segments[j].category()) {
+                    // Nearby geometry is not necessarily the same garment. On the maid, the tail
+                    // root sits beside the back skirt panel; knitting them lets the tail pull a
+                    // single panel away from the rest of the skirt during a run.
+                    continue;
+                }
                 float distance = Float.MAX_VALUE;
                 if (segments[i].bindPivot() != null && segments[j].bindPivot() != null) {
                     distance = segments[i].bindPivot().distance(segments[j].bindPivot());
