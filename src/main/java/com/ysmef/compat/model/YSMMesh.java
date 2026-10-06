@@ -200,7 +200,15 @@ public class YSMMesh extends HumanoidMesh {
                 poses = java.util.Arrays.copyOf(poses, armature.getJointNumber());
             }
             boolean maidEntity = isMaidEntity();
-            YSMRuntimeBridge.apply(this, armature, poses);
+            // Epic Fight's live renderer passes armature.getPoseMatrices(), while
+            // EntitySnapshot and other afterimages keep their own pose array. A
+            // snapshot is rendered later without a reliable entity evaluation
+            // scope, and this mesh instance is shared with the live player. Give
+            // the captured pose the model's neutral visibility every pass instead
+            // of inheriting whichever variant the shared mesh last displayed.
+            boolean snapshotPose = armature != null && poses != null
+                    && poses != armature.getPoseMatrices();
+            YSMRuntimeBridge.apply(this, armature, poses, snapshotPose);
             ResourceLocation texture = resolveTexture();
             // EpicFight_TouhouLittleMaid renders maids through its MaidPatch with a
             // built-in 0.8 model-matrix scale (MaidPatch#getModelMatrix), tuned for

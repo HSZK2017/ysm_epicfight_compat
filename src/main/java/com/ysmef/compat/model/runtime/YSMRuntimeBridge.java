@@ -59,17 +59,28 @@ public final class YSMRuntimeBridge {
      * the model's default form only (animation-driven variant geometry hidden,
      * no transforms), so Epic Fight's combat animations are the sole deformation.
      */
-    public static void apply(YSMMesh mesh, Armature armature, OpenMatrix4f[] poses) {
+    public static void apply(YSMMesh mesh, Armature armature, OpenMatrix4f[] poses,
+                             boolean snapshotPose) {
         mesh.clearRuntimeTransforms();
         String modelId = mesh.getRuntimeModelId();
         if (modelId == null) {
+            return;
+        }
+        YSMRuntimeModel model = YSMRuntimeModel.get(modelId);
+        if (snapshotPose) {
+            // EntitySnapshot retains the same YSMMesh object but captures poses
+            // independently. Nightfall and DevilMineCraft both draw that object
+            // later, often in two passes, after another render has changed its
+            // hidden flags. Keep every afterimage in the authored t=0 form.
+            if (model != null) {
+                model.applyDefaultVisibility(mesh);
+            }
             return;
         }
         LivingEntity entity = getCurrentEntity();
         if (entity == null) {
             return;
         }
-        YSMRuntimeModel model = YSMRuntimeModel.get(modelId);
         if (YSMBattleMode.isBattleMode(entity)) {
             if (model != null) {
                 if (entity instanceof Player player) {
