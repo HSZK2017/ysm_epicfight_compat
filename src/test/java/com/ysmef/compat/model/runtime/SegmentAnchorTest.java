@@ -103,6 +103,19 @@ class SegmentAnchorTest {
                 "a piece with no geometry of its own must mean no re-anchoring");
     }
 
+    @Test
+    void aRemoteAncestorIsNotInventedAsAContactPoint() {
+        List<Vector3f> piece = box(-0.1F, 1.0F, -0.1F, 0.1F, 1.4F, 0.1F);
+        List<Vector3f> remote = box(-0.1F, 3.0F, -0.1F, 0.1F, 3.3F, 0.1F);
+        Vector3f pivot = new Vector3f(0.0F, 1.25F, 0.0F);
+
+        assertSame(pivot, YsmPhysicsParts.contactAnchor(piece, remote, pivot, 0.25F),
+                "a skeleton ancestor a whole body part away cannot be this piece's contact patch");
+        assertSame(pivot, YsmPhysicsParts.contactAnchor(piece,
+                        List.of(new Vector3f(0.0F, 3.0F, 0.0F)), pivot, 0.25F),
+                "a single support vertex cannot establish a contact surface");
+    }
+
     /**
      * The search walks up past ancestors that carry no geometry.
      *

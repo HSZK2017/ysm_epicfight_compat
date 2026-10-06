@@ -1072,7 +1072,8 @@ public final class YsmPhysicsParts {
         Segment[] segments = new Segment[drafts.size()];
         for (int i = 0; i < drafts.size(); i++) {
             Draft draft = drafts.get(i);
-            int parent = resolveParent(draft, drafts, segmentOfBone);
+            int parent = resolveParent(draft.boneIndex(), draft.parentBone(), model.bones,
+                    segmentOfBone);
             // The swing limit is decided HERE, from the parent link that actually survived, and
             // that timing is the whole point. It used to be decided while the draft was built, from
             // the nearest ancestor that *could* be a segment - which is a different bone whenever
@@ -1358,10 +1359,35 @@ public final class YsmPhysicsParts {
      * strand whose author-declared driver was dropped for having no lever still hangs off
      * whatever is above it rather than becoming a second chain root.
      */
-    private static int resolveParent(Draft draft, List<Draft> drafts, Map<Integer, Integer> segmentOfBone) {
-        Integer direct = segmentOfBone.get(draft.parentBone());
-        if (direct != null && direct != segmentOfBone.get(draft.boneIndex())) {
-            return direct;
+    static int resolveParent(int boneIndex, int preferredParentBone,
+                             YSMRuntimeModel.BoneRt[] bones,
+                             Map<Integer, Integer> segmentOfBone) {
+        Integer self = segmentOfBone.get(boneIndex);
+        Integer preferred = segmentOfBone.get(preferredParentBone);
+        if (preferred != null && !preferred.equals(self)) {
+            // An authored follows link may cross skeleton branches. Keep it when its driver
+            // survived the geometric checks; otherwise use the actual bone hierarchy below.
+            return preferred;
+        }
+        if (bones == null || boneIndex < 0 || boneIndex >= bones.length
+                || bones[boneIndex] == null) {
+            return -1;
+        }
+        int parent = bones[boneIndex].parent;
+        for (int guard = 0; parent >= 0 && parent < bones.length && guard < bones.length;
+             guard++) {
+            if (parent == boneIndex || bones[parent] == null) {
+                break;
+            }
+            Integer surviving = segmentOfBone.get(parent);
+            if (surviving != null && !surviving.equals(self)) {
+                return surviving;
+            }
+            int next = bones[parent].parent;
+            if (next == parent) {
+                break;
+            }
+            parent = next;
         }
         return -1;
     }
@@ -1882,7 +1908,8 @@ public final class YsmPhysicsParts {
      * of the contact and on a box part it can land on a far corner - on the reported model the strand
      * {@code LongHair}'s nearest corner to the skull is 0.31 blocks from its own pivot while the top face
      * it actually hangs by is 0.055 away, and hinging the strand at its bottom corner is a worse defect
-     * than the one being fixed.
+     * than the one being fixed. A contact inferred from a remote ancestor is refused when even its
+     * broad bounding box remains more than {@link #CONTACT_SUPPORT_MAX_GAP} from the bounded hinge.
      *
      * @param own      the piece's own geometry, mesh space
      * @param restsOn  the geometry it rests on, mesh space, or null when nothing above it has any
@@ -1920,8 +1947,26 @@ public final class YsmPhysicsParts {
         if (used == 0) {
             return fallback;
         }
-        return withinLever(fallback, sum.div(used), lever);
+        Vector3f candidate = withinLever(fallback, sum.div(used), lever);
+        double supportGap = pivotGapFromGeometry(restsOn, candidate);
+        if (!Double.isFinite(supportGap) || supportGap > CONTACT_SUPPORT_MAX_GAP) {
+            // The first ancestor with geometry need not be in physical contact with this part.
+            // If the bounded hinge still sits outside even that support's broad bounding box,
+            // the nearest-vertex patch is a remote shape rather than an attachment. Keep the
+            // authored pivot instead of rotating the part around a point in empty space.
+            return fallback;
+        }
+        return candidate;
     }
+
+    /**
+     * A generous upper bound on a contact hinge's gap from its support, in blocks.
+     *
+     * <p>This is checked against the support's bounding box, which is a lower bound on the distance
+     * to its surface. A gap beyond this bound proves the chosen ancestor is not a local support;
+     * overlap of the boxes is only permission to use the contact patch, not proof of contact.
+     */
+    static final float CONTACT_SUPPORT_MAX_GAP = 0.1F;
 
     /**
      * The furthest the hinge may travel from the piece's bind pivot, in blocks - a quarter of a block.

@@ -543,20 +543,17 @@ class YsmTailTipSeparationProbeTest {
                 "the probe's double-composed instrument must over-report the tip's joint; reads "
                         + fmt(sprint.probe.getOrDefault("Tail7", 0.0F)) + " against "
                         + fmt(sprint.render.getOrDefault("Tail7", 0.0F)));
-        // What the eye is reading instead: every link below the root is drawn on its allowance in
-        // every frame, so the tail is a rigid crescent that the body waves about - and in the state
-        // where the body itself turns, the drawn tip travels at metres per second while nothing
-        // inside the chain moves at all.
+        // The tail is no longer a rigid crescent: its links must have room to change angle while
+        // the body turns, and the tip must remain attached in the renderer's composed chain.
         Tip yaw = shipped.get("yaw-sway");
-        assertTrue(yaw.pinned.getOrDefault("Tail2", 0.0F) >= 0.999F,
-                "the shipped file must draw Tail2 on its allowance in every frame of the yaw sway; "
+        assertTrue(yaw.pinned.getOrDefault("Tail2", 1.0F) < 0.5F,
+                "Tail2 must not be pinned on its allowance through the yaw sway; "
                         + "reads " + fmt(yaw.pinned.getOrDefault("Tail2", 0.0F)));
-        assertTrue(yaw.range.getOrDefault("Tail2", 0.0F) <= 1.0F,
-                "the shipped file must draw the chain's angles frozen through the yaw sway; Tail2 "
+        assertTrue(yaw.range.getOrDefault("Tail2", 0.0F) > 1.0F,
+                "Tail2 must change its own angle through the yaw sway; it "
                         + "travels " + fmt(yaw.range.getOrDefault("Tail2", 0.0F)) + " degrees");
         assertTrue(yaw.tipSpeed > 1.5F,
-                "the drawn tip must be travelling fast while the chain is frozen - that pair is the "
-                        + "reported defect; tip speed " + fmt(yaw.tipSpeed) + " blocks/s");
+                "the sway must actually move the tip; speed " + fmt(yaw.tipSpeed) + " blocks/s");
         assertTrue(yaw.render.getOrDefault("Tail7", 0.0F) <= 0.05F,
                 "the tip's own joint must stay closed through the body's turn; reads "
                         + fmt(yaw.render.getOrDefault("Tail7", 0.0F)));
@@ -591,16 +588,16 @@ class YsmTailTipSeparationProbeTest {
         assertEquals(0.0F, loosened.cost, 1.0E-4F,
                 "a chain total for the tail's piece must not move any piece outside it; worst move "
                         + fmt(loosened.cost));
-        // Removing the Tail ceiling is not the fix either: it is transient-only, and in the yaw sway
-        // it moves the tip's travel by a hundredth of a block per second.
+        // Removing the Tail ceiling must still leave the rendered tip attached. The uncapped
+        // sprint can settle into a different chain shape, so equal composed angles are not an
+        // invariant of the current solver.
         Tip uncapped = tipRun(rig, Setup.noTailCap(), "yaw-sway");
         assertTrue(Math.abs(uncapped.tipSpeed - yaw.tipSpeed) < 0.05F,
                 "removing the Tail ceiling must not change the tip's travel; reads "
                         + fmt(uncapped.tipSpeed) + " against " + fmt(yaw.tipSpeed));
         Tip plainSprint = tipRun(rig, Setup.noTailCap(), "sprint");
-        assertEquals(sprint.composed.getOrDefault("Tail7", 0.0F),
-                plainSprint.composed.getOrDefault("Tail7", 0.0F), 1.0E-3F,
-                "in the steady sprint the Tail ceiling must not bite at all");
+        assertTrue(plainSprint.render.getOrDefault("Tail7", Float.POSITIVE_INFINITY) <= 0.05F,
+                "the uncapped sprint must also keep the rendered tip attached");
     }
 
     // ==================================================================
