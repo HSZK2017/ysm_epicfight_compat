@@ -96,7 +96,8 @@ stateDiagram-v2
 
 | 资源 | 创建/持有方 | 释放或复位时机 |
 |---|---|---|
-| EF mesh accessor、LRU 与待注册队列 | `YSMMeshLibrary` | LRU 淘汰或 `invalidateAll`；旧代任务不得注册 |
+| EF mesh accessor 与待注册队列 | `YSMMeshLibrary` | LRU 淘汰或 `invalidateAll`；旧代任务不得注册，注册及 GL 释放留在渲染线程 |
+| 模型使用顺序与已实例化网格标记 | `YsmModelResidency` | 选择最久未用且非 pending/failed 的淘汰候选；`invalidateAll` 清空，不执行资源释放 |
 | 已淘汰但可能仍被本帧引用的 `YSMMesh` | `MeshReleaseQueue` | 客户端 tick 延迟释放；全量失效时立即清空并销毁 |
 | GPU/CPU/Iris 路径的 VBO、SSBO、着色器关联缓存 | 各渲染路径，向 `MeshReleaser` 注册 | 淘汰单 mesh 或全量失效，由渲染线程调用；路径实现负责幂等释放 |
 | 纹理原始字节、解码中的 `NativeImage`、上传队列、`DynamicTexture` | `TextureStore` | 模型淘汰、替换或全量失效；解码结果交给队列后由队列/上传方接管，过期 token 必须关闭图像 |
@@ -104,6 +105,7 @@ stateDiagram-v2
 | 每玩家动画状态 | `YSMRuntimeModel` 按 UUID 持有 | 长期未用、模型失效或离开世界 |
 | 次级运动的模型几何与拓扑 | `YsmMeshSecondaryMotion.PreparedModel`，按 mesh 弱键缓存 | mesh 淘汰后可回收；资源重载时清空 |
 | 每实体次级运动状态 | `YsmEntityMotionStates`，按实体对象身份持有弱键，并校验世界对象身份 | 实体离开后可回收；换世界时新建；断线或资源重载时清空 |
+| 清单条目格式 | `YsmModelManifestEntry` | 懒转换和全量生成共用同一编码；字段变化应使生成缓存重新验证 |
 | 清单文件及内存镜像 | `ManifestStore` | 文件跨会话保存；后台写入须合并版本，不能因模型 LRU 淘汰删除持久条目 |
 | 网络同步的玩家选择 | `ModelSyncClient` | 断线清空；**F3+T 不清空**，服务端不一定重发未改变的选择 |
 
@@ -168,7 +170,7 @@ stateDiagram-v2
 这些是降低未来改动成本的目标，**不是要求立即大规模重写**：
 
 1. **先固定协议，再拆类。** 为模型加载结果、缓存条目、渲染资源句柄建立小而稳定的数据契约；保留 `YSMMeshLibrary` 外部入口，以免同时修改所有调用方。
-2. **继续缩小 `YSMMeshLibrary`。** 输出校验与清理已移至 `GeneratedModelCache`，单模型转换与结果类型已移至 `YsmModelConverter`。下一步可提取 LRU 决策；库保留状态机与渲染线程注册。每一步用现有测试/黄金样例锁住行为。
+2. **继续缩小 `YSMMeshLibrary`。** 输出校验与清理已移至 `GeneratedModelCache`，单模型转换已移至 `YsmModelConverter`；LRU 数据与淘汰选择现归 `YsmModelResidency`，懒转换/全量生成共用 `YsmModelManifestEntry` 编码。库保留加载状态机、渲染线程注册与实际资源释放；后续可按后台缓存恢复和渲染线程合并两个阶段继续拆分。
 3. **继续拆分 `TextureStore` 的磁盘与 GL 阶段。** 图片解码已移至 `TextureDecoder`；文件布局/缓存与 TextureManager 注册仍在 `TextureStore`。后续拆分须保持 token、`NativeImage` 交接和延迟释放语义。
 4. **收紧运行时依赖。** `YSMPlayerAnimator` 的输入捕获已移至 `AnimatorEvalInputs`；下一步把纯求值及 `model.runtime -> renderer` 等现存反向引用逐步改成显式输入。物理规则先按数据与求解器分界，不按模型名称堆例外。
 5. **给兼容层留可替换入口。** 分支探测、Mixin 目标、反射 API 和对应测试放在同一改动中；遇到新 fork 先建立证据与失败回退，再接入核心路径。

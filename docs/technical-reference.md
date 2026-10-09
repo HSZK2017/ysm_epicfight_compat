@@ -40,7 +40,8 @@
 | `EFMeshJsonWriter` | 生成 EF animmodels JSON + 运行时 JSON。骨骼级部件 (`y/<boneName>`)、预三角化（每四边形 6 角点）匹配 EF 的三角绘制约定；顶点焊接、关节映射、宽高缩放 |
 | `YSMJointMapper` | YSM 骨骼名 → EF biped 关节 ID 映射 (Root=0..Elbow_L=19) |
 | `YSMMesh` | EF `HumanoidMesh` 子类：贴图替换、运行时模型 ID、按部件序号的运行时变换注入（O(1) 数组访问） |
-| `YSMMeshLibrary` | 网格注册/懒转换门禁 + **LRU 淘汰**（见性能节）+ `MeshReleaser`/`RenderBridgeRegistry` 注册表（与 gpu/cpu 渲染包解耦） |
+| `YSMMeshLibrary` | 网格注册/懒转换门禁、渲染线程上的资源释放、`MeshReleaser`/`RenderBridgeRegistry` 注册表；LRU 决策由 `YsmModelResidency` 持有 |
+| `YsmModelResidency` / `YsmModelManifestEntry` | 前者持有使用顺序与已实例化标记并选择淘汰候选；后者统一懒转换和全量生成的清单条目格式 |
 | `TextureStore` | 纹理管线全域：字节注册、PNG/JPEG/WebP/AVIF 解码、异步上传（每帧时间预算）、延迟释放、pack/缓存文件布局、`sanitize` 路径穿越防护 |
 | `ManifestStore` | 生成缓存清单：内存镜像 + 版本合并后台写（渲染线程零文件 I/O） |
 | `JointTable` | EF 参考双足骨架 20 关节表单一数据源（原三处重复） |

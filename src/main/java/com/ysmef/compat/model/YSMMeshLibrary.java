@@ -135,17 +135,8 @@ public class YSMMeshLibrary {
     private static final Set<String> PENDING_PREWARM = ConcurrentHashMap.newKeySet();
     private static final long PREWARM_BUDGET_NANOS = 8_000_000L;
 
-    /**
-     * ModernYSM-style LRU usage tracking (access order): every successful mesh
-     * lookup touches its model; when the loaded model count exceeds the config
-     * cap, the least-recently-used models are evicted (GPU buffers + textures +
-     * compiled scripts released) and re-registered from the verified on-disk
-     * cache on next use.
-     */
-    private static final java.util.LinkedHashMap<String, Boolean> ACCESS_ORDER = new java.util.LinkedHashMap<>(64, 0.75f, true);
-
-    /** Models whose mesh was actually instantiated (accessor.get() succeeded), i.e. own GL resources. */
-    private static final Set<String> LOADED_MODELS = ConcurrentHashMap.newKeySet();
+    /** In-memory usage and instantiated-mesh bookkeeping; no GL operations live in this owner. */
+    private static final YsmModelResidency RESIDENCY = new YsmModelResidency();
 
     /**
      * Invalidated by {@link #invalidateAll()}: in-flight lazy conversions of the
@@ -313,7 +304,7 @@ public class YSMMeshLibrary {
         // the check below.
         drainPendingMeshRegistrations();
         if (MESHES.containsKey(modelId)) {
-            touch(modelId);
+            RESIDENCY.touch(modelId);
             return true;
         }
         if (FAILED_MODELS.contains(modelId) || PENDING_MODELS.contains(modelId)) {
@@ -436,7 +427,7 @@ public class YSMMeshLibrary {
                         YSMEpicFightCompat.MODID, "entity/" + registration.meshId(),
                         (loader) -> loader.loadSkinnedMesh(YSMMesh::new));
                 MESHES.put(registration.modelId(), accessor);
-                touch(registration.modelId());
+                RESIDENCY.touch(registration.modelId());
                 // Schedule the mesh instantiation for a later client tick (see
                 // prewarmMeshes) so the first actual draw does not pay the
                 // JSON-parse + mesh-build cost on the render thread.
@@ -498,16 +489,6 @@ public class YSMMeshLibrary {
     }
 
     /**
-     * Record a model usage (LRU touch). The access-ordered map makes the next
-     * {@link #trimIfNeeded()} evict the least-recently-used models first.
-     */
-    private static void touch(String modelId) {
-        synchronized (ACCESS_ORDER) {
-            ACCESS_ORDER.put(modelId, Boolean.TRUE);
-        }
-    }
-
-    /**
      * ModernYSM-style LRU eviction: when more models are loaded than the config
      * cap, release the least-recently-used ones (GPU buffers, textures, compiled
      * scripts). The next lookup re-registers them from the verified on-disk
@@ -517,43 +498,21 @@ public class YSMMeshLibrary {
      */
     private static void trimIfNeeded() {
         int cap = YSMCompatConfig.LAZY_MODEL_CACHE_SIZE.get();
-        java.util.Iterator<String> victimIterator;
-        synchronized (ACCESS_ORDER) {
-            if (ACCESS_ORDER.size() <= cap) {
-                return;
-            }
-            victimIterator = new java.util.ArrayList<>(ACCESS_ORDER.keySet()).iterator();
-        }
-        if (!RenderSystem.isOnRenderThread()) {
+        if (RESIDENCY.trackedCount() <= cap || !RenderSystem.isOnRenderThread()) {
             return;
         }
         synchronized (YSMMeshLibrary.class) {
             int evicted = 0;
-            while (true) {
-                String victim;
-                synchronized (ACCESS_ORDER) {
-                    if (ACCESS_ORDER.size() <= cap || !victimIterator.hasNext()) {
-                        break;
-                    }
-                    victim = victimIterator.next();
-                    // Decide before removing. ACCESS_ORDER.size() is what the loop above (and this
-                    // break) uses as "how many models are loaded", so taking a victim out and then
-                    // skipping it made the cache's own bookkeeping understate what it holds: the
-                    // model stayed in MESHES, was no longer tracked by the LRU, and could never be
-                    // chosen again - the cap loosened and that entry became unreclaimable until a
-                    // full invalidate. Skipping leaves it tracked, and the next trim retries it.
-                    if (PENDING_MODELS.contains(victim) || FAILED_MODELS.contains(victim)) {
-                        continue;
-                    }
-                    ACCESS_ORDER.remove(victim);
-                }
+            String victim;
+            while ((victim = RESIDENCY.claimEviction(cap,
+                    modelId -> PENDING_MODELS.contains(modelId) || FAILED_MODELS.contains(modelId))) != null) {
                 if (evictModel(victim)) {
                     evicted++;
                 }
             }
             if (evicted > 0) {
                 YSMEpicFightCompat.LOGGER.debug("YSM-EF Compat: evicted {} LRU models ({} loaded, cap {})",
-                        evicted, ACCESS_ORDER.size(), cap);
+                        evicted, RESIDENCY.trackedCount(), cap);
             }
         }
     }
@@ -573,7 +532,7 @@ public class YSMMeshLibrary {
         if (accessor == null) {
             return false;
         }
-        if (LOADED_MODELS.remove(modelId)) {
+        if (RESIDENCY.forgetLoaded(modelId)) {
             YSMMesh mesh;
             try {
                 mesh = takeFromEfMeshCache(accessor);
@@ -703,28 +662,7 @@ public class YSMMeshLibrary {
                 result.modelId(), result.meshId(), LOAD_GENERATION.get()));
         preloadRuntimeAsync(result.modelId());
 
-        JsonObject modelEntry = new JsonObject();
-        modelEntry.addProperty("sig", result.fingerprint());        modelEntry.addProperty("csig", result.contentFingerprint());
-        modelEntry.addProperty("mesh", result.meshId());
-        modelEntry.addProperty("mhash", result.meshHash());
-        modelEntry.addProperty("msize", result.meshSize());
-        modelEntry.addProperty("rhash", result.runtimeHash());
-        modelEntry.addProperty("rsize", result.runtimeSize());
-        JsonObject texturesObj = new JsonObject();
-        for (TextureEntry tex : result.textures()) {
-            JsonObject texObj = new JsonObject();
-            texObj.addProperty("rl", tex.location().toString());
-            if (tex.info() != null) {
-                texObj.addProperty("w", tex.info()[0]);
-                texObj.addProperty("h", tex.info()[1]);
-                texObj.addProperty("fmt", tex.info()[2]);
-            }
-            texObj.addProperty("hash", tex.hash());
-            texObj.addProperty("size", tex.size());
-            texturesObj.add(tex.textureName(), texObj);
-        }
-        modelEntry.add("textures", texturesObj);
-        ManifestStore.update(result.modelId(), modelEntry);
+        ManifestStore.update(result.modelId(), YsmModelManifestEntry.from(result));
         if (YSMEpicFightCompat.LOGGER.isDebugEnabled()) {
             YSMEpicFightCompat.LOGGER.debug("YSM-EF Compat: converted model '{}' -> {} quads", result.modelId(), result.quads());
         }
@@ -772,10 +710,7 @@ public class YSMMeshLibrary {
         PENDING_MODELS.clear();
         // No registration survives the invalidation, so nothing left to prewarm.
         PENDING_PREWARM.clear();
-        synchronized (ACCESS_ORDER) {
-            ACCESS_ORDER.clear();
-        }
-        LOADED_MODELS.clear();
+        RESIDENCY.clear();
         YSMMesh.clearDiagnostics();
         disposeAllPaths();
         YSMRuntimeModel.invalidateAll();
@@ -868,29 +803,7 @@ public class YSMMeshLibrary {
                         (loader) -> loader.loadSkinnedMesh(YSMMesh::new));
                 newMeshes.put(result.modelId(), accessor);
 
-                JsonObject modelEntry = new JsonObject();
-                modelEntry.addProperty("sig", result.fingerprint());
-                modelEntry.addProperty("csig", result.contentFingerprint());
-                modelEntry.addProperty("mesh", result.meshId());
-                modelEntry.addProperty("mhash", result.meshHash());
-                modelEntry.addProperty("msize", result.meshSize());
-                modelEntry.addProperty("rhash", result.runtimeHash());
-                modelEntry.addProperty("rsize", result.runtimeSize());
-                JsonObject texturesObj = new JsonObject();
-                for (TextureEntry tex : result.textures()) {
-                    JsonObject texObj = new JsonObject();
-                    texObj.addProperty("rl", tex.location().toString());
-                    if (tex.info() != null) {
-                        texObj.addProperty("w", tex.info()[0]);
-                        texObj.addProperty("h", tex.info()[1]);
-                        texObj.addProperty("fmt", tex.info()[2]);
-                    }
-                    texObj.addProperty("hash", tex.hash());
-                    texObj.addProperty("size", tex.size());
-                    texturesObj.add(tex.textureName(), texObj);
-                }
-                modelEntry.add("textures", texturesObj);
-                manifestModels.add(result.modelId(), modelEntry);
+                manifestModels.add(result.modelId(), YsmModelManifestEntry.from(result));
 
                 if (YSMEpicFightCompat.LOGGER.isDebugEnabled()) {
                     YSMEpicFightCompat.LOGGER.debug("YSM-EF Compat: converted model '{}' -> {} quads", result.modelId(), result.quads());
@@ -926,7 +839,7 @@ public class YSMMeshLibrary {
         ensureModel(modelId);
         Meshes.MeshAccessor<YSMMesh> accessor = MESHES.get(modelId);
         if (accessor != null) {
-            touch(modelId);
+            RESIDENCY.touch(modelId);
         }
         return accessor;
     }
@@ -937,8 +850,7 @@ public class YSMMeshLibrary {
      * eviction to release those resources. Called after accessor.get() succeeds.
      */
     public static void markMeshLoaded(String modelId) {
-        LOADED_MODELS.add(modelId);
-        touch(modelId);
+        RESIDENCY.markLoaded(modelId);
     }
 
     /**
@@ -1003,14 +915,13 @@ public class YSMMeshLibrary {
             String modelId = PENDING_PREWARM.iterator().next();
             PENDING_PREWARM.remove(modelId);
             Meshes.MeshAccessor<YSMMesh> accessor = MESHES.get(modelId);
-            if (accessor == null || LOADED_MODELS.contains(modelId)
+            if (accessor == null || RESIDENCY.isLoaded(modelId)
                     || PENDING_MODELS.contains(modelId) || FAILED_MODELS.contains(modelId)) {
                 continue;
             }
             try {
                 accessor.get();
-                LOADED_MODELS.add(modelId);
-                touch(modelId);
+                RESIDENCY.markLoaded(modelId);
             } catch (Throwable t) {
                 FAILED_MODELS.add(modelId);
                 YSMEpicFightCompat.LOGGER.warn(
