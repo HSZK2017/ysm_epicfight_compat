@@ -1,0 +1,55 @@
+name: Build and verify
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle and validate wrapper
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+
+      - name: Build and run tests
+        shell: pwsh
+        run: .\gradlew.bat clean build --no-daemon
+
+      - name: Verify release JAR
+        shell: pwsh
+        run: .\scripts\verify-release.ps1
+
+      - name: Save verified release JAR
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-jar-${{ github.sha }}
+          path: build/libs/*-all.jar
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Save test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports-${{ github.sha }}
+          path: |
+            build/reports/tests/test/**
+            build/test-results/test/**
+          if-no-files-found: ignore
+          retention-days: 14

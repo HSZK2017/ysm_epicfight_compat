@@ -110,7 +110,7 @@ Android ES 路径仍待真机验证。Iris 优化路径原有实机验证仅覆�
 
 ### 构建前准备
 
-项目使用 **Java 17 toolchain**。当前 `gradle.properties` 中的 Gradle JVM 与 JDK 17 路径是本机绝对路径，并关闭了 JDK 自动检测；在其他机器构建前，需要改为自己的安装路径或调整检测设置。
+项目使用 **Java 17 toolchain**。将 `JAVA_HOME` 指向 JDK 17 即可构建；Gradle 从此环境变量选择工具链，无需修改仓库里的机器专属路径。
 
 当前构建脚本从 `libs/` 读取以下文件，即使不使用女仆联动，源码构建也需要这些本地编译依赖：
 
@@ -128,9 +128,11 @@ Epic Fight 和 zstd-jni 由 Gradle 获取。运行时女仆联动仍为可选功
 在项目根目录执行：
 
 ```powershell
-.\gradlew.bat build
-.\gradlew.bat test
+.\gradlew.bat clean build
+.\scripts\verify-release.ps1
 ```
+
+`build` 包含全部默认测试；第二条命令核对发行 JAR 的版本、模组元数据、Mixin 配置、转换器指纹和内嵌 zstd-jni。GitHub Actions 在每次推送及拉取请求时执行相同检查，并保存验证通过的 JAR；失败时保存测试报告。单独重跑测试可使用 `.\gradlew.bat test`。
 
 当前版本产物：`build/libs/YSM_EpicFight_Compat-1.20.1-1.10.0-all.jar`，内嵌 zstd-jni。修改项目版本后，文件名随之改变。
 

@@ -110,7 +110,7 @@ For diagnostic logs, add `-Dysm_ef_compat.diag=true` to the JVM arguments. The [
 
 ### Prerequisites
 
-The project uses a **Java 17 toolchain**. `gradle.properties` contains machine specific absolute paths for the Gradle JVM and JDK 17 and disables automatic JDK detection. Adjust these paths or the detection settings before building on another machine.
+The project uses a **Java 17 toolchain**. Point `JAVA_HOME` to a JDK 17 installation. Gradle selects the toolchain from that environment variable, so no machine-specific path needs to be edited in the repository.
 
 The build reads these local compile dependencies from `libs/`. They are needed to compile from source even when maid integration is not used:
 
@@ -128,9 +128,11 @@ Gradle obtains Epic Fight and zstd-jni. Maid integration remains optional at run
 Run from the project root:
 
 ```powershell
-.\gradlew.bat build
-.\gradlew.bat test
+.\gradlew.bat clean build
+.\scripts\verify-release.ps1
 ```
+
+`build` includes all default tests. The second command checks the release JAR's version, mod metadata, Mixin files, converter fingerprint, and bundled zstd-jni. GitHub Actions runs the same checks on every push and pull request, saves the verified JAR, and retains test reports on failure. To rerun tests alone, use `.\gradlew.bat test`.
 
 The release artifact is `build/libs/YSM_EpicFight_Compat-1.20.1-1.10.0-all.jar`, which includes zstd-jni. Its name changes when the project version changes.
 
