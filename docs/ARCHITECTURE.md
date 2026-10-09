@@ -119,7 +119,7 @@ stateDiagram-v2
 
 ### 次级运动的职责边界
 
-- `YsmPhysicsParts` 从模型骨骼和网格生成部件；`YsmPhysicsTopology` 只计算链条大小与邻片关系；`YsmPhysicsMotionLimits` 根据部件类型给出整链预算和风阻上限。规则按几何和类型制定，不按单个模型 ID 分支。
+- `YsmPhysicsParts` 从模型骨骼和网格生成部件；`YsmHeadContactConstraint` 决定贴头几何是否保持刚性，所需的接触测量由独立的 `YsmContactGeometry` 提供，不能反向依赖 `YsmPhysicsParts` 或逐帧求解器；`YsmPhysicsTopology` 只计算链条大小与邻片关系；`YsmPhysicsMotionLimits` 根据部件类型给出整链预算和风阻上限。规则按几何和类型制定，不按单个模型 ID 分支。
 - 同一个 `YSMMesh` 会被多个实体绘制。模型几何、链拓扑和碰撞体的绑定形状可共享；积分器状态、帧时间、碰撞体当前位置与输出矩阵必须归每个实体所有。物理缓存不可仅以 mesh 或 UUID 为键：相同 UUID 可以出现在不同存档，实体即使复用对象，在世界对象变化时也必须重建状态。
 - `YsmDynamicBoneSolver` 积分单个摆锤并处理质心与身体碰撞；`YsmPhysicsCoupling` 在邻片间传递相对各自静止姿势的摆动，不平均绝对朝向，否则会抹掉裙摆原有的展开形状；`YsmMeshSecondaryMotion` 编排 EF 姿势、碰撞、耦合、限位和最终网格变换。耦合或限位改变方向后，求解器状态、日志角度及绘制四元数必须指向同一个结果；耦合后要重检身体碰撞。
 - 衣物的整条链不能把逐关节最大角度直接相加，否则短裙的三节链可折到 120°。腿部胶囊体不能只因裙摆根点位于腿内便整体跳过；只有静止质心本来就在胶囊体内时才跳过无法满足的碰撞。新增物理规则至少要用真实模型和奔跑输入验证这两项不变量。

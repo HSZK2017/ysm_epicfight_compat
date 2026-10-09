@@ -37,10 +37,8 @@ public final class YsmPhysicsTuning {
      *       specified in. Degrees are converted here, at the one place the default enters.</li>
      * </ul>
      *
-     * <p>There is no gravity field. The pendulum's gravity is {@link #gravityAcceleration()}, read
-     * live from its own key; the {@code secondaryMotionGravity} key belongs to the cloth solver and
-     * used to be copied into a field of this class that no integrator ever read. See
-     * {@link #toString()}.
+     * <p>There is no gravity field. The active solver reads {@link #gravityAcceleration()}
+     * live; the retired cloth-only gravity key has been removed. See {@link #toString()}.
      */
     public static final YsmPhysicsTuning DEFAULTS = new YsmPhysicsTuning(
             220.0,
@@ -245,8 +243,8 @@ public final class YsmPhysicsTuning {
      * The settings the log line carries.
      *
      * <p>The gravity in it is {@link #gravityAcceleration()} - the number the dynamics actually
-     * integrate - and not a stored field. A previous version printed the value of the retired
-     * {@code secondaryMotionGravity} key here, which the pendulum never read: the log then
+     * integrate - and not a stored field. A previous version printed the value of a retired
+     * cloth-only gravity key here, which the pendulum never read: the log then
      * reported a number that did nothing, and anyone tuning from that line would have tuned
      * the wrong key.
      */

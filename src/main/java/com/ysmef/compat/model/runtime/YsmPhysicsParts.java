@@ -1880,31 +1880,6 @@ public final class YsmPhysicsParts {
     }
 
     /**
-     * How close to its own closest approach to what it rests on a vertex has to be to count as part of
-     * the contact patch the hinge is placed at, in blocks - one centimetre in the mesh's own space.
-     *
-     * <p>This is a <b>resolution, not a threshold on pieces</b>: it says which of a piece's own vertices
-     * are touching, and it is applied to every piece of every model by the same rule. It was fixed by
-     * measurement on the reported model rather than by taste ({@code build/reports/ysm-reanchor-round.md}):
-     * at 0.005 and 0.010 blocks the cap's patch is the same 27 vertices and its hinge the same point; at
-     * 0.030 the patch swallows the whole inner shell (378 vertices), the hinge drifts back to the middle
-     * of the piece and less of the defect is removed, not more.
-     */
-    static final float CONTACT_PATCH_TOLERANCE = 0.01F;
-
-    /**
-     * The most distance tests the contact search may spend on one piece.
-     *
-     * <p>The patch walks the piece's own vertices against the cloud it rests on. On this project's models
-     * that product is small for a strand and large for a cap wrapped round a skull, and a converted mesh
-     * can carry a hundred thousand vertices, so a cloud bigger than this budget is strided. The budget
-     * bounds the work at model load rather than changing what is measured: the stride is derived from the
-     * two cloud sizes, and the check that it does not move the hinge on the reported model is in the
-     * round's report.
-     */
-    static final int CONTACT_SEARCH_WORK = 262144;
-
-    /**
      * The point of a piece that is <b>held</b>: the centre of the patch of its own geometry that touches
      * the geometry it rests on.
      *
@@ -1917,7 +1892,8 @@ public final class YsmPhysicsParts {
      * what it hangs from, and that is measurable from the model's own two geometries without a name, a
      * shape statistic or a threshold on pieces.
      *
-     * <p>The patch is every one of the piece's own vertices within {@link #CONTACT_PATCH_TOLERANCE} of its
+     * <p>The patch is every one of the piece's own vertices within
+     * {@link YsmContactGeometry#PATCH_TOLERANCE} of its
      * own closest approach to {@code restsOn}, averaged, because a single nearest vertex is a quantisation
      * of the contact and on a box part it can land on a far corner - on the reported model the strand
      * {@code LongHair}'s nearest corner to the skull is 0.31 blocks from its own pivot while the top face
@@ -1936,13 +1912,13 @@ public final class YsmPhysicsParts {
         if (own == null || own.isEmpty() || restsOn == null || restsOn.isEmpty() || fallback == null) {
             return fallback;
         }
-        int stride = contactStride(own.size(), restsOn.size());
+        int stride = YsmContactGeometry.contactStride(own.size(), restsOn.size());
         float nearest = Float.MAX_VALUE;
         for (Vector3f vertex : own) {
-            if (vertex == null || !YsmDynamicBoneSolver.isFinite(vertex)) {
+            if (!YsmContactGeometry.isFinite(vertex)) {
                 continue;
             }
-            nearest = Math.min(nearest, distanceToCloud(vertex, restsOn, stride));
+            nearest = Math.min(nearest, YsmContactGeometry.distanceToCloud(vertex, restsOn, stride));
         }
         if (!Float.isFinite(nearest)) {
             return fallback;
@@ -1950,10 +1926,11 @@ public final class YsmPhysicsParts {
         Vector3f sum = new Vector3f();
         int used = 0;
         for (Vector3f vertex : own) {
-            if (vertex == null || !YsmDynamicBoneSolver.isFinite(vertex)) {
+            if (!YsmContactGeometry.isFinite(vertex)) {
                 continue;
             }
-            if (distanceToCloud(vertex, restsOn, stride) <= nearest + CONTACT_PATCH_TOLERANCE) {
+            if (YsmContactGeometry.distanceToCloud(vertex, restsOn, stride)
+                    <= nearest + YsmContactGeometry.PATCH_TOLERANCE) {
                 sum.add(vertex);
                 used++;
             }
@@ -2058,31 +2035,6 @@ public final class YsmPhysicsParts {
     }
 
     /**
-     * How many of a cloud's vertices the contact search reads: one when the product fits the budget, and
-     * otherwise the smallest stride that brings it inside - derived from the data, so the search cost per
-     * piece is bounded while the measurement stays as close to the whole cloud as the budget allows.
-     */
-    static int contactStride(int ownSize, int cloudSize) {
-        long product = (long) ownSize * (long) cloudSize;
-        if (product <= CONTACT_SEARCH_WORK || ownSize <= 0) {
-            return 1;
-        }
-        return (int) Math.max(1L, Math.min(cloudSize, (product + CONTACT_SEARCH_WORK - 1) / CONTACT_SEARCH_WORK));
-    }
-
-    /** The distance from a point to the nearest point of a cloud, reading every {@code stride}-th one. */
-    static float distanceToCloud(Vector3f point, List<Vector3f> cloud, int stride) {
-        float best = Float.MAX_VALUE;
-        for (int at = 0; at < cloud.size(); at += stride) {
-            Vector3f other = cloud.get(at);
-            if (other != null && YsmDynamicBoneSolver.isFinite(other)) {
-                best = Math.min(best, point.distance(other));
-            }
-        }
-        return best;
-    }
-
-    /**
      * A bone's pivot in the mesh's own space - the space the writer bakes the vertices in, and the
      * space a part transform acts in.
      *
@@ -2123,9 +2075,8 @@ public final class YsmPhysicsParts {
      * stored converted artifacts and calibrated against a known-good model, not against a metric.
      *
      * <p>What stays in the authored frame: everything the animation pipeline owns.
-     * {@code YSMRuntimeModel.bindWorld}, {@code YSMPlayerAnimator}'s deltas and
-     * {@code YsmMeshCloth.nearestMappedBoneTo} compare authored pivots with authored pivots, which is
-     * this class's only caller that must NOT be turned, and is not.
+     * {@code YSMRuntimeModel.bindWorld} and {@code YSMPlayerAnimator}'s deltas compare
+     * authored pivots with authored pivots; neither should receive the mesh writer's turn.
      */
     static Vector3f pivotInMeshSpace(Matrix4f bindWorld, float px, float py, float pz,
                                      float scaleX, float scaleY) {

@@ -4878,7 +4878,7 @@ class HeadRegionPitchProbeTest {
                 if (hasSupport) {
                     for (Vector3f vertex : segment.own) {
                         if (nearestDistance(vertex, segment.restsOn)
-                                <= gap + YsmPhysicsParts.CONTACT_PATCH_TOLERANCE) {
+                                <= gap + YsmContactGeometry.PATCH_TOLERANCE) {
                             patch++;
                         }
                         if (vertex.y <= segment.bindAnchor.y) {

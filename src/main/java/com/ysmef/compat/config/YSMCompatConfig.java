@@ -94,9 +94,7 @@ public class YSMCompatConfig {
     public static final ForgeConfigSpec.DoubleValue SECONDARY_MOTION_STIFFNESS;
     /** How fast a swinging piece loses its own velocity, 1/s. */
     public static final ForgeConfigSpec.DoubleValue SECONDARY_MOTION_DAMPING;
-    /** Downward acceleration on every swinging piece, blocks/s^2. */
-    public static final ForgeConfigSpec.DoubleValue SECONDARY_MOTION_GRAVITY;
-    /** The same quantity for the pendulum dynamics, under its own key (see the comment). */
+    /** Downward acceleration for the active secondary-motion dynamics, blocks/s^2. */
     public static final ForgeConfigSpec.DoubleValue SECONDARY_MOTION_GRAVITY_ACCELERATION;
     /** How strongly the air pushes a swinging piece, 1/(blocks/s). */
     public static final ForgeConfigSpec.DoubleValue SECONDARY_MOTION_AIR_DRAG;
@@ -113,13 +111,6 @@ public class YSMCompatConfig {
      * as a fraction of each piece's own category weight.
      */
     public static final ForgeConfigSpec.DoubleValue SECONDARY_MOTION_GRAVITY_FOLLOW;
-    /** How many cloth particles one model may simulate. */
-    public static final ForgeConfigSpec.IntValue SECONDARY_MOTION_MAX_PARTICLES;
-    /** Constraint-relaxation passes per cloth substep. */
-    public static final ForgeConfigSpec.IntValue SECONDARY_MOTION_ITERATIONS;
-    /** Radius of the body volume the position-based cloth keeps its particles out of, blocks. */
-    public static final ForgeConfigSpec.DoubleValue SECONDARY_MOTION_BODY_RADIUS;
-
     static {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
 
@@ -212,25 +203,12 @@ public class YSMCompatConfig {
                         "overshoot; the authored coefficient of ysm.second_order overrides this per bone.")
                 .defineInRange("secondaryMotionDamping", 24.0, 0.0, 200.0);
 
-        SECONDARY_MOTION_GRAVITY = builder
-                .comment("Gravity for the cloth solver (the position-based one, which drives garments as a grid of",
-                        "particles and keeps them out of the body's own volumes), in blocks/s^2.",
-                        "This key does NOT affect the pendulum solver - hair, tails and the chain-based skirts -",
-                        "which reads secondaryMotionGravityAcceleration instead, because the number means something",
-                        "different there (a restoring acceleration on a joint) and reusing one key for both would",
-                        "silently apply a value tuned for one under the other's meaning.",
-                        "Note that the cloth solver is currently built but not driven by the render path, so today",
-                        "this key changes nothing visible; it is kept, and kept honest, for when that is wired up.")
-                .defineInRange("secondaryMotionGravity", 8.0, 0.0, 64.0);
-
         SECONDARY_MOTION_GRAVITY_ACCELERATION = builder
                 .comment("Downward acceleration acting on every swinging piece, in blocks/s^2.",
                         "Real gravity: this is what makes hair hang instead of sticking out where the pose left it.",
                         "Minecraft's own entity gravity is 32; a light, damped piece of hair reads better a little",
                         "below that, and a skirt a little above. Zero makes the pieces weightless and they will sit",
-                        "wherever the body throws them. Separate from secondaryMotionGravity, which is the cloth",
-                        "solver's gravity and not this one - they are different quantities, so neither key is read",
-                        "into the other.")
+                        "wherever the body throws them.")
                 .defineInRange("secondaryMotionGravityAcceleration", 24.0, 0.0, 64.0);
 
         SECONDARY_MOTION_AIR_DRAG = builder
@@ -259,28 +237,6 @@ public class YSMCompatConfig {
                         "while a skirt panel is expected to hang toward the ground. Set it to 0 to switch the whole",
                         "mechanism off and get the pre-existing behaviour back, bit for bit.")
                 .defineInRange("secondaryMotionGravityFollow", 1.0, 0.0, 1.0);
-
-        SECONDARY_MOTION_MAX_PARTICLES = builder
-                .comment("How many cloth particles one model may simulate, or 0 for none.",
-                        "Counted in particles, not pieces: a skirt panel's cloth is a grid of them, so a long coat",
-                        "spends thousands. This is the backstop for a model whose garment would otherwise cost more",
-                        "than the frame has to give, and it is deliberately generous - 4000 - because leaving part",
-                        "of a garment unsimulated is visible, while a lower number only saves time.")
-                .defineInRange("secondaryMotionMaxParticles", 4000, 0, 65536);
-
-        SECONDARY_MOTION_ITERATIONS = builder
-                .comment("Constraint-relaxation passes per cloth substep.",
-                        "Each pass re-satisfies the links' rest lengths and the body volumes after the integration",
-                        "moved the particles; more passes mean stiffer cloth and fewer passes mean stretchier. Eight",
-                        "is what a garment needs to stop visibly stretching under its own weight.")
-                .defineInRange("secondaryMotionIterations", 8, 1, 32);
-
-        SECONDARY_MOTION_BODY_RADIUS = builder
-                .comment("Radius of the body volume the cloth keeps its particles out of, in blocks.",
-                        "A single tube around the model's own vertical axis rather than the pendulum solver's shaped",
-                        "volumes: cloth is a grid of particles and needs a cheap test. Raise it if a garment passes",
-                        "through the torso, lower it if a garment stands off the body.")
-                .defineInRange("secondaryMotionBodyRadius", 0.22, 0.0, 2.0);
 
         SECONDARY_MOTION_COLLISION = builder
                 .comment("Keep swinging pieces out of the model's own body (the torso, the hips, the thighs, the",

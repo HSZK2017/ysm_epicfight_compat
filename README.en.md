@@ -77,7 +77,7 @@ Client configuration: `config/ysm_epicfight_compat-client.toml`.
 
 On ModernYSM, this mod's GPU path follows ModernYSM's `UseGpuRenderer` / `UseCompatibilityRenderer` options. This mod's `enableGpuRender` does not control that fork, and no duplicate checkbox is added.
 
-**Secondary motion setting distinction:** `secondaryMotionGravity` belongs to a separate cloth solver that is not connected to rendering. It is not the active `secondaryMotionGravityAcceleration` setting above. Currently, `secondaryMotionGravity`, `secondaryMotionMaxParticles`, `secondaryMotionIterations`, and `secondaryMotionBodyRadius` have no visible cloth effect. More settings are defined in `config/YSMCompatConfig.java`.
+The unused particle-cloth settings `secondaryMotionGravity`, `secondaryMotionMaxParticles`, `secondaryMotionIterations`, and `secondaryMotionBodyRadius` have been removed. Hair, tails, and skirts use the active bone-chain solver; see `config/YSMCompatConfig.java` for its settings.
 
 If a part of a particular model is still treated as swinging when it should remain fixed, create `config/ysm_epicfight_compat/physics_overrides/<model ID>.json`, for example:
 

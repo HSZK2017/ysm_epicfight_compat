@@ -2460,7 +2460,7 @@ class DefectCalibrationCorpusSweepTest {
                 List<Vector3f> patch = new ArrayList<>();
                 for (Vector3f vertex : vertices) {
                     if (nearestDistanceOf(vertex, restsOn) <= gap
-                            + YsmPhysicsParts.CONTACT_PATCH_TOLERANCE) {
+                            + YsmContactGeometry.PATCH_TOLERANCE) {
                         patch.add(vertex);
                     }
                 }
@@ -2476,7 +2476,7 @@ class DefectCalibrationCorpusSweepTest {
                     }
                 }
                 float belowShare = (float) below / vertices.size();
-                boolean inContact = gap <= YsmPhysicsParts.CONTACT_PATCH_TOLERANCE;
+                boolean inContact = gap <= YsmContactGeometry.PATCH_TOLERANCE;
                 boolean sign = press < 90.0F;
                 boolean normalUp = Float.isFinite(normal) && normal < 45.0F;
                 boolean mostlyAbove = belowShare < 0.5F;

@@ -71,7 +71,7 @@ final class YsmHeadContactConstraint {
         float nearZ = Float.POSITIVE_INFINITY;
         float farZ = Float.NEGATIVE_INFINITY;
         for (Vector3f vertex : skull) {
-            if (vertex != null && YsmDynamicBoneSolver.isFinite(vertex)) {
+            if (YsmContactGeometry.isFinite(vertex)) {
                 left = Math.min(left, vertex.x);
                 right = Math.max(right, vertex.x);
                 lowY = Math.min(lowY, vertex.y);
@@ -85,11 +85,11 @@ final class YsmHeadContactConstraint {
             return false;
         }
 
-        int stride = YsmPhysicsParts.contactStride(own.size(), skull.size());
+        int stride = YsmContactGeometry.contactStride(own.size(), skull.size());
         float nearest = Float.POSITIVE_INFINITY;
         for (Vector3f vertex : own) {
-            if (vertex != null && YsmDynamicBoneSolver.isFinite(vertex)) {
-                nearest = Math.min(nearest, YsmPhysicsParts.distanceToCloud(vertex, skull, stride));
+            if (YsmContactGeometry.isFinite(vertex)) {
+                nearest = Math.min(nearest, YsmContactGeometry.distanceToCloud(vertex, skull, stride));
             }
         }
         if (!(nearest <= Math.min(MAX_CONTACT_GAP, width * MAX_GAP_TO_HEAD_WIDTH))) {
@@ -99,7 +99,7 @@ final class YsmHeadContactConstraint {
         int valid = 0;
         int withinHead = 0;
         for (Vector3f vertex : own) {
-            if (vertex == null || !YsmDynamicBoneSolver.isFinite(vertex)) {
+            if (!YsmContactGeometry.isFinite(vertex)) {
                 continue;
             }
             valid++;
@@ -123,9 +123,9 @@ final class YsmHeadContactConstraint {
         float contactLeft = Float.POSITIVE_INFINITY;
         float contactRight = Float.NEGATIVE_INFINITY;
         for (Vector3f vertex : own) {
-            if (vertex != null && YsmDynamicBoneSolver.isFinite(vertex)
-                    && YsmPhysicsParts.distanceToCloud(vertex, skull, stride)
-                    <= nearest + YsmPhysicsParts.CONTACT_PATCH_TOLERANCE) {
+            if (YsmContactGeometry.isFinite(vertex)
+                    && YsmContactGeometry.distanceToCloud(vertex, skull, stride)
+                    <= nearest + YsmContactGeometry.PATCH_TOLERANCE) {
                 contactLeft = Math.min(contactLeft, vertex.x);
                 contactRight = Math.max(contactRight, vertex.x);
             }

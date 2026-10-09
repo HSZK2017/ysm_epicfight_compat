@@ -77,7 +77,7 @@ EF 大幅前倾与跨步时，裙摆和腿部仍可能局部穿模。完整变�
 
 ModernYSM 下，本模组 GPU 路径跟随其 `UseGpuRenderer` / `UseCompatibilityRenderer`；本模组的 `enableGpuRender` 不控制该分支，也不重复添加界面复选框。
 
-**注意二次运动配置的区别**：`secondaryMotionGravity` 属于尚未接入渲染的布料求解器，不是上表的 `secondaryMotionGravityAcceleration`。当前 `secondaryMotionGravity`、`secondaryMotionMaxParticles`、`secondaryMotionIterations`、`secondaryMotionBodyRadius` 不产生可见布料效果。更多参数见源码 `config/YSMCompatConfig.java`。
+旧版中未生效的粒子布料配置项 `secondaryMotionGravity`、`secondaryMotionMaxParticles`、`secondaryMotionIterations`、`secondaryMotionBodyRadius` 已移除。当前头发、尾巴和裙摆的二次运动都由骨段求解器处理；更多有效参数见源码 `config/YSMCompatConfig.java`。
 
 如果某个模型的部件仍被误判为可摆动，可为该模型创建 `config/ysm_epicfight_compat/physics_overrides/<模型ID>.json`，例如：
 

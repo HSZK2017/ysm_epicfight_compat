@@ -62,8 +62,6 @@ public class YSMReloadTrigger {
         // The active secondary-motion solver carries velocities across frames. Drop them
         // with the connection, even when the same converted mesh stays in the cache.
         com.ysmef.compat.model.runtime.YsmMeshSecondaryMotion.clear();
-        // Keep the legacy cloth cache in the same connection lifecycle.
-        com.ysmef.compat.model.runtime.YsmMeshCloth.clear();
         com.ysmef.compat.ysm.YsmClasses.invalidate();
         // The runtime bridge holds the last entity a mesh was prepared for in a ThreadLocal, and
         // through it that entity's ClientLevel and chunks. Each draw clears it, but the last draw of

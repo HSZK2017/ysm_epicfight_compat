@@ -2,7 +2,8 @@
 
 ## 未发布 / Unreleased
 
-暂无 / Nothing yet.
+- 拆开头部接触判定与物理部件构建的双向依赖，共用独立的几何测量工具；移除从未接入渲染的粒子布料求解器及四个无效配置项。
+- Removed the dependency cycle between head-contact classification and physics-part construction. Deleted the unused particle-cloth solver and its four inactive settings.
 
 ## v1.10.0 — 2026-10-09
 

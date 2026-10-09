@@ -18,7 +18,7 @@
 
 - GPU、CPU 和 Iris 是按条件选择的路径，不能把它们当作一条固定执行链。
 - `require=0` 允许未匹配的可选注入跳过，不等于所有异常均安全，也不提供方法匹配成功的日志证明。
-- 二次运动目前使用 `YsmMeshSecondaryMotion` 摆锤求解器；独立布料求解器尚未接入绘制。重力参数应区分 `secondaryMotionGravityAcceleration` 与 `secondaryMotionGravity`。
+- 二次运动使用 `YsmMeshSecondaryMotion` 骨段求解器；原先未接入绘制的粒子布料求解器及其无效配置项已移除。有效重力配置为 `secondaryMotionGravityAcceleration`。
 - 安装依赖的版本范围见 README；当前构建本地依赖还包括两个女仆联动 jar，运行时则可选。
 
 ## 模块说明
@@ -201,7 +201,7 @@
 11. **轮盘映射迁移**：v1.9.0 起新增每模型映射 sidecar（`config/ysm_epicfight_compat/extra_animation_mappings/`），旧聚合文件 `extra_animation_mappings.json` 仍会被兼容读取，但不再写入
 12. **EF 站姿与模型裙摆余量的冲突（剩余穿模）**：Epic Fight 的默认 idle 是"一前一后"的迈步站姿，行走/冲刺/坠落也带腿部摆幅；而 `wine_fox/01_taisho_maid` 按"双腿并拢直立"的 rest 姿态建模，裙摆与腿只有约 **0.10 格**余量。EF 接管腿部动画后，腿会进入裙摆。当前骨段碰撞能约束部分布片，但不能保证整片裙摆不穿模：修正后的逐帧探针在坠落片段记录到 **7/36** 片布与腿部碰撞体发生接触；把碰撞体扩大到 2.0× 时，由于布片从一开始就在体积内，现有求解器会跳过这类初始重叠，并没有改善余量。将布片重绑到最近的腿，在 EF 走/跑/坠/跳与合成步态下、混合比例 0.2–1.0 均未增加间隙。已验证的改进方向是增加模型的裙摆与腿部间隙，或调整 EF 腿部动作；若要靠模组进一步解决，需要按裙摆表面而非单个骨段求解，并处理初始相交。测量见 `build/reports/ysm-ef-skirt-round.md`、`build/reports/ysm-rebind-round.md`。
 13. **连续尾巴的关节归属**：当尾巴从髋部向上弯曲时，不能按每段几何高度独立选择 EF 身体关节；`wine_fox/01_taisho_maid` 的旧缓存把 `Tail`–`Tail4` 放在 `Torso`，把 `Tail5`–`Tail7` 放在 `Chest`，上身动作会在尾巴中段拉开两组网格。现在整条尾巴以最靠近身体且有几何的尾巴骨骼决定身体关节；转换器源码指纹变化会令旧缓存重新生成。
-14. **布料（位置约束）求解器已实现但未接线**：`YsmMeshCloth` → `YsmClothSolver` → `YsmClothTuning` 这条"把裙摆当粒子网格约束"的链路在源码里完整存在（含 8 次约束松弛、身体体积排斥、钉住粒子的蒙皮放置），但**渲染路径没有任何地方调用它**：`YsmMeshCloth` 在整个 `src` 中唯一的出现是 `YSMReloadTrigger` 里的 `clear()`。当前所有二次运动（头发/尾巴/裙摆）都走 `YsmMeshSecondaryMotion` 的摆锤求解器。因此配置里的 `secondaryMotionMaxParticles`、`secondaryMotionIterations`、`secondaryMotionBodyRadius` 以及 `secondaryMotionGravity`（布料重力）当下**不产生可见效果**；`secondaryMotionGravity` 的注释已按此更正。接线还是删除需要一次带游戏内观察的决定，本轮只把状态写明。
+14. **粒子布料旧路径已移除**：旧求解器从未接入渲染，只有骨段求解器驱动头发、尾巴与裙摆。旧版四个粒子布料配置项从未改变画面，现已从配置规范删除；现有配置文件中的同名旧值不再参与求解。
 15. **裙片联动的边界与坐标系**：`YsmPhysicsTopology` 只在同一物理类别的相邻骨段之间自动建立联动；模型的 `Tail` 根部虽靠近后裙片 `BM`，仍不能作为裙片邻居。父子骨段关系保留在子段一侧，但 `YsmPhysicsCoupling` 对布片子段使用父段的零相对弯曲作为联动目标：父段的摆动已在 `YsmMeshSecondaryMotion` 的矩阵合成中传给子段，再复制到子段自身摆动会重复旋转下摆。两处约束以真实女仆模型及小型骨架测试覆盖。EF 奔跑中的大幅前倾和腿部跨步仍会造成局部穿模；当前改动针对裙片散开，不承诺完全消除裙腿相交。
 16. **几何约束的准确性边界**：模型的骨架父子关系负责确定部件链，几何检查负责剔除不能可靠摆动的骨段并测量接触锚点；作者动画中的 `follows` 在驱动骨段存活时仍优先于骨架关系。几何检查剔除中间骨段后，父段必须继续沿骨架寻找最近的存活骨段。对 `ysm-model-repo` 的 906 个文件离线扫描中，当前读取器可解析 736 个、其中 642 个组装出 17,918 个物理段；旧父段查找会把 764 个有存活上层骨段的子段错当成根。接触锚点只在有空间上接近的支撑几何时替换原枢轴；同一批模型中，旧规则有 901 个移动后的锚点距支撑包围盒超过 0.1 格，修正后为 0。另有 370 个移动后的锚点仍在自身几何包围盒外超过 0.01 格，多由原始枢轴就在几何外且锚点位移被限制所致，不能只凭此距离断定模型错误。完整扫描数据见 `build/reports/ysm-physics-parent-geometry-corpus.md`。**自动选择哪些骨段参与物理以及物理类别仍有名称回退规则**（`YsmPhysicsChains`、`YsmPhysicsParts.categoryOf`）；几何检查不等于完全摆脱命名，无法解析的 170 个文件也尚未被这一扫描覆盖。
 17. **贴头几何的刚性约束**：`YsmHeadContactConstraint` 在建立物理段时读取骨架上的映射头关节与双方真实网格；只有头部附近的几何占比足够、接触距离足够近，且接触点横跨头部左右两侧，才将该骨段留在头部动画上。单侧发束、只有少数根部顶点碰到头的长发不满足组合条件；不根据 `BaseHair` 等名称直接判定。对已安装 `wine_fox` 的 18 款带 `BaseHair` 模型，转换后的网格全部通过固定判定，女仆款的刘海、长发与两侧发束仍参与物理。模型库 906 个文件中可解析 736 个；离线候选集原有 17,918 个物理段，新增规则将其中 487 个贴头部件判为刚性。审计结果见 `build/reports/ysm-head-contact-wine-fox.md` 与 `build/reports/ysm-head-contact-corpus.md`。这些是离线几何结果，游戏内所有模型的主观观感仍需抽样验证。
