@@ -71,13 +71,13 @@ public class YSMCompatConfig {
      *
      * <p>Off by default, and deliberately so: it is a look, not a fix. The pieces to
      * swing are found by reading the model's bone names, so a model that names its
-     * hair unconventionally either gets no motion or gets motion on the wrong bone, and
-     * the only way to judge the result is to look at it. A per-model override is the
-     * intended answer for the second case:
+     * hair unconventionally either gets no motion or gets motion on the wrong bone.
+     * Broad geometry directly resting across a mapped head is kept rigid before it
+     * becomes a physics segment. For cases this geometric rule cannot distinguish,
+     * a per-model override is available:
      * {@code config/ysm_epicfight_compat/physics_overrides/<model>.json}, holding
-     * {@code {"rigid": ["BaseHair"]}} - the bones of that one model that must keep following
-     * their joint instead of swinging. Nothing is shipped for any model; with no file
-     * present not one number of any model's motion changes. See {@code YsmPhysicsOverrides}.
+     * {@code {"rigid": ["SomeBone"]}} - bones of that one model that must keep following
+     * their joint instead of swinging. See {@code YsmPhysicsOverrides}.
      *
      * <p>Cost is one damped-spring step per chain per full evaluation, plus one
      * identity check per bone on the compose path; the chain classification itself runs

@@ -1,5 +1,7 @@
 # YSM Epic Fight Compat
 
+[English](README.en.md) · 简体中文
+
 让你的 **Yes Steve Model（YSM）角色模型使用 Epic Fight 的战斗动画**，适用于 Minecraft 1.20.1 / Forge。
 
 - **战斗模式**：本模组转换当前 YSM 模型，由 Epic Fight 驱动攻击、行走等动作。
@@ -8,12 +10,22 @@
 
 支持官方 YSM 2.6.5、OpenYSM 和 ModernYSM 的兼容分支。官方 2.6.5 本身就是混淆发行版；升级 YSM 分支或 Epic Fight 后，需要重新检查兼容性。
 
+### 1.10.0 重点变化
+
+- 修复部分残影显示模型所有条件形态的问题；残影现在沿用创建时已求值的部件可见状态。
+- 改善裙片之间的联动与连续尾巴的关节归属，减少奔跑时裙片散开和尾巴分段脱离。
+- 对与头部有充分几何接触的发片保持刚性；该规则不依赖 `BaseHair` 等部件名称。
+- 本兼容模组加载时，不再显示 YSM 针对 Epic Fight 的旧版不兼容开屏警告；其他警告不受影响。
+
+EF 大幅前倾与跨步时，裙摆和腿部仍可能局部穿模。完整变更见[更新日志](CHANGELOG.md)。
+
 ## 阅读导航
 
 | 你的目的 | 从这里开始 |
 |---|---|
 | 安装并使用模组 | [安装与使用](#安装与使用) |
 | 调整性能或显示效果 | [常用配置](#常用配置) |
+| 了解本次更新 | [1.10.0 重点变化](#1100-重点变化) → [更新日志](CHANGELOG.md) |
 | 模型不显示、穿模或光影异常 | [常见问题与限制](#常见问题与限制) |
 | 编译项目 | [构建与测试](#构建与测试) |
 | 理解代码、修改功能 | [项目如何工作](#项目如何工作) → [开发入口](#开发入口) |
@@ -67,6 +79,14 @@ ModernYSM 下，本模组 GPU 路径跟随其 `UseGpuRenderer` / `UseCompatibili
 
 **注意二次运动配置的区别**：`secondaryMotionGravity` 属于尚未接入渲染的布料求解器，不是上表的 `secondaryMotionGravityAcceleration`。当前 `secondaryMotionGravity`、`secondaryMotionMaxParticles`、`secondaryMotionIterations`、`secondaryMotionBodyRadius` 不产生可见布料效果。更多参数见源码 `config/YSMCompatConfig.java`。
 
+如果某个模型的部件仍被误判为可摆动，可为该模型创建 `config/ysm_epicfight_compat/physics_overrides/<模型ID>.json`，例如：
+
+```json
+{ "rigid": ["SomeBone"], "limitDeg": { "Tail5": 8 } }
+```
+
+`rigid` 让指定骨骼完全跟随原有关节；`limitDeg` 限制指定骨骼的最大摆角。模型 ID 含 `/` 时，文件按同样的目录层级存放。贴头发片的自动固定规则无需此配置，但几何判定无法覆盖所有模型。
+
 ## 常见问题与限制
 
 | 现象或场景 | 说明与检查方向 |
@@ -76,7 +96,9 @@ ModernYSM 下，本模组 GPU 路径跟随其 `UseGpuRenderer` / `UseCompatibili
 | 升级依赖后重复渲染或换装失效 | 检查 YSM 分支和 Mixin 目标签名；方法未匹配时可能没有日志 |
 | GPU 不可用 | 自动选择可用回退路径；GPU 直连需桌面 GL 4.3+ / GLES 3.1+，本模组 CPU 路径需 GL 3.3+ / GLES 3.0+ |
 | 使用 Iris / Oculus 光影包 | GPU / CPU 直连让位光影计算路径；优化 Iris 路径默认开启，异常时可加 `-Dysm_ef_compat.disable_iris_compute_path=true` 回退 |
-| 裙摆被腿穿出 | 部分模型按双腿并拢姿态制作，与 EF 站姿和腿部动作不匹配。当前物理无法保证修复；需要调整模型裙摆余量或 EF 腿部姿态 |
+| EF 奔跑时裙摆被腿穿出 | 裙片联动已改善整体性，但部分模型按双腿并拢姿态制作，与 EF 的前倾和大步幅动作不匹配；仍可能局部穿模。可调整模型裙摆余量或 EF 腿部姿态 |
+| 头顶发片或尾巴脱离 | 1.10.0 增加贴头几何固定和连续尾巴关节归属修复；若特定模型仍异常，可用模型专属 `physics_overrides` 限制对应骨骼 |
+| YSM 与 EF 同时加载时的旧版兼容性警告 | 本模组只拦截这条针对 Epic Fight 的提示；YSM 的其他加载警告仍正常显示 |
 | WebP / AVIF 贴图不显示 | 依赖 YSM 的反射解码支持；相应实现缺失时跳过并告警。支持 PNG / JPEG，不支持 BMP |
 | 超大模型包被拒绝 | 源文件与解压载荷默认各限 512 MiB；调整方法见技术参考 |
 
@@ -110,7 +132,7 @@ Epic Fight 和 zstd-jni 由 Gradle 获取。运行时女仆联动仍为可选功
 .\gradlew.bat test
 ```
 
-当前版本产物：`build/libs/YSM_EpicFight_Compat-1.20.1-1.9.0-all.jar`，内嵌 zstd-jni。修改项目版本后，文件名随之改变。
+当前版本产物：`build/libs/YSM_EpicFight_Compat-1.20.1-1.10.0-all.jar`，内嵌 zstd-jni。修改项目版本后，文件名随之改变。
 
 可选：提供真实 `.ysm` 文件，运行解密链黄金用例：
 

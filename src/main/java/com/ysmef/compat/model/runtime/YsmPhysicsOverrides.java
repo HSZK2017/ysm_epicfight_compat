@@ -35,13 +35,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * is a rigid turn, and no amount of spring tuning removes it, because it is the piece's own swing
  * limit that saturates. Holding the piece rigid gives 0.000 and 0.000.
  *
- * <p>No rule can find those pieces: measured over the corpus, "the piece has a contact patch above
- * it" is true of 59 of 59 simulated pieces of that model and 17,415 of 18,350 corpus pieces, and the
- * four candidate structural rules agree with each other on 26.5 per cent of pieces - the maid's own
- * fox tail alternates across the decision line, so a rule would freeze four of its seven links and
- * tear the chain. This file is therefore the answer for exactly this case, and it is a <b>choice</b>:
- * nothing is shipped for any model, and with no file present every model's behaviour is the shipped
- * one, byte for byte.
+ * <p>The broad head-contact geometry rule now rejects caps like this before segments are made.
+ * A model-specific file remains useful when a piece has no measurable head support, or when the
+ * author intended a rigid piece that the conservative geometry rule cannot distinguish from a
+ * hanging one. Earlier attempts to freeze every piece resting above a support also froze tail
+ * links, so this override must stay scoped to the named model and bone. An existing BaseHair
+ * override is harmless after geometric rejection: that bone already follows its head joint.
  *
  * <pre>
  * config/ysm_epicfight_compat/physics_overrides/&lt;model&gt;.json

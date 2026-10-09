@@ -59,6 +59,8 @@ import java.util.function.IntPredicate;
  * {@link #risesOffPivot} (its geometry stands <i>above</i> a pivot that is not on it). Both
  * are the same defect - a rotation about a point the piece is not attached to - and both keep
  * the piece rigid on its joint instead.
+ * {@link YsmHeadContactConstraint} also leaves a broad piece rigid when its geometry rests
+ * directly across the skull; a narrow root contact does not qualify, so hanging locks remain.
  *
  * <h2>The moment arm</h2>
  *
@@ -1785,6 +1787,15 @@ public final class YsmPhysicsParts {
             }
             return null;
         }
+        if (YsmHeadContactConstraint.holds(model.bones, boneIndex, vertices)) {
+            if (HEAD_CONTACT_LOGGED.add(model.modelId + '/' + bone.name)) {
+                com.ysmef.compat.YSMEpicFightCompat.LOGGER.info(
+                        "YSM-EF Compat: [physics] model '{}': bone '{}' contacts both sides of the skull, "
+                                + "so it follows the head rigidly while separate hanging hair keeps swinging",
+                        model.modelId, bone.name);
+            }
+            return null;
+        }
 
         YsmPhysicsBinding.Part binding = bindings.get(bone.name);
         float frequency = binding != null ? (float) binding.frequency() : fallbackFrequency;
@@ -1832,6 +1843,9 @@ public final class YsmPhysicsParts {
      * line per piece per model would be noise; above it the piece is one whose own swing used to slide.
      */
     static final float ANCHOR_REPORT_DISTANCE = 0.001F;
+
+    private static final java.util.Set<String> HEAD_CONTACT_LOGGED =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     /** Model/bone keys already reported as hinged off their pivot, so a reload does not repeat the line. */
     private static final java.util.Set<String> ANCHOR_MOVED_LOGGED =
@@ -2048,7 +2062,7 @@ public final class YsmPhysicsParts {
      * otherwise the smallest stride that brings it inside - derived from the data, so the search cost per
      * piece is bounded while the measurement stays as close to the whole cloud as the budget allows.
      */
-    private static int contactStride(int ownSize, int cloudSize) {
+    static int contactStride(int ownSize, int cloudSize) {
         long product = (long) ownSize * (long) cloudSize;
         if (product <= CONTACT_SEARCH_WORK || ownSize <= 0) {
             return 1;
@@ -2057,7 +2071,7 @@ public final class YsmPhysicsParts {
     }
 
     /** The distance from a point to the nearest point of a cloud, reading every {@code stride}-th one. */
-    private static float distanceToCloud(Vector3f point, List<Vector3f> cloud, int stride) {
+    static float distanceToCloud(Vector3f point, List<Vector3f> cloud, int stride) {
         float best = Float.MAX_VALUE;
         for (int at = 0; at < cloud.size(); at += stride) {
             Vector3f other = cloud.get(at);
@@ -2458,6 +2472,7 @@ public final class YsmPhysicsParts {
         VERTICES.clear();
         WRAPPED_PIVOT_LOGGED.clear();
         RISES_FROM_PIVOT_LOGGED.clear();
+        HEAD_CONTACT_LOGGED.clear();
     }
 
     /**

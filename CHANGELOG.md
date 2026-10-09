@@ -2,11 +2,33 @@
 
 ## 未发布 / Unreleased
 
+暂无 / Nothing yet.
+
+## v1.10.0 — 2026-10-09
+
+### 中文摘要
+
+- **战斗渲染**：阎魔刀瞬身等残影快照沿用创建时的模型部件可见状态，不再把所有条件形态一起显示。
+- **二次运动**：连续尾巴按根部的身体关节绑定，避免尾尖与尾根在大幅动作中分离；裙片按几何与骨架关系改进联动，EF 奔跑时更接近整体。
+- **几何约束**：几何检查剔除不可靠的物理段后，子段继续寻找最近的有效上层骨段；与头部有充分双侧几何接触的发片保持固定，不再依赖 `BaseHair` 命名。针对 906 个 `.ysm` 文件做了离线扫描，其中 736 个可解析；实际游戏观感仍需按模型抽样检查。
+- **启动体验**：官方 YSM 2.6.5、OpenYSM、ModernYSM 的 Epic Fight 旧版不兼容警告在本模组加载时被精确拦截；其他加载警告保留。
+- **已知限制**：EF 的前倾和大步幅动作仍可能使裙摆与腿局部相交；自动几何约束无法覆盖所有模型，可使用模型专属 `physics_overrides`。
+
+### English summary
+
+- **Combat rendering**: afterimages from Yamato dodge effects and similar snapshots now retain the model part visibility evaluated when the snapshot is created, instead of showing every conditional form.
+- **Secondary motion**: articulated tails stay bound to the body's joint at their root; skirt panels are coupled using geometry and skeleton relationships so they behave more like one garment during Epic Fight sprinting.
+- **Geometric constraints**: when an unreliable physics segment is excluded, its children find the nearest surviving ancestor. Hair geometry with substantial contact across both sides of the head stays rigid without relying on names such as `BaseHair`. An offline scan covered 906 `.ysm` files; 736 were parseable. In-game appearance still needs per-model checks.
+- **Startup**: the obsolete YSM/Epic Fight incompatibility warning is suppressed when this bridge is installed, for official YSM 2.6.5, OpenYSM, and ModernYSM. Other loading warnings remain visible.
+- **Known limit**: large forward lean and leg strides can still cause local skirt clipping. Per-model `physics_overrides` remain available where automatic geometry rules are insufficient.
+
+The entries below preserve the detailed development history, including observations later corrected by subsequent work.
+
 ### 中文
 
 #### 已知限制记入文档：EF 站姿与模型裙摆余量的冲突（按限制结案，不修）
 
-Epic Fight 的 idle/移动姿态是"迈步站姿"，而部分 YSM 模型按"双腿并拢直立"建模、裙摆与腿仅约 0.10 格余量（例：`wine_fox/01_taisho_maid`），于是 EF 接管动画后腿会从裙摆穿出，站立不动即可见。两条物理途径均被测量否决：腿部碰撞胶囊放大 2.0× 触及 **0/36** 片布；布片重绑到最近的腿在 EF walk/run/fall/jump 与合成步态下、任何混合比例（0.2–1.0）都不增加间隙。结论：模型余量与 EF 姿态幅度的固有冲突，模组侧不可修；仅模型几何或 EF 站姿可解。已记入 README「已知限制」第 13 条。测量：`build/reports/ysm-ef-skirt-round.md`、`build/reports/ysm-rebind-round.md`
+Epic Fight 的 idle/移动姿态是"迈步站姿"，而部分 YSM 模型按"双腿并拢直立"建模、裙摆与腿仅约 0.10 格余量（例：`wine_fox/01_taisho_maid`），于是 EF 接管动画后腿会从裙摆穿出，站立不动即可见。两条物理途径均被测量否决：腿部碰撞胶囊放大 2.0× 触及 **0/36** 片布；布片重绑到最近的腿在 EF walk/run/fall/jump 与合成步态下、任何混合比例（0.2–1.0）都不增加间隙。结论：模型余量与 EF 姿态幅度的固有冲突，当前骨段物理无法保证完全消除穿模；模型几何或 EF 站姿需要相应调整。已记入 README「常见问题与限制」。测量：`build/reports/ysm-ef-skirt-round.md`、`build/reports/ysm-rebind-round.md`
 
 #### 第二十六轮：四个系统开关统一取值语义（`=false` 曾是"开"）
 

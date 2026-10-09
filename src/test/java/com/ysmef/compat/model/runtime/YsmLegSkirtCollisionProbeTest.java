@@ -926,6 +926,10 @@ class YsmLegSkirtCollisionProbeTest {
         private Joint armature;
         private yesman.epicfight.model.armature.HumanoidArmature bindArmature;
         private final Map<Integer, List<Vector3f>> vertices = new HashMap<>();
+
+        Map<Integer, List<Vector3f>> ownVerticesForAudit() {
+            return vertices;
+        }
         private final Map<Integer, List<Vector3f>> legVertices = new HashMap<>();
         private final Map<Integer, float[]> geometry = new HashMap<>();
         private YsmBodyColliders allColliders;
