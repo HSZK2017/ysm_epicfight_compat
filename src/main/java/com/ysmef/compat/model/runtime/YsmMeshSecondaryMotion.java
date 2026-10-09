@@ -78,7 +78,7 @@ public final class YsmMeshSecondaryMotion {
     /** A segment's composition chain is bounded by this, against a cyclic parent table. */
     private static final int MAX_CHAIN_DEPTH = 64;
 
-    /** Per-model simulation state, keyed by the mesh because the levers come from its geometry. */
+    /** Mutable simulation state for one entity and one model. */
     static final class State {
         final YsmPhysicsParts.Model parts;
         final YsmDynamicBoneSolver.SegmentState[] states;
@@ -224,14 +224,15 @@ public final class YsmMeshSecondaryMotion {
         double lastStepSeconds = -1.0;
         long frames;
         int detailLogged;
-        boolean logged;
-        boolean colliderLogged;
-
         State(YsmPhysicsParts.Model parts, YsmBodyColliders colliders, float maxAnglePerJoint) {
-            this.parts = parts;
+            this(new PreparedModel(parts, colliders, maxAnglePerJoint), colliders);
+        }
+
+        private State(PreparedModel prepared, YsmBodyColliders colliders) {
+            this.parts = prepared.parts;
             this.colliders = colliders;
-            this.maxAnglePerJoint = maxAnglePerJoint;
-            int count = parts.segments().length;
+            this.maxAnglePerJoint = prepared.maxAnglePerJoint;
+            int count = prepared.parts.segments().length;
             this.states = new YsmDynamicBoneSolver.SegmentState[count];
             this.deltas = new OpenMatrix4f[count];
             this.jomlDeltas = new Matrix4f[count];
@@ -239,8 +240,8 @@ public final class YsmMeshSecondaryMotion {
             this.resolved = new boolean[count];
             this.resolveDepth = new int[count];
             this.integrated = new boolean[count];
-            this.held = new boolean[count];
-            this.limit = new float[count];
+            this.held = prepared.held.clone();
+            this.limit = prepared.limit.clone();
             this.deformations = new OpenMatrix4f[count];
             this.pivots = new Vector3f[count];
             this.restDirections = new Vector3f[count];
@@ -250,15 +251,10 @@ public final class YsmMeshSecondaryMotion {
             this.lastChainAngle = new float[count];
             this.chainBudget = new float[count];
             this.chainUsed = new float[count];
-            YsmPhysicsTopology.PieceTable pieces = YsmPhysicsTopology.piecesOf(parts.segments());
-            this.jointsLeft = pieces.jointsLeft;
-            this.jointsInPiece = pieces.jointsInPiece;
-            this.knits = YsmPhysicsTopology.knitsOf(parts.segments());
-            this.pieceLimit = new float[count];
-            for (int i = 0; i < count; i++) {
-                this.pieceLimit[i] = YsmPhysicsMotionLimits.pieceLimit(
-                        parts.segments()[i], pieces.jointsInPiece[i], maxAnglePerJoint);
-            }
+            this.jointsLeft = prepared.jointsLeft;
+            this.jointsInPiece = prepared.jointsInPiece;
+            this.knits = prepared.knits;
+            this.pieceLimit = prepared.pieceLimit;
             this.lastAxis = new Vector3f[count];
             this.lastRest = new Vector3f[count];
             this.pivotRotations = new Quaternionf[count];
@@ -278,8 +274,50 @@ public final class YsmMeshSecondaryMotion {
         }
     }
 
-    /** mesh -> state. Keyed by the mesh because the segment levers come from its geometry. */
-    private static final Map<YSMMesh, State> STATES =
+    /** Geometry and topology shared by a mesh; frame state belongs to each entity. */
+    static final class PreparedModel {
+        final YsmPhysicsParts.Model parts;
+        final YsmBodyColliders colliderTemplate;
+        final float maxAnglePerJoint;
+        final int[] jointsLeft;
+        final int[] jointsInPiece;
+        final YsmPhysicsTopology.Knits knits;
+        final float[] pieceLimit;
+        final boolean[] held;
+        final float[] limit;
+        private final YsmEntityMotionStates<State> entities = new YsmEntityMotionStates<>();
+        boolean logged;
+        boolean colliderLogged;
+
+        PreparedModel(YsmPhysicsParts.Model parts, YsmBodyColliders colliders, float maxAnglePerJoint) {
+            this.parts = parts;
+            this.colliderTemplate = colliders;
+            this.maxAnglePerJoint = maxAnglePerJoint;
+            int count = parts.segments().length;
+            YsmPhysicsTopology.PieceTable pieces = YsmPhysicsTopology.piecesOf(parts.segments());
+            this.jointsLeft = pieces.jointsLeft;
+            this.jointsInPiece = pieces.jointsInPiece;
+            this.knits = YsmPhysicsTopology.knitsOf(parts.segments());
+            this.pieceLimit = new float[count];
+            for (int i = 0; i < count; i++) {
+                this.pieceLimit[i] = YsmPhysicsMotionLimits.pieceLimit(
+                        parts.segments()[i], pieces.jointsInPiece[i], maxAnglePerJoint);
+            }
+            this.held = new boolean[count];
+            this.limit = new float[count];
+        }
+
+        State stateFor(Object entity, Object world) {
+            State state = entities.get(entity, world);
+            if (state == null) {
+                state = new State(this, colliderTemplate == null ? null : colliderTemplate.forEntity());
+                entities.put(entity, world, state);
+            }
+            return state;
+        }
+    }
+
+    private static final Map<YSMMesh, PreparedModel> STATES =
             java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
 
     /** Models already reported as drawn on a foreign armature, so the warning is not a flood. */
@@ -316,7 +354,7 @@ public final class YsmMeshSecondaryMotion {
      */
     public static void apply(YSMMesh mesh, YSMRuntimeModel model, LivingEntity entity,
                              Armature armature, OpenMatrix4f[] poses) {
-        if (mesh == null || model == null || poses == null
+        if (mesh == null || model == null || entity == null || poses == null
                 || model.bones == null || model.bones.length == 0) {
             return;
         }
@@ -344,17 +382,21 @@ public final class YsmMeshSecondaryMotion {
             return;
         }
 
-        State state = STATES.get(mesh);
-        if (state == null) {
-            state = create(mesh, model);
-            if (state == null) {
-                return;
+        PreparedModel prepared;
+        synchronized (STATES) {
+            prepared = STATES.get(mesh);
+            if (prepared == null) {
+                prepared = create(mesh, model);
+                if (prepared == null) {
+                    return;
+                }
+                STATES.put(mesh, prepared);
             }
-            STATES.put(mesh, state);
         }
+        State state = prepared.stateFor(entity, entity.level());
 
-        if (!state.logged) {
-            state.logged = true;
+        if (!prepared.logged) {
+            prepared.logged = true;
             YSMEpicFightCompat.LOGGER.info(
                     "YSM-EF Compat: [physics] model '{}': {} simulated bone(s) from {}; gravity {} blocks/s^2, air drag {}, collision {}",
                     model.modelId, state.parts.segments().length, sourceName(state.parts.source()),
@@ -400,8 +442,8 @@ public final class YsmMeshSecondaryMotion {
         boolean collisionWanted = state.colliders != null && YsmPhysicsTuning.collisionEnabled();
         if (collisionWanted) {
             colliding = state.colliders.update(armature, poses);
-            if (!state.colliderLogged) {
-                state.colliderLogged = true;
+            if (!prepared.colliderLogged) {
+                prepared.colliderLogged = true;
                 if (colliding) {
                     YSMEpicFightCompat.LOGGER.info(
                             "YSM-EF Compat: [physics] collision volumes of '{}': {}",
@@ -544,7 +586,7 @@ public final class YsmMeshSecondaryMotion {
         }
     }
 
-    private static State create(YSMMesh mesh, YSMRuntimeModel model) {
+    private static PreparedModel create(YSMMesh mesh, YSMRuntimeModel model) {
         try {
             YsmPhysicsTuning tuning = YsmPhysicsTuning.current();
             YsmPhysicsParts.Model parts = YsmPhysicsParts.build(model, mesh,
@@ -560,14 +602,14 @@ public final class YsmMeshSecondaryMotion {
             YsmBodyColliders colliders = parts.isEmpty() ? null : YsmBodyColliders.build(mesh, model);
             // The per-joint limit is what one joint may swing; the piece's own total is scaled from
             // it by how many joints the piece has, so a long chain is not shared into stillness.
-            State state = new State(parts, colliders, (float) tuning.maxAngle);
+            PreparedModel prepared = new PreparedModel(parts, colliders, (float) tuning.maxAngle);
             // The user's choice, if they made one: the bones this model must not swing. Read here -
             // once, where the pieces are built - and it applies nothing at all unless
             // config/ysm_epicfight_compat/physics_overrides/<model>.json exists, so the report line
             // it writes says which bones were held and the frame path below needs no file of its own.
             YsmPhysicsOverrides.markOverrides(model.modelId, model.bones, parts.segments(),
-                    state.held, state.limit);
-            return state;
+                    prepared.held, prepared.limit);
+            return prepared;
         } catch (Throwable t) {
             YSMEpicFightCompat.LOGGER.warn(
                     "YSM-EF Compat: [physics] could not classify physics bones for model '{}'; secondary motion stays off for it",

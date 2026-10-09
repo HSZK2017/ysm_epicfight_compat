@@ -176,6 +176,11 @@ public final class YsmBodyColliders implements YsmDynamicBoneSolver.Colliders {
         this.resolvedJoint = new int[count];
     }
 
+    /** Share bind geometry, but give each entity its own resolved collision positions. */
+    YsmBodyColliders forEntity() {
+        return new YsmBodyColliders(bindVolumes);
+    }
+
     /**
      * Build the collision volumes of a model, from its converted mesh and bone table.
      *
@@ -263,7 +268,7 @@ public final class YsmBodyColliders implements YsmDynamicBoneSolver.Colliders {
                 volumes.add(volume);
             }
         }
-        return volumes.isEmpty() ? null : new YsmBodyColliders(volumes);
+        return volumes.isEmpty() ? null : new YsmBodyColliders(List.copyOf(volumes));
     }
 
     /**
