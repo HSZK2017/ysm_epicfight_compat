@@ -249,6 +249,20 @@ test {
     // the local YSM folder; it is skipped unless the path is given explicitly:
     //   gradlew test -Dysmef.golden.ysm="C:\...\config\yes_steve_model\custom\xxx.ysm"
     systemProperty 'ysmef.golden.ysm', System.getProperty('ysmef.golden.ysm', '')
+    // Gradle runs tests in a separate JVM. Set the install root only when supplied:
+    // an empty property would activate tests that check for property presence.
+    def configRoot = System.getProperty('ysmef.golden.ysm_config_root',
+            System.getProperty('ysmef.ysm.configRoot', ''))
+    if (!configRoot.isBlank()) {
+        systemProperty 'ysmef.golden.ysm_config_root', configRoot
+        systemProperty 'ysmef.ysm.configRoot', configRoot
+    }
+    ['ysmef.acceptance.workspace', 'ysmef.acceptance.sourceRoot'].each { name ->
+        def value = System.getProperty(name, '')
+        if (!value.isBlank()) {
+            systemProperty name, value
+        }
+    }
     // Optional fork-signature contract: -Dysmef.fork=open|modern -Dysmef.fork.jar=<path>
     systemProperty 'ysmef.fork', System.getProperty('ysmef.fork', '')
     systemProperty 'ysmef.fork.jar', System.getProperty('ysmef.fork.jar', '')

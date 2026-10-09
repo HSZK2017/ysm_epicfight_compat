@@ -142,6 +142,8 @@ Epic Fight 和 zstd-jni 由 Gradle 获取。运行时女仆联动仍为可选功
 .\gradlew.bat test "-Dysmef.golden.ysm=C:\path\to\model.ysm"
 ```
 
+依赖游戏安装目录的测试可通过 `-Dysmef.golden.ysm_config_root=C:\path\to\config\yes_steve_model` 指定样本；模型库扫描通过 `YSMEF_YSM_CORPUS_ROOT` 环境变量指定 `.ysm` 集合。两者未配置时，相应测试会跳过。
+
 升级 OpenYSM 或 ModernYSM 时，可用对应源码检查 Mixin 目标的方法签名：
 
 ```powershell

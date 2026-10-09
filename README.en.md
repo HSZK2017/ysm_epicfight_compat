@@ -142,6 +142,8 @@ To run the optional end to end `.ysm` decryption test with a real model:
 .\gradlew.bat test "-Dysmef.golden.ysm=C:\path\to\model.ysm"
 ```
 
+For tests using a game installation, set `-Dysmef.golden.ysm_config_root=C:\path\to\config\yes_steve_model`. Corpus sweeps use the `YSMEF_YSM_CORPUS_ROOT` environment variable to locate `.ysm` packages. Those tests skip when their inputs are not configured.
+
 When updating OpenYSM or ModernYSM, check Mixin target method signatures against the corresponding source:
 
 ```powershell

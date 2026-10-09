@@ -6,9 +6,11 @@ Release highlights only. See the [development history](docs/development-history.
 
 ## 未发布 / Unreleased
 
+- 修复可选真实模型测试的 Gradle 系统属性转发，提供安装目录参数时不再误跳过。
 - 构建改用环境中的 JDK 17；新增每次推送与拉取请求的构建、测试及发行 JAR 校验。
 - 物理模拟状态按实体隔离，并在实体或世界失效时清理，避免多个实例共享运动状态。
 - 头部接触判定与物理部件构建解耦；移除未接入渲染的旧布料求解器及无效配置。
+- Fixed Gradle system-property forwarding for optional real-model tests so a supplied install path enables them.
 - Builds now use the configured JDK 17; CI checks the build, tests, and release JAR on every push and pull request.
 - Physics state is isolated per entity and cleaned up when the entity or world becomes invalid.
 - Head-contact classification is decoupled from physics-part construction; the unused cloth solver and inactive settings were removed.
