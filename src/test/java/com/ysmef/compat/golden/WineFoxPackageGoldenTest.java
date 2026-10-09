@@ -1,5 +1,7 @@
 package com.ysmef.compat.golden;
 
+import com.ysmef.compat.testutil.LocalModelFixtures;
+
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -18,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Golden-case test over the real Wine Fox model package (TLM's public model,
- * stored under src/test/resources/golden/winefox/ as the plaintext directory
+ * supplied locally under .local-test-fixtures/golden/winefox/ as the plaintext directory
  * package: ysm.json + models/main.json + animations/main.animation.json).
  *
  * Locks the YSM Bedrock-format parsing chain (YSMGeoModel + ScriptJson) against
@@ -29,7 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class WineFoxPackageGoldenTest {
 
     private static String resource(String path) throws IOException {
-        try (InputStream in = WineFoxPackageGoldenTest.class.getResourceAsStream(path)) {
+        try (InputStream in = LocalModelFixtures.open(path)) {
             assertNotNull(in, "missing test resource " + path);
             return new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }

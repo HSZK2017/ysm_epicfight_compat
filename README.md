@@ -144,6 +144,8 @@ Epic Fight 和 zstd-jni 由 Gradle 获取。运行时女仆联动仍为可选功
 
 依赖游戏安装目录的测试可通过 `-Dysmef.golden.ysm_config_root=C:\path\to\config\yes_steve_model` 指定样本；模型库扫描通过 `YSMEF_YSM_CORPUS_ROOT` 环境变量指定 `.ysm` 集合。两者未配置时，相应测试会跳过。
 
+第三方模型素材仅供本地测试：`ysm-model-repo`、游戏目录中的 `custom`/`built`、本机的 `run/tlm_custom_pack`，以及从这些模型生成的网格和骨骼样本均不属于本项目的 MIT 授权范围。请勿提交模型文件、转换产物或从中摘录的资源。部分回归测试从项目根目录下被 Git 忽略的 `.local-test-fixtures/` 读取原有目录结构（如 `golden/maid/models/main.json` 和 `cloth/taisho_mesh.json`）；缺少相应文件时只跳过依赖它的测试。也可以用 `-Dysmef.localModelFixtures=C:\path\to\private-fixtures` 指定本机私有目录。CI 只执行不依赖私人素材的测试。
+
 升级 OpenYSM 或 ModernYSM 时，可用对应源码检查 Mixin 目标的方法签名：
 
 ```powershell

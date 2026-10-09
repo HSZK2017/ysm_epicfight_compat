@@ -178,7 +178,7 @@
 
 - **Molang 求值器**（12）：算术/变量/三元/比较/`??`/函数/语句序列/除零 sanitize/错误回退/常量折叠/函数参数计数
 - **CityHash 固定向量**（3）：自举向量 + 范围变体一致性（正确性由真实 .ysm 文件尾哈希端到端钉死）
-- **winefox 明文黄金用例**（4）：195 骨骼几何、49 动画、pre/post 关键帧真值（`src/test/resources/golden/winefox/`）
+- **winefox 明文黄金用例**（4，本地私有样本）：195 骨骼几何、49 动画、pre/post 关键帧真值（`.local-test-fixtures/golden/winefox/`；未提供时跳过）
 - **二进制关键帧 pre/post**（3）：按序列化器磁盘布局编码，锁定 pre/post 语义修复
 - **`sanitize` 路径穿越**（5）+ **关节表**（3）
 - **`YsmModelPackageTraversalTest`**（4）：读路径模型 ID 的穿越/绝对路径/盘符/NUL 拒绝与合法相对 ID 接受

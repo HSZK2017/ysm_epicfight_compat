@@ -1,5 +1,7 @@
 package com.ysmef.compat.model;
 
+import com.ysmef.compat.testutil.LocalModelFixtures;
+
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -230,7 +232,7 @@ class GarmentJointBindingTest {
     }
 
     private static String resource(String path) throws IOException {
-        try (InputStream in = GarmentJointBindingTest.class.getResourceAsStream(path)) {
+        try (InputStream in = LocalModelFixtures.open(path)) {
             assertNotNull(in, "missing test fixture " + path);
             return new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }

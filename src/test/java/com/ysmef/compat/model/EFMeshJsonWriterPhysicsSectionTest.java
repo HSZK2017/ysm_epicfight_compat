@@ -1,5 +1,7 @@
 package com.ysmef.compat.model;
 
+import com.ysmef.compat.testutil.LocalModelFixtures;
+
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.ysmef.compat.model.runtime.YsmPhysicsBinding;
@@ -324,9 +326,11 @@ class EFMeshJsonWriterPhysicsSectionTest {
     }
 
     private static JsonObject readJson(String resource) {
-        try (InputStream in = EFMeshJsonWriterPhysicsSectionTest.class.getResourceAsStream(resource)) {
+        try (InputStream in = LocalModelFixtures.open(resource)) {
             assertNotNull(in, "missing test fixture " + resource);
             return JsonParser.parseReader(new InputStreamReader(in, StandardCharsets.UTF_8)).getAsJsonObject();
+        } catch (org.opentest4j.TestAbortedException e) {
+            throw e;
         } catch (Exception e) {
             throw new AssertionError("could not read " + resource, e);
         }

@@ -144,6 +144,8 @@ To run the optional end to end `.ysm` decryption test with a real model:
 
 For tests using a game installation, set `-Dysmef.golden.ysm_config_root=C:\path\to\config\yes_steve_model`. Corpus sweeps use the `YSMEF_YSM_CORPUS_ROOT` environment variable to locate `.ysm` packages. Those tests skip when their inputs are not configured.
 
+Third-party model artwork is for local testing only. The `ysm-model-repo` corpus, models under the game's `custom`/`built` directories, the local `run/tlm_custom_pack`, and converted mesh or bone fixtures derived from them are not covered by this project's MIT license. Do not commit these files or extracts. Some regression tests read their existing relative paths from the Git-ignored `.local-test-fixtures/` directory (for example, `golden/maid/models/main.json` and `cloth/taisho_mesh.json`). Only tests requiring missing files are skipped. Set `-Dysmef.localModelFixtures=C:\path\to\private-fixtures` to use a different private directory. CI runs without private model assets.
+
 When updating OpenYSM or ModernYSM, check Mixin target method signatures against the corresponding source:
 
 ```powershell

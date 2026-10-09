@@ -1,5 +1,7 @@
 package com.ysmef.compat.model.runtime;
 
+import com.ysmef.compat.testutil.LocalModelFixtures;
+
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -590,7 +592,7 @@ class MaidSkirtCollisionTest {
     }
 
     private static String resource(String path) throws IOException {
-        try (InputStream in = MaidSkirtCollisionTest.class.getResourceAsStream(path)) {
+        try (InputStream in = LocalModelFixtures.open(path)) {
             assertNotNull(in, "missing " + path);
             return new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }

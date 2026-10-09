@@ -1,5 +1,7 @@
 package com.ysmef.compat.model.runtime;
 
+import com.ysmef.compat.testutil.LocalModelFixtures;
+
 import com.ysmef.compat.model.YSMGeoModel;
 import com.ysmef.compat.model.YSMJointMapper;
 import org.joml.Matrix4f;
@@ -684,7 +686,7 @@ class T8_PanelGapProbeTest {
     }
 
     private static String resource(String path) throws IOException {
-        try (InputStream in = T8_PanelGapProbeTest.class.getResourceAsStream(path)) {
+        try (InputStream in = LocalModelFixtures.open(path)) {
             if (in == null) {
                 throw new IOException("missing fixture " + path);
             }

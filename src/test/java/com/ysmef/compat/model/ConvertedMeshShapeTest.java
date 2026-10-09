@@ -1,5 +1,7 @@
 package com.ysmef.compat.model;
 
+import com.ysmef.compat.testutil.LocalModelFixtures;
+
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -16,8 +18,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * The shape of a converted mesh, pinned against a real one.
  *
- * <p>The fixtures are a converted model taken from the test instance's cache. They are the only
- * place in the test tree where the converter's real output can be inspected, and they are here
+ * <p>The optional local fixtures are a converted model taken from the test instance's cache. They are the only
+ * place in the test setup where the converter's real output can be inspected, and they are kept private
  * because two of this mod's faults were only visible in that output: the geometry is far coarser
  * where a body bends than where it is detailed, and every vertex was bound rigidly to one joint.
  *
@@ -28,7 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ConvertedMeshShapeTest {
 
     private static JsonObject fixture(String name) {
-        InputStream in = ConvertedMeshShapeTest.class.getResourceAsStream("/cloth/" + name);
+        InputStream in = LocalModelFixtures.open("/cloth/" + name);
         assertNotNull(in, "fixture missing from the test resources: " + name);
         return JsonParser.parseReader(new InputStreamReader(in, StandardCharsets.UTF_8)).getAsJsonObject();
     }

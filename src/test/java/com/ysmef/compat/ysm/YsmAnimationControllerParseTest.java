@@ -1,5 +1,7 @@
 package com.ysmef.compat.ysm;
 
+import com.ysmef.compat.testutil.LocalModelFixtures;
+
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.junit.jupiter.api.Test;
@@ -122,9 +124,11 @@ class YsmAnimationControllerParseTest {
     }
 
     private static JsonObject read(String resource) {
-        try (InputStream in = YsmAnimationControllerParseTest.class.getResourceAsStream(resource)) {
+        try (InputStream in = LocalModelFixtures.open(resource)) {
             assertNotNull(in, "missing test fixture " + resource);
             return JsonParser.parseReader(new InputStreamReader(in, StandardCharsets.UTF_8)).getAsJsonObject();
+        } catch (org.opentest4j.TestAbortedException e) {
+            throw e;
         } catch (Exception e) {
             throw new AssertionError("could not read " + resource, e);
         }

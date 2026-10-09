@@ -1,5 +1,7 @@
 package com.ysmef.compat.model.runtime;
 
+import com.ysmef.compat.testutil.LocalModelFixtures;
+
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -490,7 +492,7 @@ class T12_ProbeTest {
     }
 
     private static String resource(String path) throws IOException {
-        try (InputStream in = T12_ProbeTest.class.getResourceAsStream(path)) {
+        try (InputStream in = LocalModelFixtures.open(path)) {
             if (in == null) {
                 throw new IOException("missing test fixture " + path);
             }

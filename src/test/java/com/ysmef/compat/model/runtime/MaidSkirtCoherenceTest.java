@@ -1,5 +1,7 @@
 package com.ysmef.compat.model.runtime;
 
+import com.ysmef.compat.testutil.LocalModelFixtures;
+
 import com.ysmef.compat.model.YSMGeoModel;
 import com.ysmef.compat.ysm.YsmModelPackage;
 import org.joml.Quaternionf;
@@ -455,7 +457,7 @@ class MaidSkirtCoherenceTest {
     }
 
     private static String resource(String path) throws IOException {
-        try (InputStream in = MaidSkirtCoherenceTest.class.getResourceAsStream(path)) {
+        try (InputStream in = LocalModelFixtures.open(path)) {
             assertNotNull(in, "missing test fixture " + path);
             return new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }

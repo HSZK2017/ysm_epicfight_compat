@@ -249,6 +249,10 @@ test {
     // the local YSM folder; it is skipped unless the path is given explicitly:
     //   gradlew test -Dysmef.golden.ysm="C:\...\config\yes_steve_model\custom\xxx.ysm"
     systemProperty 'ysmef.golden.ysm', System.getProperty('ysmef.golden.ysm', '')
+    def localModelFixtures = System.getProperty('ysmef.localModelFixtures', '')
+    if (!localModelFixtures.isBlank()) {
+        systemProperty 'ysmef.localModelFixtures', localModelFixtures
+    }
     // Gradle runs tests in a separate JVM. Set the install root only when supplied:
     // an empty property would activate tests that check for property presence.
     def configRoot = System.getProperty('ysmef.golden.ysm_config_root',

@@ -1,5 +1,7 @@
 package com.ysmef.compat.model.runtime;
 
+import com.ysmef.compat.testutil.LocalModelFixtures;
+
 import com.ysmef.compat.model.YSMGeoModel;
 import org.joml.Matrix4f;
 import org.joml.Quaternionf;
@@ -317,7 +319,7 @@ class YsmPhysicsPivotSpaceTest {
     }
 
     private static String resource(String path) throws IOException {
-        try (InputStream in = YsmPhysicsPivotSpaceTest.class.getResourceAsStream(path)) {
+        try (InputStream in = LocalModelFixtures.open(path)) {
             assertNotNull(in, "missing test fixture " + path);
             return new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }

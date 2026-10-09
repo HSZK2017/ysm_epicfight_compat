@@ -14,7 +14,8 @@ out/
 
 # ForgeGradle dev run directory: generated configs, logs, crashes, saves and
 # downloaded/installed mod jars are runtime artifacts, not sources.
-# NOTE: run/tlm_custom_pack is deliberately KEPT tracked (test fixture data).
+# The locally installed maid model pack has no confirmed redistribution grant.
+run/tlm_custom_pack/
 run/config/
 run/crash-reports/
 run/defaultconfigs/
@@ -37,3 +38,10 @@ logs/
 # Measurement probes (T8/T11/T12) write their tables here during a test run. They are regenerated
 # output, not fixtures - the fixtures live in src/test/resources - so they do not belong in a diff.
 tmp_verify/
+
+# Locally supplied model fixtures. These may contain third-party ARR artwork and
+# must never be committed or included in the CI checkout.
+.local-test-fixtures/
+src/test/resources/golden/
+src/test/resources/cloth/
+*.ysm

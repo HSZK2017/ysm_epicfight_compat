@@ -16,6 +16,16 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v7
 
+      - name: Reject bundled private model fixtures
+        shell: pwsh
+        run: |
+          $restricted = @(git ls-files -- 'src/test/resources/golden/**' 'src/test/resources/cloth/**' 'run/tlm_custom_pack/**' '*.ysm')
+          if ($LASTEXITCODE -ne 0) { throw 'Could not inspect tracked files' }
+          if ($restricted.Count -gt 0) {
+            $restricted | ForEach-Object { Write-Error "Restricted model asset is tracked: $_" }
+            throw 'Keep third-party model assets outside the repository'
+          }
+
       - name: Set up Java 17
         uses: actions/setup-java@v6
         with:
