@@ -153,7 +153,7 @@ Epic Fight 和 zstd-jni 由 Gradle 获取。运行时女仆联动仍为可选功
 .\gradlew.bat test "-Dysmef.fork=modern" "-Dysmef.fork.source=C:\path\to\ModernYSM" --tests com.ysmef.compat.contract.MixinTargetSignatureTest
 ```
 
-单元测试无需启动 Minecraft，覆盖解析、Molang、哈希、路径校验等逻辑；渲染效果仍需进入游戏验证。测试分类见[技术参考](docs/technical-reference.md)。
+单元测试无需启动 Minecraft，覆盖解析、Molang、哈希、路径校验等逻辑；渲染效果仍需进入游戏验证。运行 `./scripts/summarize-tests.ps1` 可查看执行与跳过数量。游戏内验收步骤见[测试矩阵](docs/TESTING.md)，测试分类见[技术参考](docs/technical-reference.md)。
 
 ## 项目如何工作
 

@@ -41,6 +41,10 @@ jobs:
         shell: pwsh
         run: .\gradlew.bat clean build --no-daemon
 
+      - name: Summarize executed and skipped tests
+        shell: pwsh
+        run: .\scripts\summarize-tests.ps1
+
       - name: Verify release JAR
         shell: pwsh
         run: .\scripts\verify-release.ps1

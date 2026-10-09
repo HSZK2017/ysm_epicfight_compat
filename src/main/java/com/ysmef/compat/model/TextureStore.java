@@ -280,7 +280,11 @@ public final class TextureStore {
      * set (relative "textures/&lt;...&gt;.png" paths; generateAll cleanup).
      */
     public static void deleteStaleTextureFiles(Set<String> keepTexturePaths) {
-        Path packTextures = PACK_ROOT.resolve("assets").resolve(MESH_NAMESPACE).resolve("textures");
+        deleteStaleTextureFiles(keepTexturePaths, PACK_ROOT, TEXTURE_CACHE_DIR);
+    }
+
+    static void deleteStaleTextureFiles(Set<String> keepTexturePaths, Path packRoot, Path textureCacheDir) {
+        Path packTextures = packRoot.resolve("assets").resolve(MESH_NAMESPACE).resolve("textures");
         try (var stream = Files.walk(packTextures)) {
             stream.filter(Files::isRegularFile)
                     .filter(path -> path.getFileName().toString().endsWith(".png"))
@@ -294,8 +298,8 @@ public final class TextureStore {
                     });
         } catch (IOException ignored) {
         }
-        Path cacheRoot = TEXTURE_CACHE_DIR.resolve(MESH_NAMESPACE);
-        try (var stream = Files.walk(TEXTURE_CACHE_DIR)) {
+        Path cacheRoot = textureCacheDir.resolve(MESH_NAMESPACE);
+        try (var stream = Files.walk(textureCacheDir)) {
             stream.filter(Files::isRegularFile).forEach(path -> {
                 boolean keep = path.startsWith(cacheRoot)
                         && keepTexturePaths.contains(cacheRoot.relativize(path).toString().replace('\\', '/'));
@@ -476,7 +480,11 @@ public final class TextureStore {
     }
 
     private static Path textureCachePath(ResourceLocation rl) {
-        return guardedResolve(TEXTURE_CACHE_DIR, TEXTURE_CACHE_DIR.resolve(rl.getNamespace()).resolve(rl.getPath()));
+        return textureCachePath(TEXTURE_CACHE_DIR, rl);
+    }
+
+    private static Path textureCachePath(Path cacheRoot, ResourceLocation rl) {
+        return guardedResolve(cacheRoot, cacheRoot.resolve(rl.getNamespace()).resolve(rl.getPath()));
     }
 
     private static void writeTextureCache(ResourceLocation rl, byte[] data) {
@@ -592,7 +600,11 @@ public final class TextureStore {
 
     /** Verify one cached texture's bytes against the manifest hash/size. */
     public static boolean verifyTextureCache(ResourceLocation rl, long size, String hash) {
-        Path cacheFile = textureCachePath(rl);
+        return verifyTextureCache(TEXTURE_CACHE_DIR, rl, size, hash);
+    }
+
+    static boolean verifyTextureCache(Path cacheRoot, ResourceLocation rl, long size, String hash) {
+        Path cacheFile = textureCachePath(cacheRoot, rl);
         if (cacheFile == null) {
             return false;
         }

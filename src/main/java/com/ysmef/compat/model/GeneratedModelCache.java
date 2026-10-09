@@ -14,15 +14,30 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 
 /** Disk cache integrity, source fingerprints and generated-file cleanup. */
 final class GeneratedModelCache {
     private final Path meshDir;
     private final Path runtimeDir;
+    private final TextureVerifier textureVerifier;
+    private final Consumer<Set<String>> textureCleaner;
+
+    @FunctionalInterface
+    interface TextureVerifier {
+        boolean verify(ResourceLocation location, long size, String hash);
+    }
 
     GeneratedModelCache(Path meshDir, Path runtimeDir) {
+        this(meshDir, runtimeDir, TextureStore::verifyTextureCache, TextureStore::deleteStaleTextureFiles);
+    }
+
+    GeneratedModelCache(Path meshDir, Path runtimeDir, TextureVerifier textureVerifier,
+                        Consumer<Set<String>> textureCleaner) {
         this.meshDir = meshDir;
         this.runtimeDir = runtimeDir;
+        this.textureVerifier = textureVerifier;
+        this.textureCleaner = textureCleaner;
     }
 
     /**
@@ -71,16 +86,17 @@ final class GeneratedModelCache {
                     modelEntry.get("rsize").getAsLong(), modelEntry.get("rhash").getAsString())) {
                 return false;
             }
-            if (modelEntry.has("textures") && modelEntry.get("textures").isJsonObject()) {
-                for (Map.Entry<String, JsonElement> texEntry : modelEntry.getAsJsonObject("textures").entrySet()) {
-                    JsonObject tex = texEntry.getValue().getAsJsonObject();
-                    if (!tex.has("rl") || !tex.has("hash") || !tex.has("size")) {
-                        return false;
-                    }
-                    if (!TextureStore.verifyTextureCache(ResourceLocation.parse(tex.get("rl").getAsString()),
-                            tex.get("size").getAsLong(), tex.get("hash").getAsString())) {
-                        return false;
-                    }
+            if (!modelEntry.has("textures") || !modelEntry.get("textures").isJsonObject()) {
+                return false;
+            }
+            for (Map.Entry<String, JsonElement> texEntry : modelEntry.getAsJsonObject("textures").entrySet()) {
+                JsonObject tex = texEntry.getValue().getAsJsonObject();
+                if (!tex.has("rl") || !tex.has("hash") || !tex.has("size")) {
+                    return false;
+                }
+                if (!textureVerifier.verify(ResourceLocation.parse(tex.get("rl").getAsString()),
+                        tex.get("size").getAsLong(), tex.get("hash").getAsString())) {
+                    return false;
                 }
             }
             return true;
@@ -138,7 +154,7 @@ final class GeneratedModelCache {
         }
         deleteStaleJsons(meshDir, keepMeshIds);
         deleteStaleJsons(runtimeDir, keepMeshIds);
-        TextureStore.deleteStaleTextureFiles(keepTexturePaths);
+        textureCleaner.accept(keepTexturePaths);
     }
 
     private static void deleteStaleJsons(Path dir, Set<String> keepNames) {
