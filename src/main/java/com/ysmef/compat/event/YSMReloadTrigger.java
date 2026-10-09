@@ -59,8 +59,10 @@ public class YSMReloadTrigger {
         // that is ending; a stale "someone else owns this look" would silently
         // suppress this mod for that player in the next world.
         com.ysmef.compat.compat.LookOwners.resetAll();
-        // The cloth carries velocities from the old world; keeping them would make every
-        // piece of hair start the next world mid-swing.
+        // The active secondary-motion solver carries velocities across frames. Drop them
+        // with the connection, even when the same converted mesh stays in the cache.
+        com.ysmef.compat.model.runtime.YsmMeshSecondaryMotion.clear();
+        // Keep the legacy cloth cache in the same connection lifecycle.
         com.ysmef.compat.model.runtime.YsmMeshCloth.clear();
         com.ysmef.compat.ysm.YsmClasses.invalidate();
         // The runtime bridge holds the last entity a mesh was prepared for in a ThreadLocal, and

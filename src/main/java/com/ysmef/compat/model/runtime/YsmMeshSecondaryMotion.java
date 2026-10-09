@@ -292,6 +292,7 @@ public final class YsmMeshSecondaryMotion {
     public static void clear() {
         STATES.clear();
         YsmPhysicsParts.clear();
+        clearProbePoints();
         MISMATCH_LOGGED.clear();
         LEG_REGION_LOGGED.clear();
         HEAD_REGION_LOGGED.clear();
@@ -1162,7 +1163,7 @@ public final class YsmMeshSecondaryMotion {
      */
     public static final Map<Integer, Vector3f> PROBE_TESTED_POINTS = new java.util.LinkedHashMap<>();
 
-    /** {@link #PROBE_TESTED_POINTS}, cleared at the start of every pass over the segments. */
+    /** Clear diagnostic points and disable collision recording. */
     public static void clearProbePoints() {
         PROBE_TESTED_POINTS.clear();
         YsmDynamicBoneSolver.resetProbe();

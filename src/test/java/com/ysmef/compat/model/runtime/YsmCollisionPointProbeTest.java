@@ -12,6 +12,7 @@ import org.joml.Matrix4f;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.AfterEach;
 import yesman.epicfight.api.animation.Joint;
 import yesman.epicfight.api.utils.math.OpenMatrix4f;
 
@@ -68,6 +69,11 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * stubbed: the two arms differ only in which {@code Colliders} production is handed.
  */
 class YsmCollisionPointProbeTest {
+
+    @AfterEach
+    void disableProbeAfterTest() {
+        YsmMeshSecondaryMotion.clearProbePoints();
+    }
 
     private static final String MAID = "wine_fox/01_taisho_maid";
 
@@ -1705,7 +1711,7 @@ class YsmCollisionPointProbeTest {
         // A new run starts with an empty record: the questions of the previous drive must not be
         // readable as this one's. The frame path tags every question with its pass, so a stale record
         // would also be caught by the instrument's own assertion - this just keeps the two honest.
-        YsmDynamicBoneSolver.resetProbe();
+        YsmDynamicBoneSolver.enableProbeForTests();
         YsmPhysicsParts.Model parts = rig.model();
         YsmBodyColliders body = rig.colliders();
         YsmMeshSecondaryMotion.State beforeState = new YsmMeshSecondaryMotion.State(

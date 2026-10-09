@@ -534,9 +534,9 @@ public final class YsmDynamicBoneSolver {
 
     /** See {@link #probeSegment}. */
     public void setProbeSegment(int index) {
-        this.probeSegment = index;
-        if (index >= 0 && index < PROBE_LAST_FRAME.length) {
-            PROBE_LAST_FRAME[index] = probeFrame;
+        this.probeSegment = probeEnabled ? index : -1;
+        if (this.probeSegment >= 0 && this.probeSegment < PROBE_LAST_FRAME.length) {
+            PROBE_LAST_FRAME[this.probeSegment] = probeFrame;
         }
     }
 
@@ -646,8 +646,10 @@ public final class YsmDynamicBoneSolver {
         }
     }
 
-    /** Every collision question of the pass being run; see {@link #ProbeQuestion}. */
+    /** Test-only collision questions; disabled during normal rendering to avoid retaining every frame. */
     public static final java.util.List<ProbeQuestion> PROBE_QUESTIONS = new java.util.ArrayList<>();
+
+    private static boolean probeEnabled;
 
     /** The pass over the segments the frame path is on; 0 for a caller that is not the frame path. */
     private static int probeFrame;
@@ -665,11 +667,21 @@ public final class YsmDynamicBoneSolver {
      * a test calls between runs.
      */
     public static void advanceProbeFrame() {
-        probeFrame++;
+        if (probeEnabled) {
+            probeFrame++;
+        }
+    }
+
+    /** Enable the expensive collision record only for an explicit test drive. */
+    static void enableProbeForTests() {
+        resetProbe();
+        probeEnabled = true;
     }
 
     /** Forget every recorded question and start again at frame 0. For a test, between runs. */
     public static void resetProbe() {
+        probeEnabled = false;
+        INSTANCE.probeSegment = -1;
         PROBE_QUESTIONS.clear();
         java.util.Arrays.fill(PROBE_LAST_FRAME, 0);
         probeFrame = 0;

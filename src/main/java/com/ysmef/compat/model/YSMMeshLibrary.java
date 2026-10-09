@@ -739,6 +739,7 @@ public class YSMMeshLibrary {
      */
     public static synchronized void invalidateAll() {
         LOAD_GENERATION.incrementAndGet();
+        com.ysmef.compat.model.runtime.YsmMeshSecondaryMotion.clear();
         MeshReleaseQueue.releaseAll();
         // Queued accessor registrations of the previous generation are stale
         // (drainPendingMeshRegistrations checks the generation); drop them so

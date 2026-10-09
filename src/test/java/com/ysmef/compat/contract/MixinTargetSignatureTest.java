@@ -68,7 +68,7 @@ class MixinTargetSignatureTest {
         Path jar = Path.of(jarPath);
         assertTrue(Files.isRegularFile(jar), "fork jar missing: " + jar);
         List<String> problems = new ArrayList<>();
-        int checked = checkJar(jar, MixinTargetSignatureTest::isSourceContractMixin, false, problems);
+        int checked = checkJar(jar, path -> isSourceContractMixin(path, fork), false, problems);
         assertTrue(checked >= 12, "the contract did not inspect the " + fork + " mixins");
         assertTrue(problems.isEmpty(), fork + " YSM mixin targets drifted: " + problems);
     }
@@ -86,7 +86,7 @@ class MixinTargetSignatureTest {
         List<String> problems = new ArrayList<>();
         int checked = 0;
         try (Stream<Path> sources = Files.list(MIXINS)) {
-            for (Path mixin : (Iterable<Path>) sources.filter(MixinTargetSignatureTest::isSourceContractMixin)::iterator) {
+            for (Path mixin : (Iterable<Path>) sources.filter(path -> isSourceContractMixin(path, fork))::iterator) {
                 String name = mixin.getFileName().toString();
                 String text = Files.readString(mixin, StandardCharsets.UTF_8);
                 Matcher target = CLASS_TARGET.matcher(text);
@@ -96,6 +96,10 @@ class MixinTargetSignatureTest {
                 }
                 String className = target.group(1) != null ? target.group(1) : target.group(2);
                 Path javaFile = javaRoot.resolve(className.replace('.', '/') + ".java");
+                if (!Files.isRegularFile(javaFile) && fork.equals("modern")) {
+                    javaFile = project.resolve("forge/src/main/java")
+                            .resolve(className.replace('.', '/') + ".java");
+                }
                 if (!Files.isRegularFile(javaFile)) {
                     problems.add(name + ": source class " + className + " is absent");
                     continue;
@@ -117,8 +121,14 @@ class MixinTargetSignatureTest {
         assertTrue(problems.isEmpty(), fork + " YSM source targets drifted: " + problems);
     }
 
-    private static boolean isSourceContractMixin(Path path) {
+    private static boolean isSourceContractMixin(Path path, String fork) {
         String name = path.getFileName().toString();
+        if (name.equals("ModernYsmCompatibilityWarningMixin.java")) {
+            return fork.equals("modern");
+        }
+        if (name.equals("OpenYsmCompatibilityWarningMixin.java")) {
+            return fork.equals("open");
+        }
         return name.startsWith("OpenYsm") || name.startsWith("YsmUnobf")
                 || name.equals("YsmExtraPlayerOverlayMixin.java")
                 || name.equals("YsmAnimationTransitionGuardMixin.java")

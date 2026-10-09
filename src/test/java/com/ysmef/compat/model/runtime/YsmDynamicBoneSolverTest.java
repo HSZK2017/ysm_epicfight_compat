@@ -66,6 +66,39 @@ class YsmDynamicBoneSolverTest {
         }
     }
 
+    @Test
+    void normalFramesDoNotRetainCollisionProbeRecords() {
+        YsmMeshSecondaryMotion.clearProbePoints();
+        try {
+            YsmDynamicBoneSolver.SegmentState state = new YsmDynamicBoneSolver.SegmentState();
+            OneSphere sphere = new OneSphere();
+            Vector3f pivot = new Vector3f();
+            Vector3f rest = new Vector3f(DOWN);
+            Quaternionf rotation = new Quaternionf();
+            for (int frame = 0; frame < 100; frame++) {
+                YsmDynamicBoneSolver.advanceProbeFrame();
+                YsmDynamicBoneSolver.INSTANCE.setProbeSegment(0);
+                YsmDynamicBoneSolver.INSTANCE.update(state, 24.0F, 0.1F, NO_FOLLOW, DOWN,
+                        pivot, rest, 0.6F, 1.0F, 0.6F, 1.0F,
+                        1.2F, STILL, sphere, 0.1F, null, 0.016F, rotation);
+            }
+            assertEquals(0, YsmDynamicBoneSolver.probeFrame());
+            assertTrue(YsmDynamicBoneSolver.PROBE_QUESTIONS.isEmpty());
+            assertTrue(YsmMeshSecondaryMotion.PROBE_TESTED_POINTS.isEmpty());
+
+            YsmDynamicBoneSolver.enableProbeForTests();
+            YsmDynamicBoneSolver.advanceProbeFrame();
+            YsmDynamicBoneSolver.INSTANCE.setProbeSegment(0);
+            YsmDynamicBoneSolver.INSTANCE.update(state, 24.0F, 0.1F, NO_FOLLOW, DOWN,
+                    pivot, rest, 0.6F, 1.0F, 0.6F, 1.0F,
+                    1.2F, STILL, sphere, 0.1F, null, 0.016F, rotation);
+            assertEquals(1, YsmDynamicBoneSolver.probeFrame());
+            assertFalse(YsmDynamicBoneSolver.PROBE_QUESTIONS.isEmpty());
+        } finally {
+            YsmMeshSecondaryMotion.clearProbePoints();
+        }
+    }
+
     // ------------------------------------------------------------------
     // The moment arm
     // ------------------------------------------------------------------
