@@ -10,6 +10,11 @@ Use **Yes Steve Model (YSM) character models with Epic Fight combat animations**
 
 The supported YSM families are the official 2.6.5 release, OpenYSM, and ModernYSM. The official 2.6.5 release is obfuscated. Changes to a YSM fork or Epic Fight may require updated compatibility hooks.
 
+### What's new in 1.10.1
+
+- Secondary motion is isolated by entity and world, so instances of the same model do not inherit each other's motion state.
+- Resource reload and cache validation are better covered by automated tests; CI checks the build and release artifact.
+
 ### What's new in 1.10.0
 
 - Afterimages now preserve the model part visibility evaluated when they are created, rather than showing every conditional form.
@@ -24,13 +29,14 @@ Epic Fight's strong forward lean and long strides can still cause local skirt an
 | Goal | Start here |
 |---|---|
 | Install and use the mod | [Installation and use](#installation-and-use) |
-| Review this release | [What's new in 1.10.0](#whats-new-in-1100) → [Changelog](CHANGELOG.md) |
+| Review this release | [What's new in 1.10.1](#whats-new-in-1101) → [Changelog](CHANGELOG.md) |
 | Adjust performance or appearance | [Common settings](#common-settings) |
 | Diagnose missing models, clipping, or shaders | [Known issues and limits](#known-issues-and-limits) |
 | Build the project | [Build and test](#build-and-test) |
 | Understand or change the code | [How it works](#how-it-works) → [Developer entry points](#developer-entry-points) |
 | Look up class responsibilities and validation notes | [Technical reference](docs/technical-reference.md) (Chinese) |
 | Plan extensions and module boundaries | [Architecture guide](docs/ARCHITECTURE.md) (Chinese) |
+| Hand over runtime and build dependencies | [Dependency handoff](docs/DEPENDENCIES.md) |
 
 ## Installation and use
 
@@ -42,13 +48,13 @@ Epic Fight's strong forward lean and long strides can still cause local skirt an
 | Forge | Built against 47.4.16; mod metadata permits 47.x |
 | Epic Fight | 20.14.17 baseline; declared range `>=20.14.17, <20.15` |
 | Yes Steve Model | Official 2.6.5 baseline; declared range `>=2.6, <2.7`; OpenYSM and ModernYSM forks are also supported |
-| Maid integration (optional) | Touhou Little Maid 1.5+ and EpicFight_TouhouLittleMaid (`ef_tlm`) 1.1+ |
+| Maid integration (optional) | Touhou Little Maid 1.5+, EpicFight_TouhouLittleMaid (`ef_tlm`) 1.1+, and Epic Fight Avalon 20.12.6.4 |
 
 The declared ranges permit loading; they do not mean every release in those ranges has been tested. Changes to YSM event signatures or obfuscated names can break compatibility.
 
 ### Getting started
 
-1. Install Forge, Epic Fight, one supported YSM distribution, and this mod in the same game instance.
+1. Install Forge, Epic Fight, one supported YSM distribution, and this mod's `-all.jar` in the same game instance. Maid integration also needs the three optional mods listed above.
 2. Import a model with YSM and select it in YSM's model selection screen.
 3. Enter Epic Fight combat mode and check that the character retains the YSM appearance while using combat animations.
 4. Leave combat mode and check that YSM's usual rendering and animations return.
@@ -134,7 +140,7 @@ Run from the project root:
 
 `build` includes all default tests. The second command checks the release JAR's version, mod metadata, Mixin files, converter fingerprint, and bundled zstd-jni. GitHub Actions runs the same checks on every push and pull request, saves the verified JAR, and retains test reports on failure. To rerun tests alone, use `.\gradlew.bat test`.
 
-The release artifact is `build/libs/YSM_EpicFight_Compat-1.20.1-1.10.0-all.jar`, which includes zstd-jni. Its name changes when the project version changes.
+The release artifact is `build/libs/YSM_EpicFight_Compat-1.20.1-1.10.1-all.jar`, which includes zstd-jni. Its name changes when the project version changes. See the [dependency handoff](docs/DEPENDENCIES.md) for upstream sources and checksums of local build JARs.
 
 To run the optional end to end `.ysm` decryption test with a real model:
 
