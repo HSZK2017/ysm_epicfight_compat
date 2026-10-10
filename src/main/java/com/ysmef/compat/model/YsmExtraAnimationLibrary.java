@@ -46,6 +46,8 @@ import java.util.concurrent.Executors;
 public final class YsmExtraAnimationLibrary {
 
     public static final String PUBLIC_DIRECTORY = "public";
+    /** Increment when frame conversion changes; old per-model mappings must be regenerated. */
+    private static final int CONVERTER_VERSION = 2;
 
     private static final Path CONFIG_ROOT = Paths.get("config", "ysm_epicfight_compat");
     private static final Path PACK_ROOT = CONFIG_ROOT.resolve("resourcepack");
@@ -356,6 +358,7 @@ public final class YsmExtraAnimationLibrary {
         // Per-model sidecar: one small atomic write instead of parsing and
         // rewriting the whole session aggregate for every converted model.
         JsonObject root = new JsonObject();
+        root.addProperty("converterVersion", CONVERTER_VERSION);
         JsonObject models = new JsonObject();
         models.add(modelId, GSON.toJsonTree(mapping));
         root.add("models", models);
@@ -404,6 +407,10 @@ public final class YsmExtraAnimationLibrary {
         }
         try {
             JsonObject root = JsonParser.parseString(Files.readString(file, StandardCharsets.UTF_8)).getAsJsonObject();
+            if (!root.has("converterVersion")
+                    || root.get("converterVersion").getAsInt() != CONVERTER_VERSION) {
+                return null;
+            }
             JsonObject models = root.has("models") ? root.getAsJsonObject("models") : null;
             if (models != null && models.has(modelId)) {
                 ModelMapping mapping = GSON.fromJson(models.get(modelId), ModelMapping.class);

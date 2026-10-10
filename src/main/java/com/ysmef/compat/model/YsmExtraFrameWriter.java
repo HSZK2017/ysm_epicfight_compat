@@ -620,6 +620,17 @@ public final class YsmExtraFrameWriter {
     private static RepresentativeSelection selectRepresentatives(SampleBone[] bones, ScriptAnim anim) {
         Set<String> baseForms = baseForms(bones);
         RepresentativeSelection selection = new RepresentativeSelection();
+        // A wheel animation may scale a single prop, caption or alternate face
+        // to zero. That is visibility for this source bone, not a scale for the
+        // whole EF joint. Choose the structural representative independently of
+        // which bones happen to have channels in this particular animation.
+        int[] mappedDescendants = new int[bones.length];
+        for (int i = bones.length - 1; i >= 0; i--) {
+            int parent = bones[i].parent;
+            if (parent >= 0) {
+                mappedDescendants[parent] += mappedDescendants[i] + (bones[i].direct ? 1 : 0);
+            }
+        }
         for (int joint = 0; joint < JOINT_COUNT; joint++) {
             int best = -1;
             int bestScore = Integer.MIN_VALUE;
@@ -628,18 +639,18 @@ public final class YsmExtraFrameWriter {
                     continue;
                 }
                 int score = 0;
-                if (anim.bones.containsKey(bones[i].bone.name)) {
-                    score += 16;
-                }
                 if (bones[i].direct) {
-                    score += 8;
+                    score += 1000;
                 }
+                score += Math.min(100, mappedDescendants[i]);
                 if (!bones[i].bone.quads.isEmpty()) {
                     score += 4;
                 }
                 String name = bones[i].bone.name;
                 if (!BoneAlternateForms.isAlternateForm(name, baseForms)) {
-                    score += 2;
+                    // The mesh pivot table excludes alternate forms as well.
+                    // Their larger subtrees must not displace the base form.
+                    score += 500;
                 }
                 if (score > bestScore) {
                     bestScore = score;
@@ -648,7 +659,12 @@ public final class YsmExtraFrameWriter {
             }
             if (best >= 0) {
                 selection.representatives[joint] = best;
-                selection.animated[joint] = anim.bones.containsKey(bones[best].bone.name);
+                for (int bone = best; bone >= 0; bone = bones[bone].parent) {
+                    if (anim.bones.containsKey(bones[bone].bone.name)) {
+                        selection.animated[joint] = true;
+                        break;
+                    }
+                }
             }
         }
         // Root can use the model's top-level root bone even when it is not directly

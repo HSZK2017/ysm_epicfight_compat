@@ -110,7 +110,16 @@ final class YsmWheelSampler {
         for (ScriptAnim.Timeline timeline : anim.timelines) {
             max = Math.max(max, timeline.time);
         }
-        return Float.isFinite(max) ? Math.min(max, MAX_ANIMATION_LENGTH) : 0.0f;
+        if (!Float.isFinite(max)) {
+            return 0.0f;
+        }
+        // A number of YSM packages mark a held pose as infinite and give every
+        // channel just one key at t=0. It is a valid static animation: EF still
+        // needs a positive clip duration to keep that pose on its layer.
+        if (max <= 1e-4f && !anim.bones.isEmpty()) {
+            return 1.0f;
+        }
+        return Math.min(max, MAX_ANIMATION_LENGTH);
     }
 
     private static float channelMaxTime(ScriptAnim.Channel channel) {
