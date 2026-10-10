@@ -60,8 +60,8 @@ public class JointTableTest {
      * guard that keeps it gone, because a source-text check is the only thing that can see a
      * re-declaration at all.
      *
-     * <p>Only joint-name literals are looked for, not the word "joint": {@code RenderItemBaseMixin}
-     * legitimately lists four hand joints as a policy table, which is a different thing from a copy
+     * <p>Only joint-name literals are looked for, not the word "joint": {@code YsmWeaponPoseBridge}
+     * legitimately lists four grip joints as a policy table, which is a different thing from a copy
      * of the layout.
      */
     @Test

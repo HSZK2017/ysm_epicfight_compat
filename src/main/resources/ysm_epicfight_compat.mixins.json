@@ -19,7 +19,6 @@
     "ModernYsmCompatibilityWarningMixin",
     "YsmRouletteConfigExpressionMixin",
     "PPlayerRendererMixin",
-    "RenderItemBaseMixin",
     "RenderSystemAccessorMixin",
     "SkinnedMeshCpuRenderMixin",
     "YsmAnimationTransitionGuardMixin",

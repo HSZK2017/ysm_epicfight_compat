@@ -5,6 +5,8 @@ import com.ysmef.compat.model.YSMMeshLibrary;
 import com.ysmef.compat.renderer.layer.YsmConditionalArmorLayer;
 import com.ysmef.compat.renderer.layer.YsmConditionalElytraLayer;
 import com.ysmef.compat.renderer.layer.YsmConditionalHeadLayer;
+import com.ysmef.compat.renderer.layer.YsmAnchoredItemLayer;
+import com.ysmef.compat.renderer.layer.YsmWeaponPoseBridge;
 import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.model.PlayerModel;
 import net.minecraft.client.player.AbstractClientPlayer;
@@ -31,7 +33,6 @@ import yesman.epicfight.client.renderer.patched.entity.PatchedEntityRenderer;
 import yesman.epicfight.client.renderer.patched.layer.PatchedArrowLayer;
 import yesman.epicfight.client.renderer.patched.layer.PatchedBeeStingerLayer;
 import yesman.epicfight.client.renderer.patched.layer.PatchedCapeLayer;
-import yesman.epicfight.client.renderer.patched.layer.PatchedItemInHandLayer;
 import yesman.epicfight.client.world.capabilites.entitypatch.player.AbstractClientPlayerPatch;
 
 /**
@@ -79,7 +80,7 @@ public class YSMPlayerRenderer extends PHumanoidRenderer<AbstractClientPlayer, A
         this.addPatchedLayer(ArrowLayer.class, new PatchedArrowLayer<>(context));
         this.addPatchedLayer(BeeStingerLayer.class, new PatchedBeeStingerLayer<>());
         this.addPatchedLayer(CapeLayer.class, new PatchedCapeLayer());
-        this.addPatchedLayer(PlayerItemInHandLayer.class, new PatchedItemInHandLayer<>());
+        this.addPatchedLayer(PlayerItemInHandLayer.class, new YsmAnchoredItemLayer<>());
         // Replace Epic Fight's vanilla-shaped armor with a conditional layer that
         // stays hidden while a YSM mesh is in use (armor models do not fit it).
         this.addPatchedLayerAlways(HumanoidArmorLayer.class,
@@ -248,26 +249,31 @@ public class YSMPlayerRenderer extends PHumanoidRenderer<AbstractClientPlayer, A
     public void render(AbstractClientPlayer entity, AbstractClientPlayerPatch<AbstractClientPlayer> entitypatch,
                        LivingEntityRenderer<AbstractClientPlayer, PlayerModel<AbstractClientPlayer>> renderer,
                        MultiBufferSource buffer, PoseStack poseStack, int packedLight, float partialTicks) {
-        if (this.displaced != null && !handles(entity)) {
-            try {
-                // The displaced renderer's own type arguments are whatever it
-                // declared (Epic Fight's base declares four, and another addon's
-                // mesh and armature types are not knowable here), so this one call
-                // is made through the raw type rather than inventing type arguments
-                // that would be wrong for every renderer but one.
-                ((PatchedEntityRenderer) this.displaced).render(
-                        entity, entitypatch, renderer, buffer, poseStack, packedLight, partialTicks);
-                return;
-            } catch (Throwable t) {
-                if (DISPLACED_FAILED.add(this.displaced.getClass().getName())) {
-                    com.ysmef.compat.YSMEpicFightCompat.LOGGER.warn(
-                            "YSM-EF Compat: the player renderer this mod displaced ({}) threw; this mod's own path is used for the rest of the session",
-                            this.displaced.getClass().getName(), t);
+        YsmWeaponPoseBridge.begin(entity, entitypatch);
+        try {
+            if (this.displaced != null && !handles(entity)) {
+                try {
+                    // The displaced renderer's own type arguments are whatever it
+                    // declared (Epic Fight's base declares four, and another addon's
+                    // mesh and armature types are not knowable here), so this one call
+                    // is made through the raw type rather than inventing type arguments
+                    // that would be wrong for every renderer but one.
+                    ((PatchedEntityRenderer) this.displaced).render(
+                            entity, entitypatch, renderer, buffer, poseStack, packedLight, partialTicks);
+                    return;
+                } catch (Throwable t) {
+                    if (DISPLACED_FAILED.add(this.displaced.getClass().getName())) {
+                        com.ysmef.compat.YSMEpicFightCompat.LOGGER.warn(
+                                "YSM-EF Compat: the player renderer this mod displaced ({}) threw; this mod's own path is used for the rest of the session",
+                                this.displaced.getClass().getName(), t);
+                    }
+                    // Fall through to this renderer's own path.
                 }
-                // Fall through to this renderer's own path.
             }
+            super.render(entity, entitypatch, renderer, buffer, poseStack, packedLight, partialTicks);
+        } finally {
+            YsmWeaponPoseBridge.end();
         }
-        super.render(entity, entitypatch, renderer, buffer, poseStack, packedLight, partialTicks);
     }
 
     @Override

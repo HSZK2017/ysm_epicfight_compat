@@ -6,6 +6,9 @@ Release highlights only. See the [development history](docs/development-history.
 
 ## 未发布 / Unreleased
 
+- 武器图层使用当前实体的 YSM 几何手部姿势，双手持物随模型尺寸与战斗动作定位；保留 Epic Fight 的武器专属持握变换。
+- The item layer now uses the current entity's geometry-derived YSM hand poses for both hands while retaining Epic Fight's item-specific grip transforms.
+
 ## v1.10.1 — 2026-10-10
 
 - 修复可选真实模型测试的 Gradle 系统属性转发，提供安装目录参数时不再误跳过。

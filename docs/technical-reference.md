@@ -96,10 +96,11 @@
 | `YSMModelAccess` | 模型选择解析：集成服务器 NBT → 模型同步通道 → 客户端 capability NBT（20 tick 缓存） |
 | `YSMBattleMode` | 战斗模式判定：`PlayerPatch.isEpicFightMode()` |
 | `YSMRenderHook` | `RenderLivingEvent.Pre` HIGHEST：EF 接管时取消事件 + 用原版渲染器（含 `PatchedItemInHandLayer`）绘制臂架模型，恢复武器渲染 |
+| `YsmAnchoredItemLayer` / `YsmWeaponPoseBridge` | EF 武器图层收到原始 Patch 与姿势；在同一玩家渲染作用域中，用网格绘制时复制的 YSM 手部/工具关节姿势替换对应数组项。按关节名映射，双手适用；其他关节与武器专属修正仍由 EF 处理 |
 
 ### 事件与 Mixin
 
-主配置 `ysm_epicfight_compat.mixins.json`（**32** 个客户端 mixin + 1 个 common）：`ModernYsm*`（3）、`OpenYsm*`（4，含配置界面）、`YsmUnobf*`（4）、混淆版 `Ysm*`（8）、`PPlayerRendererMixin`、`RenderSystemAccessorMixin`（着色器光照方向）、`SkinnedMeshCpuRenderMixin`（EF drawPosed 回退拦截 → 本模组 CPU 蒙皮路径）、`RenderItemBaseMixin`、`EpicFightRenderLivingEventMixin`、`DiscreteInputActionTriggerMixin`、`MouseHandlerMixin`、`YsmRouletteConfigExpressionMixin`、`YsmAnimationTransitionGuardMixin`、`YsmLivingMovementPredicateMixin`、`YsmArmaturePoseMixin`、`YsmExtraPlayerOverlayMixin`（战斗模式抑制纸娃娃，见配置 `disableExtraPlayerInBattleMode`）；common 段为 `AnimationManagerValidationMixin`（服务端动画注册表校验豁免，见下）；可选配置 `ysm_epicfight_compat.eftlm.mixins.json`（TLM 女仆渲染挂钩，`required: false`，TLM 缺席时安全）。
+主配置 `ysm_epicfight_compat.mixins.json`（**31** 个客户端 mixin + 1 个 common）：`ModernYsm*`（3）、`OpenYsm*`（4，含配置界面）、`YsmUnobf*`（4）、混淆版 `Ysm*`（8）、`PPlayerRendererMixin`、`RenderSystemAccessorMixin`（着色器光照方向）、`SkinnedMeshCpuRenderMixin`（EF drawPosed 回退拦截 → 本模组 CPU 蒙皮路径）、`EpicFightRenderLivingEventMixin`、`DiscreteInputActionTriggerMixin`、`MouseHandlerMixin`、`YsmRouletteConfigExpressionMixin`、`YsmAnimationTransitionGuardMixin`、`YsmLivingMovementPredicateMixin`、`YsmArmaturePoseMixin`、`YsmExtraPlayerOverlayMixin`（战斗模式抑制纸娃娃，见配置 `disableExtraPlayerInBattleMode`）；common 段为 `AnimationManagerValidationMixin`（服务端动画注册表校验豁免，见下）；可选配置 `ysm_epicfight_compat.eftlm.mixins.json`（TLM 女仆渲染挂钩，`required: false`，TLM 缺席时安全）。
 
 ### 多人联机模型同步 (`com.ysmef.compat.network`)
 
