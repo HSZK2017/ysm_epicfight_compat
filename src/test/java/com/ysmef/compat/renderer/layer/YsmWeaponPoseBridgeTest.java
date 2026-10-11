@@ -2,6 +2,7 @@ package com.ysmef.compat.renderer.layer;
 
 import org.junit.jupiter.api.Test;
 import yesman.epicfight.api.animation.Joint;
+import yesman.epicfight.api.animation.Pose;
 import yesman.epicfight.api.model.Armature;
 import yesman.epicfight.api.utils.math.OpenMatrix4f;
 
@@ -13,6 +14,32 @@ import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
 class YsmWeaponPoseBridgeTest {
+    @Test
+    void restPoseWeaponAnchorMovesWithTheModelInsteadOfStayingAtReferenceHeight() {
+        Armature source = posedArmature("reference", 1.0F);
+        Armature small = posedArmature("small", 0.45F);
+        Armature large = posedArmature("large", 1.25F);
+        Object entity = new Object();
+        Object patch = new Object();
+        OpenMatrix4f[] sourcePoses = source.getPoseMatrices();
+
+        YsmWeaponPoseBridge.begin(entity, patch);
+        try {
+            YsmWeaponPoseBridge.capture(entity, source, sourcePoses, small);
+            OpenMatrix4f[] smallItemPoses = YsmWeaponPoseBridge.posesFor(entity, patch, source, sourcePoses);
+            assertEquals(0.45F, smallItemPoses[1].m31, 0.0001F);
+            assertEquals(1.0F, sourcePoses[1].m31, 0.0001F);
+
+            YsmWeaponPoseBridge.capture(entity, source, sourcePoses, large);
+            OpenMatrix4f[] largeItemPoses = YsmWeaponPoseBridge.posesFor(entity, patch, source, sourcePoses);
+            assertEquals(1.25F, largeItemPoses[1].m31, 0.0001F);
+            assertEquals(0.45F, smallItemPoses[1].m31, 0.0001F,
+                    "a later model must not mutate the previous entity's item pose");
+        } finally {
+            YsmWeaponPoseBridge.end();
+        }
+    }
+
     @Test
     void mapsBothHandsByJointNameAndPreservesThePatchArray() {
         Armature source = armature("patch", Map.of(
@@ -100,5 +127,14 @@ class YsmWeaponPoseBridgeTest {
         ids.forEach((jointName, id) -> joints.put(jointName,
                 new Joint(jointName, id, new OpenMatrix4f())));
         return new Armature(name, jointCount, joints.get("Root"), joints);
+    }
+
+    private static Armature posedArmature(String name, float toolHeight) {
+        Joint root = new Joint("Root", 0, new OpenMatrix4f());
+        Joint tool = new Joint("Tool_R", 1, new OpenMatrix4f().translate(0.2F, toolHeight, 0.0F));
+        root.addSubJoints(tool);
+        Armature armature = new Armature(name, 2, root, Map.of("Root", root, "Tool_R", tool));
+        armature.setPose(new Pose());
+        return armature;
     }
 }

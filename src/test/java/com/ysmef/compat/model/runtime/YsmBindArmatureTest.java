@@ -33,6 +33,25 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class YsmBindArmatureTest {
 
+    @Test
+    void opaqueAccessoryOnForearmDoesNotPullWeaponAwayFromMappedLimb() {
+        Bind bind = bind(input("small-model", List.of(
+                new Bone("RightForeArm", JointTable.HAND_R, true).box(0.20F, 0.75F, 0.01F),
+                new Bone("sq", JointTable.HAND_R, false).box(0.20F, 0.75F, -0.35F))));
+
+        assertPivot(0.20F, 0.55F, 0.01F, bind.pivots().byJoint().get(JointTable.TOOL_R),
+                "the grip follows directly mapped forearm geometry");
+    }
+
+    @Test
+    void inferredForearmStillSuppliesGripWhenNoDirectlyMappedBoneExists() {
+        Bind bind = bind(input("inferred-forearm", List.of(
+                new Bone("part", JointTable.HAND_R, false).box(0.20F, 0.75F, 0.01F))));
+
+        assertPivot(0.20F, 0.55F, 0.01F, bind.pivots().byJoint().get(JointTable.TOOL_R),
+                "models without a direct forearm mapping retain the geometry fallback");
+    }
+
     // ------------------------------------------------------------------
     // The rule: a trailing digit is a variant marker only if the base form is there
     // ------------------------------------------------------------------

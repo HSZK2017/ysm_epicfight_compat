@@ -1024,7 +1024,16 @@ public final class YsmBindArmature {
          return null;
       } else {
          Vector3f handCenter = handRegionCentroid(byBone, in, joint, elbow);
-         return handCenter != null ? handCenter : farHalfCentroid(byBone, in, joint, elbow);
+         if (handCenter != null) {
+            return handCenter;
+         }
+         // A model may attach an accessory with an opaque name to the forearm
+         // joint. Its many vertices can dominate the old far-half centroid and
+         // pull Tool_R away from the palm (e.g. 小小酒狐2.4's "sq" part). Prefer
+         // the bone that the model maps directly to this joint; retain the old
+         // fallback for models whose forearm exists only through inferred bones.
+         Vector3f mapped = farHalfCentroid(byBone, in, joint, elbow, true);
+         return mapped != null ? mapped : farHalfCentroid(byBone, in, joint, elbow, false);
       }
    }
 
@@ -1050,13 +1059,14 @@ public final class YsmBindArmature {
    }
 
    private static Vector3f farHalfCentroid(
-      Map<Integer, List<Vector3f>> byBone, com.ysmef.compat.model.runtime.YsmBindArmature.GeometryInput in, int joint, Vector3f elbow
+      Map<Integer, List<Vector3f>> byBone, com.ysmef.compat.model.runtime.YsmBindArmature.GeometryInput in,
+      int joint, Vector3f elbow, boolean mappedOnly
    ) {
       float maxDist = 0.0F;
       Map<Integer, Float> distByBone = new HashMap<>();
 
       for (Map.Entry<Integer, List<Vector3f>> entry : byBone.entrySet()) {
-         if (in.boneJoints()[entry.getKey()] == joint) {
+         if (in.boneJoints()[entry.getKey()] == joint && (!mappedOnly || in.boneMapped()[entry.getKey()])) {
             String normalized = normalize(in.boneNames()[entry.getKey()]);
             if (!isWeaponBone(normalized)) {
                Vector3f centroid = centroidOf(entry.getValue());
@@ -1076,7 +1086,7 @@ public final class YsmBindArmature {
          int count = 0;
 
          for (Map.Entry<Integer, List<Vector3f>> entryx : byBone.entrySet()) {
-            if (in.boneJoints()[entryx.getKey()] == joint) {
+            if (in.boneJoints()[entryx.getKey()] == joint && (!mappedOnly || in.boneMapped()[entryx.getKey()])) {
                String normalized = normalize(in.boneNames()[entryx.getKey()]);
                if (!isWeaponBone(normalized)) {
                   Float dist = distByBone.get(entryx.getKey());

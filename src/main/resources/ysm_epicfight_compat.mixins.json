@@ -28,6 +28,7 @@
     "YsmLivingMovementPredicateMixin",
     "YsmObfuscatedExtraPlayerOverlayMixin",
     "YsmArmaturePoseMixin",
+    "LivingEntityRendererLayersMixin",
     "YsmArmRenderMixin",
     "YsmBackgroundHandMixin",
     "YsmExtraPlayerOverlayMixin",

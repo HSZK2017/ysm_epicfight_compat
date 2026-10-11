@@ -2,6 +2,7 @@ package com.ysmef.compat.renderer;
 
 import com.ysmef.compat.model.YSMMesh;
 import com.ysmef.compat.model.YSMMeshLibrary;
+import com.ysmef.compat.mixin.LivingEntityRendererLayersMixin;
 import com.ysmef.compat.renderer.layer.YsmConditionalArmorLayer;
 import com.ysmef.compat.renderer.layer.YsmConditionalElytraLayer;
 import com.ysmef.compat.renderer.layer.YsmConditionalHeadLayer;
@@ -19,7 +20,9 @@ import net.minecraft.client.renderer.entity.layers.CapeLayer;
 import net.minecraft.client.renderer.entity.layers.CustomHeadLayer;
 import net.minecraft.client.renderer.entity.layers.ElytraLayer;
 import net.minecraft.client.renderer.entity.layers.HumanoidArmorLayer;
+import net.minecraft.client.renderer.entity.layers.ItemInHandLayer;
 import net.minecraft.client.renderer.entity.layers.PlayerItemInHandLayer;
+import net.minecraft.client.renderer.entity.layers.RenderLayer;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.player.PlayerModelPart;
@@ -34,6 +37,7 @@ import yesman.epicfight.client.renderer.patched.layer.PatchedArrowLayer;
 import yesman.epicfight.client.renderer.patched.layer.PatchedBeeStingerLayer;
 import yesman.epicfight.client.renderer.patched.layer.PatchedCapeLayer;
 import yesman.epicfight.client.world.capabilites.entitypatch.player.AbstractClientPlayerPatch;
+import yesman.epicfight.api.utils.math.OpenMatrix4f;
 
 /**
  * Patched player renderer bridging YSM models into Epic Fight's render pipeline.
@@ -65,6 +69,9 @@ public class YSMPlayerRenderer extends PHumanoidRenderer<AbstractClientPlayer, A
      */
     private final PatchedEntityRenderer<AbstractClientPlayer, AbstractClientPlayerPatch<AbstractClientPlayer>, ?, ?> displaced;
 
+    private final YsmAnchoredItemLayer<AbstractClientPlayer, AbstractClientPlayerPatch<AbstractClientPlayer>,
+            PlayerModel<AbstractClientPlayer>> anchoredItemLayer = new YsmAnchoredItemLayer<>();
+
     /** Renderers that threw once, so the log says it once and the fallback sticks. */
     private static final java.util.Set<String> DISPLACED_FAILED = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
@@ -80,7 +87,12 @@ public class YSMPlayerRenderer extends PHumanoidRenderer<AbstractClientPlayer, A
         this.addPatchedLayer(ArrowLayer.class, new PatchedArrowLayer<>(context));
         this.addPatchedLayer(BeeStingerLayer.class, new PatchedBeeStingerLayer<>());
         this.addPatchedLayer(CapeLayer.class, new PatchedCapeLayer());
-        this.addPatchedLayer(PlayerItemInHandLayer.class, new YsmAnchoredItemLayer<>());
+        // EF dispatches layers by their concrete class. Its base humanoid renderer
+        // already registers ItemInHandLayer, while the player renderer normally
+        // has PlayerItemInHandLayer. Cover both and replace any resource-pack
+        // mapping installed before this constructor runs.
+        this.addPatchedLayerAlways(ItemInHandLayer.class, this.anchoredItemLayer);
+        this.addPatchedLayerAlways(PlayerItemInHandLayer.class, this.anchoredItemLayer);
         // Replace Epic Fight's vanilla-shaped armor with a conditional layer that
         // stays hidden while a YSM mesh is in use (armor models do not fit it).
         this.addPatchedLayerAlways(HumanoidArmorLayer.class,
@@ -274,6 +286,28 @@ public class YSMPlayerRenderer extends PHumanoidRenderer<AbstractClientPlayer, A
         } finally {
             YsmWeaponPoseBridge.end();
         }
+    }
+
+    @Override
+    protected void renderLayer(LivingEntityRenderer<AbstractClientPlayer, PlayerModel<AbstractClientPlayer>> renderer,
+                               AbstractClientPlayerPatch<AbstractClientPlayer> patch, AbstractClientPlayer entity,
+                               OpenMatrix4f[] poses, MultiBufferSource buffer, PoseStack poseStack,
+                               int packedLight, float partialTicks) {
+        // A player renderer supplied by another mod can use a subclass of the
+        // usual held-item layer. EF's map lookup does not walk superclasses, so
+        // register the exact key before it traverses this renderer's layers.
+        for (RenderLayer<?, ?> layer : ((LivingEntityRendererLayersMixin) renderer).ysmef$getLayers()) {
+            if (layer instanceof ItemInHandLayer<?, ?>) {
+                Class<?> key = layer.getClass();
+                if (key.isAnonymousClass()) {
+                    key = key.getSuperclass();
+                }
+                if (this.patchedLayers.get(key) != this.anchoredItemLayer) {
+                    this.addPatchedLayerAlways(key, this.anchoredItemLayer);
+                }
+            }
+        }
+        super.renderLayer(renderer, patch, entity, poses, buffer, poseStack, packedLight, partialTicks);
     }
 
     @Override
