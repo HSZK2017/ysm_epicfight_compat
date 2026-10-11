@@ -5,11 +5,11 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.ysmef.compat.YSMEpicFightCompat;
-import com.ysmef.compat.animation.YsmRoamingState;
+import com.ysmef.compat.animation.YsmModelVariableState;
 import com.ysmef.compat.model.EFMeshJsonWriter;
 import com.ysmef.compat.model.YSMMesh;
 import com.ysmef.compat.model.YSMMeshLibrary;
-import com.ysmef.compat.renderer.YsmWheelAnimationState;
+import com.ysmef.compat.renderer.YsmModelVariableReader;
 import com.ysmef.compat.ysm.script.Molang;
 import com.ysmef.compat.ysm.script.ScriptAnim;
 import com.ysmef.compat.ysm.script.ScriptJson;
@@ -77,8 +77,8 @@ public final class YSMRuntimeModel {
      * alternative is re-parsing the model's JSON on the render thread.
      */
     final Map<String, ScriptAnim> authoredAnims;
-    /** All v.roaming.<name> variable names referenced by this model's scripts. */
-    final Set<String> roamingNames;
+    /** All v.* variable paths referenced by this model's scripts. */
+    final Set<String> modelVariableNames;
     /** Number of compiled keyframe channels; used to size per-animator cursor arrays. */
     final int channelCount;
     /**
@@ -176,16 +176,16 @@ public final class YSMRuntimeModel {
 
     private YSMRuntimeModel(String modelId, BoneRt[] bones, Map<String, Integer> boneIndex,
                             List<CompiledAnim> parallels, Map<String, CompiledAnim> states,
-                            Map<String, CompiledAnim> conditionAnims, Set<String> roamingNames, int channelCount,
+                            Map<String, CompiledAnim> conditionAnims, Set<String> modelVariableNames, int channelCount,
                             CameraTarget cameraTarget, List<YsmPhysicsBinding.Part> physicsParts) {
-        this(modelId, bones, boneIndex, parallels, states, conditionAnims, Map.of(), roamingNames, channelCount,
+        this(modelId, bones, boneIndex, parallels, states, conditionAnims, Map.of(), modelVariableNames, channelCount,
                 cameraTarget, physicsParts, null, DEFAULT_MODEL_SCALE, DEFAULT_MODEL_SCALE);
     }
 
     private YSMRuntimeModel(String modelId, BoneRt[] bones, Map<String, Integer> boneIndex,
                             List<CompiledAnim> parallels, Map<String, CompiledAnim> states,
                             Map<String, CompiledAnim> conditionAnims, Map<String, ScriptAnim> authoredAnims,
-                            Set<String> roamingNames, int channelCount,
+                            Set<String> modelVariableNames, int channelCount,
                             CameraTarget cameraTarget, List<YsmPhysicsBinding.Part> physicsParts,
                             com.google.gson.JsonElement physicsJson, float widthScale, float heightScale) {
         this.modelId = modelId;
@@ -195,7 +195,7 @@ public final class YSMRuntimeModel {
         this.states = states;
         this.conditionAnims = conditionAnims;
         this.authoredAnims = authoredAnims == null ? Map.of() : authoredAnims;
-        this.roamingNames = roamingNames;
+        this.modelVariableNames = modelVariableNames;
         this.channelCount = channelCount;
         this.cameraTarget = cameraTarget;
         this.physicsParts = physicsParts;
@@ -300,87 +300,77 @@ public final class YSMRuntimeModel {
     private volatile boolean[] defaultHidden;
 
     /**
-     * Roaming-variable visibility cache: wheel animations can toggle persistent
-     * v.roaming.* values (gun, key, accessory switches, ...), and the model's
-     * parallel visibility scripts use them to show or collapse accessory parts.
+     * Model-variable visibility cache: wheel and roulette choices can change
+     * ordinary v.* values as well as v.roaming.* accessory switches.
      * Epic Fight battle mode never runs YSM's own script evaluator, so this
-     * evaluates the visibility scripts statically with the current roaming
+     * evaluates the visibility scripts statically with the current model
      * values whenever the player has any, and caches the resulting part-hidden
      * mask per variable fingerprint.
      */
-    private final Map<Long, boolean[]> roamingHiddenCache = new ConcurrentHashMap<>();
-    private static final int ROAMING_HIDDEN_CACHE_MAX = 32;
+    private final Map<Long, boolean[]> variableHiddenCache = new ConcurrentHashMap<>();
+    private static final int VARIABLE_HIDDEN_CACHE_MAX = 32;
+    private YsmStaticCustomizationTransforms customizationTransforms;
 
     /**
-     * Battle-mode visibility honoring YSM's current persistent roaming variables
-     * (accessories toggled by wheel animations). Falls back to the neutral
-     * default form when the YSM fork exposes no roaming variables.
+     * Battle-mode visibility honoring YSM's current model variables. Falls back
+     * to the neutral default form when no selected values are available.
      */
     public void applyEntityVisibility(YSMMesh mesh, Player player) {
         ensureDefaultPartMap(mesh);
-        java.util.Map<String, Float> ysmRoaming = YsmWheelAnimationState.readRoamingVars(player, roamingNames);
-        java.util.Map<String, Float> trackedRoaming = YsmRoamingState.getRoaming(player);
-        // YSM's own roaming struct is authoritative when available; the local
-        // tracker fills the gap while YSM's evaluator is idle in battle mode.
-        java.util.Map<String, Float> roaming = new java.util.TreeMap<>(trackedRoaming);
-        roaming.putAll(ysmRoaming);
+        java.util.Map<String, Float> values = new java.util.TreeMap<>(
+                YsmModelVariableReader.read(player, modelVariableNames));
+        // YSM queues roulette expressions until its next animation pass. Epic
+        // Fight can suppress that pass, leaving the public storage one choice
+        // behind. A captured UI choice therefore wins for this selected model.
+        for (java.util.Map.Entry<String, Float> entry : YsmModelVariableState.getVariables(player, modelId).entrySet()) {
+            if (modelVariableNames.contains(entry.getKey())) {
+                values.put(entry.getKey(), entry.getValue());
+            }
+        }
         boolean[] hidden;
-        if (roaming.isEmpty()) {
-            if (ROAMING_EMPTY_LOGGED.add(modelId)) {
+        if (values.isEmpty()) {
+            if (VARIABLES_EMPTY_LOGGED.add(modelId)) {
                 YSMEpicFightCompat.LOGGER.info(
-                        "YSM-EF Compat: [roaming] no roaming variables exposed for model '{}' (battle-mode accessories fall back to default form)",
+                        "YSM-EF Compat: [visibility] no model variables exposed for '{}' (using default form)",
                         modelId);
             }
             hidden = defaultHidden();
         } else {
-            long fingerprint = roamingFingerprint(roaming);
-            hidden = roamingHiddenCache.get(fingerprint);
+            long fingerprint = variableFingerprint(values);
+            hidden = variableHiddenCache.get(fingerprint);
             if (hidden == null) {
-                hidden = computeHiddenWithRoaming(roaming);
-                if (roamingHiddenCache.size() >= ROAMING_HIDDEN_CACHE_MAX) {
-                    roamingHiddenCache.clear();
+                hidden = computeHiddenWithVariables(values);
+                if (variableHiddenCache.size() >= VARIABLE_HIDDEN_CACHE_MAX) {
+                    variableHiddenCache.clear();
                 }
-                roamingHiddenCache.put(fingerprint, hidden);
-            }
-            String stateKey = fingerprint + ":" + roaming;
-            if (ROAMING_STATE_LOGGED.add(stateKey)) {
-                YSMEpicFightCompat.LOGGER.info(
-                        "YSM-EF Compat: [roaming] model='{}' vars={} -> {} hidden bone parts",
-                        modelId, roaming, countHidden(hidden));
+                variableHiddenCache.put(fingerprint, hidden);
             }
         }
         for (int i = 0; i < defaultBoneParts.size(); i++) {
             int boneIdx = defaultPartBoneIdx[i];
             defaultBoneParts.get(i).setHidden(boneIdx >= 0 && boneIdx < hidden.length && hidden[boneIdx]);
         }
-    }
-
-    private static final java.util.Set<String> ROAMING_EMPTY_LOGGED = ConcurrentHashMap.newKeySet();
-    private static final java.util.Set<String> ROAMING_STATE_LOGGED = ConcurrentHashMap.newKeySet();
-
-    private static int countHidden(boolean[] hidden) {
-        int count = 0;
-        for (boolean b : hidden) {
-            if (b) {
-                count++;
-            }
+        if (customizationTransforms == null) {
+            customizationTransforms = new YsmStaticCustomizationTransforms(this);
         }
-        return count;
+        customizationTransforms.apply(mesh, values, hidden, defaultPartNames, defaultPartBoneIdx);
     }
 
-    private static long roamingFingerprint(java.util.Map<String, Float> roaming) {
+    private static final java.util.Set<String> VARIABLES_EMPTY_LOGGED = ConcurrentHashMap.newKeySet();
+
+    private static long variableFingerprint(java.util.Map<String, Float> values) {
         long hash = 1125899906842597L;
-        for (java.util.Map.Entry<String, Float> entry : roaming.entrySet()) {
+        for (java.util.Map.Entry<String, Float> entry : values.entrySet()) {
             hash = hash * 31L + entry.getKey().hashCode();
             hash = hash * 31L + Float.floatToIntBits(entry.getValue());
         }
         return hash;
     }
 
-    private boolean[] computeHiddenWithRoaming(java.util.Map<String, Float> roaming) {
+    private boolean[] computeHiddenWithVariables(java.util.Map<String, Float> values) {
         Molang.Env env = newDefaultEnv();
-        for (java.util.Map.Entry<String, Float> entry : roaming.entrySet()) {
-            env.setVar("v.roaming." + entry.getKey(), entry.getValue());
+        for (java.util.Map.Entry<String, Float> entry : values.entrySet()) {
+            env.setVar(entry.getKey(), entry.getValue());
         }
         return computeHidden(env);
     }
@@ -407,6 +397,7 @@ public final class YSMRuntimeModel {
 
     private YSMMesh defaultPartMapMesh;
     private List<MeshPart> defaultBoneParts;
+    private List<String> defaultPartNames;
     private int[] defaultPartBoneIdx;
 
     private void ensureDefaultPartMap(YSMMesh mesh) {
@@ -415,6 +406,7 @@ public final class YSMRuntimeModel {
         }
         defaultPartMapMesh = mesh;
         List<MeshPart> parts = new ArrayList<>();
+        List<String> names = new ArrayList<>();
         List<Integer> idxs = new ArrayList<>();
         for (Map.Entry<String, MeshPart> entry : mesh.getPartEntrySetSafe()) {
             String partName = entry.getKey();
@@ -424,9 +416,11 @@ public final class YSMRuntimeModel {
             String boneName = partName.substring(EFMeshJsonWriter.BONE_PART_PREFIX.length());
             Integer boneIdx = boneIndex.get(boneName);
             parts.add(entry.getValue());
+            names.add(partName);
             idxs.add(boneIdx != null ? boneIdx : -1);
         }
         defaultBoneParts = parts;
+        defaultPartNames = names;
         defaultPartBoneIdx = new int[idxs.size()];
         for (int i = 0; i < idxs.size(); i++) {
             defaultPartBoneIdx[i] = idxs.get(i);
@@ -550,7 +544,7 @@ public final class YSMRuntimeModel {
         return eff[boneIdx];
     }
 
-    private static float[] evalChannelAtZero(CompiledChannel channel, Molang.Env env) {
+    static float[] evalChannelAtZero(CompiledChannel channel, Molang.Env env) {
         int idx = 0;
         for (int i = 0; i < channel.times.length; i++) {
             if (channel.times[i] <= 0) {
@@ -564,7 +558,7 @@ public final class YSMRuntimeModel {
                 (float) axes[2].eval(env)};
     }
 
-    private static Molang.Env newDefaultEnv() {
+    static Molang.Env newDefaultEnv() {
         return new Molang.Env() {
             private final java.util.Map<Integer, Double> vars = new HashMap<>();
             private final java.util.Set<Integer> varSet = new HashSet<>();
@@ -939,7 +933,7 @@ public final class YSMRuntimeModel {
         CameraTarget cameraTarget = parseCameraTarget(root);
         float[] scale = parseModelScale(root);
         YSMRuntimeModel model = new YSMRuntimeModel(modelId, bones, boneIndex, parallels, states, conditions, authoredAnims,
-                collectRoamingNames(root), nextChannelId, cameraTarget,
+                collectModelVariableNames(root), nextChannelId, cameraTarget,
                 YsmPhysicsBinding.fromJson(root.get("physics")), root.get("physics"), scale[0], scale[1]);
         if (cameraTarget != null) {
             com.ysmef.compat.realcamera.YsmRealCameraBridge.onRuntimeModelLoaded(modelId, cameraTarget);
@@ -1001,12 +995,20 @@ public final class YSMRuntimeModel {
         }
     }
 
-    /** Extract every distinct v.roaming.<name> variable referenced anywhere in the runtime JSON. */
-    private static Set<String> collectRoamingNames(JsonObject root) {
+    /** Extract variables used by the parallel scripts evaluated for static visibility. */
+    private static Set<String> collectModelVariableNames(JsonObject root) {
         Set<String> names = new HashSet<>();
         java.util.ArrayDeque<JsonElement> queue = new java.util.ArrayDeque<>();
-        queue.add(root);
-        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("v\\.roaming\\.([A-Za-z_][A-Za-z0-9_]*)");
+        JsonObject animations = root.has("animations") && root.get("animations").isJsonObject()
+                ? root.getAsJsonObject("animations") : null;
+        if (animations == null) return names;
+        for (Map.Entry<String, JsonElement> entry : animations.entrySet()) {
+            if (entry.getKey().startsWith("pre_parallel") || entry.getKey().startsWith("parallel")) {
+                queue.add(entry.getValue());
+            }
+        }
+        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
+                "\\b(?:v|variable)\\.[A-Za-z_][A-Za-z0-9_.]*", java.util.regex.Pattern.CASE_INSENSITIVE);
         while (!queue.isEmpty()) {
             JsonElement element = queue.poll();
             if (element.isJsonObject()) {
@@ -1020,7 +1022,7 @@ public final class YSMRuntimeModel {
             } else if (element.isJsonPrimitive() && element.getAsJsonPrimitive().isString()) {
                 java.util.regex.Matcher matcher = pattern.matcher(element.getAsString());
                 while (matcher.find()) {
-                    names.add(matcher.group(1));
+                    names.add(matcher.group());
                 }
             }
         }

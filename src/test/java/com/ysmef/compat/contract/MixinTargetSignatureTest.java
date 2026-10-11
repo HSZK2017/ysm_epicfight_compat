@@ -42,7 +42,7 @@ class MixinTargetSignatureTest {
     private static final Path MIXINS = Path.of("src/main/java/com/ysmef/compat/mixin");
     private static final Pattern CLASS_TARGET = Pattern.compile(
             "@Mixin\\(value\\s*=\\s*([\\w.]+)\\.class|@Mixin\\(targets\\s*=\\s*\"([^\"]+)\"");
-    private static final Pattern METHOD_TARGET = Pattern.compile("method\\s*=\\s*\"([^\"]+)\"");
+    private static final Pattern METHOD_TARGET = Pattern.compile("method\\s*=\\s*(?:\\{\\s*)?\"([^\"]+)\"");
 
     @Test
     void officialYsmTargetsMatchThePackagedJar() throws IOException {
@@ -133,7 +133,8 @@ class MixinTargetSignatureTest {
                 || name.equals("YsmExtraPlayerOverlayMixin.java")
                 || name.equals("YsmAnimationTransitionGuardMixin.java")
                 || name.equals("YsmLivingMovementPredicateMixin.java")
-                || name.equals("YsmRouletteConfigExpressionMixin.java");
+                || name.equals("YsmRouletteConfigExpressionMixin.java")
+                || name.equals("YsmUnobfuscatedSliderExpressionMixin.java");
     }
 
     private record SourceMethod(String name, List<String> parameters, String returnType) {

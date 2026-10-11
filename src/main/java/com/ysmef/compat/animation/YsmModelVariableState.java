@@ -1,6 +1,8 @@
 package com.ysmef.compat.animation;
 
 import com.ysmef.compat.YSMEpicFightCompat;
+import com.ysmef.compat.renderer.YSMModelAccess;
+import com.ysmef.compat.renderer.YsmModelVariableReader;
 import com.ysmef.compat.ysm.YsmModelPackage;
 import com.ysmef.compat.ysm.script.Molang;
 import com.ysmef.compat.ysm.script.ScriptAnim;
@@ -11,32 +13,34 @@ import java.util.Map;
 import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Pattern;
 
 /**
- * Client-side shadow of YSM's persistent v.roaming.* variables for battle mode.
+ * Client-side shadow of model variables changed by YSM's wheel and configuration UI.
  *
  * YSM's own script evaluator is not advanced while its renderer is replaced by
- * Epic Fight in battle mode, so wheel-animation timelines that toggle
- * v.roaming.* values (gun/key/accessory switches such as "toggle key" or
- * "switch personality") never reach the runtime evaluator our mesh visibility
- * uses. Instead, whenever a wheel animation starts, this tracker replays its
- * timeline code once against the previous roaming values, exactly like YSM's
- * persistent roaming struct would, and keeps the resulting values per player.
+ * Epic Fight in battle mode. Wheel timelines and roulette controls may assign
+ * both v.roaming.* and ordinary v.* values without those assignments reaching
+ * YSM's animation processor. This tracker replays the assignments in order and
+ * keeps one model-scoped variable snapshot per player.
  */
-public final class YsmRoamingState {
+public final class YsmModelVariableState {
 
     /**
      * Immutable snapshots only: every published value is an unmodifiable map, so
      * the render thread can iterate it while the pool publishes a replacement.
      */
-    private static final Map<UUID, Map<String, Float>> PLAYER_VARS = new ConcurrentHashMap<>();
-    private static final java.util.Set<String> LOGGED = ConcurrentHashMap.newKeySet();
+    private record ModelVars(String modelId, Map<String, Float> values) {}
+
+    private static final Map<UUID, ModelVars> PLAYER_VARS = new ConcurrentHashMap<>();
+    private static final Pattern VARIABLE_NAME = Pattern.compile(
+            "\\b(?:v|variable)\\.[A-Za-z_][A-Za-z0-9_.]*", Pattern.CASE_INSENSITIVE);
     /** Bumped on world leave; in-flight tasks of the old world discard their results. */
     private static final java.util.concurrent.atomic.AtomicLong GENERATION =
             new java.util.concurrent.atomic.AtomicLong();
 
     /**
-     * Roaming evaluations run on this single-threaded daemon pool: the wheel
+     * Variable evaluations run on this single-threaded daemon pool: the wheel
      * path used to load the whole model package (file read + decrypt + parse)
      * synchronously on the client tick thread, hitching the tick. The
      * single-threaded executor also serializes all per-player updates in
@@ -45,17 +49,17 @@ public final class YsmRoamingState {
      * published by the previous task). Results are published as immutable
      * snapshots directly from the pool; readers never race a clear+putAll.
      */
-    private static final java.util.concurrent.ExecutorService ROAMING_POOL =
+    private static final java.util.concurrent.ExecutorService VARIABLE_POOL =
             java.util.concurrent.Executors.newSingleThreadExecutor(runnable -> {
-                Thread thread = new Thread(runnable, "ysm-ef-roaming");
+                Thread thread = new Thread(runnable, "ysm-ef-variables");
                 thread.setDaemon(true);
                 return thread;
             });
 
-    private YsmRoamingState() {}
+    private YsmModelVariableState() {}
 
     /**
-     * Apply one wheel animation's roaming-timeline code for the player. Called
+     * Apply one wheel animation's variable-timeline code for the player. Called
      * on every wheel-animation start transition, including repeated clicks of
      * the same animation (toggles flip again). The model package load and the
      * molang evaluation run on the background pool; results are published as
@@ -67,7 +71,7 @@ public final class YsmRoamingState {
         }
         UUID uuid = player.getUUID();
         String label = "wheel animation '" + animationName + "' of model '" + modelId + "'";
-        onRoamingExpressionAsync(uuid, label, current -> {
+        onExpressionAsync(uuid, modelId, label, Map.of(), current -> {
             YsmModelPackage pkg = YsmModelPackage.load(modelId);
             ScriptAnim anim = pkg == null ? null : pkg.wheelAnim(animationName);
             if (anim == null) {
@@ -86,7 +90,7 @@ public final class YsmRoamingState {
                     Molang.compile(code).eval(env);
                 }
             }
-            return collectRoaming(evaluatedVars);
+            return collectVariables(evaluatedVars);
         });
     }
 
@@ -98,37 +102,51 @@ public final class YsmRoamingState {
         if (player == null || expression == null || expression.isBlank()) {
             return;
         }
+        YSMModelAccess.YSMModelRef model = YSMModelAccess.getCurrentModel(player);
+        if (model == null) {
+            return;
+        }
         UUID uuid = player.getUUID();
         String label = "roulette config expression '" + expression + "'";
-        onRoamingExpressionAsync(uuid, label, current -> {
-            Map<Integer, Double> evaluatedVars = new TreeMap<>();
-            Molang.Env env = newEnv(current, evaluatedVars);
-            String[] parts = expression.split(";");
-            for (String part : parts) {
-                if (part == null || part.isBlank()) {
-                    continue;
-                }
+        java.util.Set<String> names = new java.util.HashSet<>();
+        var matcher = VARIABLE_NAME.matcher(expression);
+        while (matcher.find()) names.add(matcher.group());
+        // A control can use the previous setting (for example v.hat=1-v.hat).
+        // Seed the first local evaluation from YSM's actual value rather than 0.
+        Map<String, Float> observed = YsmModelVariableReader.read(player, names);
+        onExpressionAsync(uuid, model.modelId(), label, observed,
+                current -> evaluateConfigExpression(current, expression));
+    }
+
+    /** Pure expression step shared by the UI bridge and its regression tests. */
+    static Map<String, Float> evaluateConfigExpression(Map<String, Float> current, String expression) {
+        Map<Integer, Double> evaluatedVars = new TreeMap<>();
+        Molang.Env env = newEnv(current, evaluatedVars);
+        for (String part : expression.split(";")) {
+            if (!part.isBlank()) {
                 Molang.compile(part.trim()).eval(env);
             }
-            return collectRoaming(evaluatedVars);
-        });
+        }
+        return collectVariables(evaluatedVars);
     }
 
     /**
-     * Evaluate one roaming expression on the single-threaded background pool and
+     * Evaluate one model-variable expression on the single-threaded background pool and
      * publish the result as an immutable snapshot. {@code compute} returns null
-     * to skip the update entirely (e.g. no such animation), or the new roaming
+     * to skip the update entirely (e.g. no such animation), or the new variable
      * map. Because the pool is single-threaded, the next task always reads the
      * snapshot published by the previous task - no lost toggles on rapid clicks.
      */
-    private static void onRoamingExpressionAsync(UUID uuid, String label,
+    private static void onExpressionAsync(UUID uuid, String modelId, String label,
+                                                 Map<String, Float> observed,
                                                  java.util.function.Function<Map<String, Float>, Map<String, Float>> compute) {
         long generation = GENERATION.get();
-        ROAMING_POOL.execute(() -> {
+        VARIABLE_POOL.execute(() -> {
             try {
-                Map<String, Float> current = PLAYER_VARS.get(uuid);
-                Map<String, Float> updated = compute.apply(current == null
-                        ? java.util.Collections.emptyMap() : current);
+                ModelVars state = PLAYER_VARS.get(uuid);
+                Map<String, Float> current = new TreeMap<>(observed);
+                if (state != null && state.modelId.equals(modelId)) current.putAll(state.values);
+                Map<String, Float> updated = compute.apply(current);
                 if (updated == null) {
                     return;
                 }
@@ -136,20 +154,20 @@ public final class YsmRoamingState {
                     // world was left while the expression evaluated; drop the stale state
                     return;
                 }
-                publishRoaming(uuid, updated, label, generation);
+                publishVariables(uuid, modelId, updated, generation);
             } catch (Throwable t) {
                 YSMEpicFightCompat.LOGGER.warn(
-                        "YSM-EF Compat: failed to track roaming variables for {}", label, t);
+                        "YSM-EF Compat: failed to track model variables for {}", label, t);
             }
         });
     }
 
-    /** Publish an immutable snapshot and log the change once (pool thread). */
-    private static void publishRoaming(UUID uuid, Map<String, Float> updated, String label, long generation) {
+    /** Publish an immutable snapshot from the evaluation pool. */
+    private static void publishVariables(UUID uuid, String modelId, Map<String, Float> updated, long generation) {
         if (generation != GENERATION.get()) {
             return;
         }
-        Map<String, Float> snapshot = java.util.Collections.unmodifiableMap(new TreeMap<>(updated));
+        ModelVars snapshot = new ModelVars(modelId, Collections.unmodifiableMap(new TreeMap<>(updated)));
         PLAYER_VARS.put(uuid, snapshot);
         // Close the clear() race: if the world was left between the pre-check and
         // the put, remove the just-published stale snapshot.
@@ -157,41 +175,43 @@ public final class YsmRoamingState {
             PLAYER_VARS.remove(uuid, snapshot);
             return;
         }
-        String logKey = uuid + ":" + label + "->" + updated;
-        if (LOGGED.add(logKey)) {
-            YSMEpicFightCompat.LOGGER.info(
-                    "YSM-EF Compat: [roaming] {} updated roaming vars to {}", label, updated);
-        }
     }
 
-    /** The tracked roaming values for one player, or an empty map. */
-    public static Map<String, Float> getRoaming(Player player) {
+    /** The tracked model variables for one player and selected model, or an empty map. */
+    public static Map<String, Float> getVariables(Player player, String modelId) {
         if (player == null) {
             return Collections.emptyMap();
         }
-        Map<String, Float> vars = PLAYER_VARS.get(player.getUUID());
-        return vars == null ? Collections.emptyMap() : vars;
+        UUID uuid = player.getUUID();
+        ModelVars vars = PLAYER_VARS.get(uuid);
+        if (vars == null) return Collections.emptyMap();
+        if (!vars.modelId.equals(modelId)) {
+            // YSM reinitializes its variables on model selection. Retaining a
+            // previous model's shadow could resurrect that outfit on return.
+            PLAYER_VARS.remove(uuid, vars);
+            return Collections.emptyMap();
+        }
+        return vars.values;
     }
 
-    /** Forget all tracked roaming state (world leave); stale in-flight tasks discard themselves. */
+    /** Forget all tracked model state (world leave); stale in-flight tasks discard themselves. */
     public static void clear() {
         GENERATION.incrementAndGet();
         PLAYER_VARS.clear();
-        LOGGED.clear();
     }
 
     // ------------------------------------------------------------------
     // Minimal Molang environment
     // ------------------------------------------------------------------
 
-    private static Map<String, Float> collectRoaming(Map<Integer, Double> evaluatedVars) {
+    private static Map<String, Float> collectVariables(Map<Integer, Double> evaluatedVars) {
         Map<String, Float> updated = new TreeMap<>();
         for (Map.Entry<Integer, Double> entry : evaluatedVars.entrySet()) {
             String name = Molang.nameOf(entry.getKey());
-            if (name == null || !name.startsWith("v.roaming.")) {
+            if (name == null || !(name.startsWith("v.") || name.startsWith("variable."))) {
                 continue;
             }
-            updated.put(name.substring("v.roaming.".length()), (float) (double) entry.getValue());
+            updated.put(name, (float) (double) entry.getValue());
         }
         return updated;
     }
@@ -205,7 +225,7 @@ public final class YsmRoamingState {
 
     private static Molang.Env newEnv(Map<String, Float> initial, Map<Integer, Double> outVars) {
         for (Map.Entry<String, Float> entry : initial.entrySet()) {
-            outVars.put(Molang.idOf("v.roaming." + entry.getKey()), (double) entry.getValue());
+            outVars.put(Molang.idOf(entry.getKey()), (double) entry.getValue());
         }
         return new Molang.Env() {
             @Override

@@ -55,9 +55,9 @@ public final class YSMRuntimeBridge {
      * the results (per-part hidden flags and transforms) to the mesh. No-op when
      * there is no current entity or no runtime data for the mesh's model.
      *
-     * In Epic Fight battle mode no script animation runs: the mesh is drawn with
-     * the model's default form only (animation-driven variant geometry hidden,
-     * no transforms), so Epic Fight's combat animations are the sole deformation.
+     * In Epic Fight battle mode no YSM script animation runs. Parallel scale
+     * scripts are evaluated with the player's selected model variables to choose
+     * visible parts, while Epic Fight supplies the deformation.
      */
     public static void apply(YSMMesh mesh, Armature armature, OpenMatrix4f[] poses,
                              boolean snapshotPose) {
@@ -84,10 +84,7 @@ public final class YSMRuntimeBridge {
         if (YSMBattleMode.isBattleMode(entity)) {
             if (model != null) {
                 if (entity instanceof Player player) {
-                    // Honor persistent v.roaming.* toggles from the wheel
-                    // (accessory switches like the gun/key animations) so the
-                    // converted mesh shows/hides the same accessory parts as
-                    // YSM's own renderer would.
+                    // Honor the model's v.* and v.roaming.* customization choices.
                     model.applyEntityVisibility(mesh, player);
                 } else {
                     model.applyDefaultVisibility(mesh);

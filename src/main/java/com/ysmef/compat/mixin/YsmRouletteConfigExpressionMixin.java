@@ -1,6 +1,6 @@
 package com.ysmef.compat.mixin;
 
-import com.ysmef.compat.animation.YsmRoamingState;
+import com.ysmef.compat.animation.YsmModelVariableState;
 import net.minecraft.client.Minecraft;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -24,7 +24,7 @@ public abstract class YsmRouletteConfigExpressionMixin {
             at = @At("HEAD"), require = 0)
     private void ysmef$captureConfigExpression(String expression, Consumer<String> callback, CallbackInfo ci) {
         try {
-            YsmRoamingState.onConfigExpression(Minecraft.getInstance().player, expression);
+            YsmModelVariableState.onConfigExpression(Minecraft.getInstance().player, expression);
         } catch (Throwable ignored) {
         }
     }
