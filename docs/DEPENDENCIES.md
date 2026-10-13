@@ -1,8 +1,8 @@
 # 依赖交接 / Dependency handoff
 
-本表固定 **v1.10.1 的构建基准**，并区分玩家需安装的模组与维护者编译时使用的 JAR。下载应从上游版本页进行；文件名可在放入 `libs/` 时重命名，内容不可改。版本范围来自本项目 `mods.toml`，不表示范围内的每个发行版都经过实机测试。
+本表固定 **v1.10.2 的构建基准**，并区分玩家需安装的模组与维护者编译时使用的 JAR。下载应从上游版本页进行；文件名可在放入 `libs/` 时重命名，内容不可改。版本范围来自本项目 `mods.toml`，不表示范围内的每个发行版都经过实机测试。
 
-This records the **v1.10.1 build baseline**. Install the runtime mods separately; the three renamed JARs in `libs/` are compile inputs. Declared version ranges are loader contracts, not a claim that every version was tested.
+This records the **v1.10.2 build baseline**. Install the runtime mods separately; the three renamed JARs in `libs/` are compile inputs. Declared version ranges are loader contracts, not a claim that every version was tested.
 
 ## 运行环境 / Runtime
 
@@ -15,7 +15,7 @@ This records the **v1.10.1 build baseline**. Install the runtime mods separately
 | EpicFight：TouhouLittleMaid (`ef_tlm`) | [1.1.1, Forge 1.20.1](https://modrinth.com/mod/epicfight_touhoulittlemaid/version/2vK2kKrN) 为编译基准 | 仅女仆联动；本项目声明 `1.1+` |
 | Epic Fight Avalon | [20.12.6.4, Forge 1.20.1](https://www.curseforge.com/minecraft/mc-mods/epic-fight-avalon/files/7619938) | 安装 `ef_tlm` 时必需：其 1.1.1 JAR 的 `mods.toml` 声明 `epic_fight_avalon` 为强制依赖 |
 
-安装本项目时只把 `YSM_EpicFight_Compat-1.20.1-1.10.1-all.jar` 放入游戏的 `mods` 目录。它内嵌 `zstd-jni`，不内嵌 Epic Fight、YSM、Touhou Little Maid、`ef_tlm` 或 Avalon。女仆联动不用时，不需要后三个可选模组。客户端与专用服务器应使用相互匹配的必需模组；模型包仍需在观看者本地可用。
+安装本项目时只把 `YSM_EpicFight_Compat-1.20.1-1.10.2-all.jar` 放入游戏的 `mods` 目录。它内嵌 `zstd-jni`，不内嵌 Epic Fight、YSM、Touhou Little Maid、`ef_tlm` 或 Avalon。女仆联动不用时，不需要后三个可选模组。客户端与专用服务器应使用相互匹配的必需模组；模型包仍需在观看者本地可用。
 
 Install only this project's `-all.jar` in `mods`. It bundles `zstd-jni`, but does not bundle the other mods. Maid integration requires all three optional rows above; without maid integration they are unnecessary.
 

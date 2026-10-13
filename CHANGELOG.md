@@ -6,8 +6,12 @@ Release highlights only. See the [development history](docs/development-history.
 
 ## 未发布 / Unreleased
 
-- 武器图层使用当前实体的 YSM 几何手部姿势，双手持物随模型尺寸与战斗动作定位；保留 Epic Fight 的武器专属持握变换。
-- The item layer now uses the current entity's geometry-derived YSM hand poses for both hands while retaining Epic Fight's item-specific grip transforms.
+## v1.10.2 — 2026-10-13
+
+- 武器随当前 YSM 模型的手部位置移动；支持重新读取骨架矩阵的 Epic Fight 附属武器及其刀鞘等附属骨骼。
+- 修复部分动作轮动画姿势丢失或模型压扁的问题，并保留战斗模式下的模型部件、表情等自定义状态。
+- Held weapons follow the selected YSM model's hands, including addon meshes that reread the armature and their attached weapon bones.
+- Fixed wheel animations that lost their pose or flattened the model, and preserved model-part and expression choices in combat mode.
 
 ## v1.10.1 — 2026-10-10
 

@@ -10,6 +10,11 @@ Use **Yes Steve Model (YSM) character models with Epic Fight combat animations**
 
 The supported YSM families are the official 2.6.5 release, OpenYSM, and ModernYSM. The official 2.6.5 release is obfuscated. Changes to a YSM fork or Epic Fight may require updated compatibility hooks.
 
+### What's new in 1.10.2
+
+- Weapons follow the selected YSM model's hands, including custom Epic Fight addon meshes and their attached bones.
+- Fixed wheel animations that lost their pose or flattened the model; model-part and expression choices remain visible in combat mode.
+
 ### What's new in 1.10.1
 
 - Secondary motion is isolated by entity and world, so instances of the same model do not inherit each other's motion state.
@@ -29,7 +34,7 @@ Epic Fight's strong forward lean and long strides can still cause local skirt an
 | Goal | Start here |
 |---|---|
 | Install and use the mod | [Installation and use](#installation-and-use) |
-| Review this release | [What's new in 1.10.1](#whats-new-in-1101) → [Changelog](CHANGELOG.md) |
+| Review this release | [What's new in 1.10.2](#whats-new-in-1102) → [Changelog](CHANGELOG.md) |
 | Adjust performance or appearance | [Common settings](#common-settings) |
 | Diagnose missing models, clipping, or shaders | [Known issues and limits](#known-issues-and-limits) |
 | Build the project | [Build and test](#build-and-test) |
@@ -140,7 +145,7 @@ Run from the project root:
 
 `build` includes all default tests. The second command checks the release JAR's version, mod metadata, Mixin files, converter fingerprint, and bundled zstd-jni. GitHub Actions runs the same checks on every push and pull request, saves the verified JAR, and retains test reports on failure. To rerun tests alone, use `.\gradlew.bat test`.
 
-The release artifact is `build/libs/YSM_EpicFight_Compat-1.20.1-1.10.1-all.jar`, which includes zstd-jni. Its name changes when the project version changes. See the [dependency handoff](docs/DEPENDENCIES.md) for upstream sources and checksums of local build JARs.
+The release artifact is `build/libs/YSM_EpicFight_Compat-1.20.1-1.10.2-all.jar`, which includes zstd-jni. Its name changes when the project version changes. See the [dependency handoff](docs/DEPENDENCIES.md) for upstream sources and checksums of local build JARs.
 
 To run the optional end to end `.ysm` decryption test with a real model:
 
