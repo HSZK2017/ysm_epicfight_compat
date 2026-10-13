@@ -48,7 +48,12 @@ public final class YsmAnchoredItemLayer<E extends LivingEntity, T extends Living
                         target == null ? "?" : target.m32);
             }
         }
-        super.renderLayer(patch, entity, vanillaLayer, poseStack, buffer, packedLight,
-                itemPoses, bob, yRot, xRot, partialTicks);
+        boolean itemScope = YsmWeaponPoseBridge.beginItemLayer(entity, patch, patch.getArmature());
+        try {
+            super.renderLayer(patch, entity, vanillaLayer, poseStack, buffer, packedLight,
+                    itemPoses, bob, yRot, xRot, partialTicks);
+        } finally {
+            YsmWeaponPoseBridge.endItemLayer(itemScope);
+        }
     }
 }

@@ -121,6 +121,112 @@ class YsmWeaponPoseBridgeTest {
         }
     }
 
+    @Test
+    void addonReadingPatchArmatureAgainOnlySeesAnchoredPosesInsideItemLayer() {
+        Armature source = posedArmature("patch", 1.0F);
+        Armature rebound = posedArmature("model", 0.45F);
+        Armature unrelated = posedArmature("other player", 1.7F);
+        Object entity = new Object();
+        Object patch = new Object();
+        OpenMatrix4f[] sourcePoses = source.getPoseMatrices();
+
+        YsmWeaponPoseBridge.begin(entity, patch);
+        try {
+            YsmWeaponPoseBridge.capture(entity, source, sourcePoses, rebound);
+            assertSame(sourcePoses, YsmWeaponPoseBridge.posesForCurrentItem(source, sourcePoses));
+            boolean entered = YsmWeaponPoseBridge.beginItemLayer(entity, patch, source);
+            try {
+                // Several addons call setPose immediately before drawing their mesh.
+                source.setPose(new Pose());
+                OpenMatrix4f[] fresh = YsmWeaponPoseBridge.posesForCurrentItem(source, source.getPoseMatrices());
+                assertNotSame(sourcePoses, fresh);
+                assertEquals(0.45F, fresh[1].m31, 0.0001F);
+                assertEquals(1.0F, sourcePoses[1].m31, 0.0001F);
+                assertSame(unrelated.getPoseMatrices(),
+                        YsmWeaponPoseBridge.posesForCurrentItem(unrelated, unrelated.getPoseMatrices()));
+                assertEquals(sourcePoses[0].m31, fresh[0].m31, 0.0001F);
+            } finally {
+                YsmWeaponPoseBridge.endItemLayer(entered);
+            }
+            assertSame(sourcePoses, YsmWeaponPoseBridge.posesForCurrentItem(source, sourcePoses));
+        } finally {
+            YsmWeaponPoseBridge.end();
+        }
+    }
+
+    @Test
+    void itemLayerScopeRejectsOtherPatchAndRestoresOuterRender() {
+        Armature source = posedArmature("patch", 1.0F);
+        Armature rebound = posedArmature("model", 0.55F);
+        Object entity = new Object();
+        Object patch = new Object();
+        OpenMatrix4f[] poses = source.getPoseMatrices();
+        YsmWeaponPoseBridge.begin(entity, patch);
+        try {
+            YsmWeaponPoseBridge.capture(entity, source, poses, rebound);
+            assertEquals(false, YsmWeaponPoseBridge.beginItemLayer(entity, new Object(), source));
+            YsmWeaponPoseBridge.endItemLayer(false);
+            assertSame(poses, YsmWeaponPoseBridge.posesForCurrentItem(source, poses));
+            boolean outer = YsmWeaponPoseBridge.beginItemLayer(entity, patch, source);
+            try {
+                YsmWeaponPoseBridge.begin(new Object(), new Object());
+                try {
+                    assertSame(poses, YsmWeaponPoseBridge.posesForCurrentItem(source, poses));
+                } finally {
+                    YsmWeaponPoseBridge.end();
+                }
+                assertEquals(0.55F, YsmWeaponPoseBridge.posesForCurrentItem(source, poses)[1].m31, 0.0001F);
+            } finally {
+                YsmWeaponPoseBridge.endItemLayer(outer);
+            }
+        } finally {
+            YsmWeaponPoseBridge.end();
+        }
+    }
+
+    @Test
+    void addonWeaponBonesFollowNearestModelJointWithoutLosingOwnAnimation() {
+        Joint sourceRoot = new Joint("Root", 0, new OpenMatrix4f());
+        Joint sourceChest = new Joint("Chest", 1, new OpenMatrix4f().translate(0, 1.0F, 0));
+        Joint sheath = new Joint("Sheath", 2, new OpenMatrix4f().translate(0, 0.2F, 0));
+        Joint sourceTool = new Joint("Tool_R", 3, new OpenMatrix4f().translate(0.3F, 0, 0));
+        sourceRoot.addSubJoints(sourceChest);
+        sourceChest.addSubJoints(sheath, sourceTool);
+        Armature source = new Armature("addon", 4, sourceRoot,
+                Map.of("Root", sourceRoot, "Chest", sourceChest, "Sheath", sheath, "Tool_R", sourceTool));
+        source.setPose(new Pose());
+
+        Joint modelRoot = new Joint("Root", 0, new OpenMatrix4f());
+        Joint modelChest = new Joint("Chest", 1, new OpenMatrix4f().translate(0, 0.45F, 0));
+        Joint modelTool = new Joint("Tool_R", 2, new OpenMatrix4f().translate(0.2F, 0, 0));
+        modelRoot.addSubJoints(modelChest);
+        modelChest.addSubJoints(modelTool);
+        Armature rebound = new Armature("model", 3, modelRoot,
+                Map.of("Root", modelRoot, "Chest", modelChest, "Tool_R", modelTool));
+        rebound.setPose(new Pose());
+
+        Object entity = new Object();
+        Object patch = new Object();
+        OpenMatrix4f[] poses = source.getPoseMatrices();
+        YsmWeaponPoseBridge.begin(entity, patch);
+        try {
+            YsmWeaponPoseBridge.capture(entity, source, poses, rebound);
+            boolean entered = YsmWeaponPoseBridge.beginItemLayer(entity, patch, source);
+            try {
+                OpenMatrix4f[] corrected = YsmWeaponPoseBridge.posesForCurrentItem(source, poses);
+                assertEquals(0.45F, corrected[1].m31, 0.0001F);
+                assertEquals(0.65F, corrected[2].m31, 0.0001F,
+                        "the sheath keeps its own offset below the model's chest");
+                assertEquals(0.2F, corrected[3].m30, 0.0001F);
+                assertEquals(1.2F, poses[2].m31, 0.0001F);
+            } finally {
+                YsmWeaponPoseBridge.endItemLayer(entered);
+            }
+        } finally {
+            YsmWeaponPoseBridge.end();
+        }
+    }
+
     private static Armature armature(String name, Map<String, Integer> ids) {
         Map<String, Joint> joints = new LinkedHashMap<>();
         int jointCount = ids.values().stream().mapToInt(Integer::intValue).max().orElse(0) + 1;
