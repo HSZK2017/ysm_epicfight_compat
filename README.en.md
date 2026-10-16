@@ -6,9 +6,15 @@ Use **Yes Steve Model (YSM) character models with Epic Fight combat animations**
 
 - **Combat mode:** this mod converts the selected YSM model so Epic Fight can drive attacks, movement, and other combat animations.
 - **Outside combat:** YSM keeps its own rendering and animation system.
-- **Multiplayer:** the selected model ID is synchronized. Dedicated servers also need this mod, and viewers need the corresponding model package locally.
+- **Multiplayer:** the selected model ID is synchronized. When the server also runs this mod, model packages a client is missing, or holds in a different version, are downloaded from the server automatically.
 
 The supported YSM families are the official 2.6.5 release, OpenYSM, and ModernYSM. The official 2.6.5 release is obfuscated. Changes to a YSM fork or Epic Fight may require updated compatibility hooks.
+
+### What's new in 1.10.3
+
+- In multiplayer, YSM model packages a client lacks, or holds in a different version, are downloaded from the server automatically; copying the server's `config` folders by hand is no longer needed, and your own YSM model folder is never modified.
+- Fixed being kicked from servers without this mod because Epic Fight flagged the locally generated wheel templates as an animation mismatch.
+- Models that cannot be obtained are named in the log with the reason; startup now warns about untested environments such as Android launchers and GL translation layers.
 
 ### What's new in 1.10.2
 
@@ -34,7 +40,7 @@ Epic Fight's strong forward lean and long strides can still cause local skirt an
 | Goal | Start here |
 |---|---|
 | Install and use the mod | [Installation and use](#installation-and-use) |
-| Review this release | [What's new in 1.10.2](#whats-new-in-1102) → [Changelog](CHANGELOG.md) |
+| Review this release | [What's new in 1.10.3](#whats-new-in-1103) → [Changelog](CHANGELOG.md) |
 | Adjust performance or appearance | [Common settings](#common-settings) |
 | Diagnose missing models, clipping, or shaders | [Known issues and limits](#known-issues-and-limits) |
 | Build the project | [Build and test](#build-and-test) |
@@ -69,8 +75,11 @@ You do not need to export Epic Fight meshes manually. A model is converted in th
 ### Multiplayer and maid integration
 
 - Install this mod on dedicated servers so they can read and broadcast players' model selections.
-- Model selection synchronization does not transfer model packages. Each viewer still needs the relevant YSM model locally.
-- For a model downloaded during an active session, use `F3+T` or `/ysm model reload` to refresh resources.
+- **Automatic model download:** when a client lacks a model someone is wearing, or holds a version whose file contents differ from the server's, it downloads the server's package and converts it once it arrives; no rejoin or manual copying is needed. Both server and client need a build with this feature; with an older build on either side nothing is downloaded, but model selections still sync.
+  - Downloads are stored in `config/ysm_epicfight_compat/server_models/<server id>/` and **never written into** the client's own `config/yes_steve_model`. They stand in for a local model of the same ID only while connected to that server.
+  - Models in the server's `auth` folder are not sent by default (see `shareAuthModels` below).
+  - When a model cannot be fetched (server without this mod or with an older build, auth model, over a size limit), the client log states the reason once per model; copying the model from the server's `config/yes_steve_model` still works.
+- On a server without this mod, the client now leaves its locally generated wheel templates out of the animation registry it reports to Epic Fight, so it is no longer kicked with `animation_unsync`.
 - Maid integration handles **YSM models used by maids**. The `ef_tlm` mod handles Touhou Little Maid's own GEO model packages.
 
 ## Common settings
@@ -85,6 +94,18 @@ Client configuration: `config/ysm_epicfight_compat-client.toml`.
 | `disableExtraPlayerInBattleMode` | `true` | Hides YSM's extra player preview in combat mode to avoid duplicate rendering |
 | `enableSecondaryMotion` | `true` | Enables secondary motion for hair, tails, skirts, and similar parts |
 | `secondaryMotionGravityAcceleration` | `24.0` | Downward acceleration for the active pendulum based secondary motion |
+| `downloadServerModels` | `true` | Download missing or differing model packages from servers running this mod |
+| `maxDownloadedModelSizeMiB` | `128` | Largest model package this client accepts, in MiB |
+
+Server-side configuration (dedicated server or LAN host): `config/ysm_epicfight_compat-common.toml`, section `[modelTransfer]`.
+
+| Option | Default | Purpose |
+|---|---|---|
+| `enabled` | `true` | Send model packages to clients that lack them or hold a different version |
+| `shareAuthModels` | `false` | Also send models from the `auth` folder. YSM ships these only to authorized players, encrypted; this sends the files as they are, so only enable it if you may distribute them |
+| `maxModelSizeMiB` | `64` | Largest model package sent, in MiB |
+| `kibPerTickPerPlayer` | `128` | Upload per receiving player per tick, in KiB (about 2.5 MiB/s) |
+| `maxConcurrentTransfers` | `3` | Packages held in memory for sending at once; further downloads queue |
 
 On ModernYSM, this mod's GPU path follows ModernYSM's `UseGpuRenderer` / `UseCompatibilityRenderer` options. This mod's `enableGpuRender` does not control that fork, and no duplicate checkbox is added.
 
@@ -103,7 +124,8 @@ If a part of a particular model is still treated as swinging when it should rema
 | Symptom or situation | Explanation or what to check |
 |---|---|
 | Default player mesh appears briefly on first use | Background conversion has not finished; later uses prefer the cache |
-| Other players' models are missing in multiplayer | Check that the server has this mod and each viewer has the model package locally |
+| Other players' models are missing in multiplayer | Check that the server has this mod; the client log names each missing model ID and why it could not be downloaded |
+| Kicked on join for an animation registry mismatch (`animation_unsync`) | This mod's generated wheel templates no longer take part in that check, with or without the mod on the server; if it still happens, the animations listed in the log come from another mod |
 | Duplicate rendering or broken part selection after a dependency update | Check the YSM fork and Mixin target signatures; a missing optional method hook may produce no log message |
 | GPU rendering is unavailable | The mod selects an available fallback. Direct GPU needs desktop GL 4.3+ / GLES 3.1+; this mod's CPU path needs GL 3.3+ / GLES 3.0+ |
 | Iris / Oculus shader packs | Direct GPU / CPU drawing yields to a shader compatible path. The optimized Iris path is enabled by default; use `-Dysm_ef_compat.disable_iris_compute_path=true` to fall back if it misbehaves |
@@ -145,7 +167,7 @@ Run from the project root:
 
 `build` includes all default tests. The second command checks the release JAR's version, mod metadata, Mixin files, converter fingerprint, and bundled zstd-jni. GitHub Actions runs the same checks on every push and pull request, saves the verified JAR, and retains test reports on failure. To rerun tests alone, use `.\gradlew.bat test`.
 
-The release artifact is `build/libs/YSM_EpicFight_Compat-1.20.1-1.10.2-all.jar`, which includes zstd-jni. Its name changes when the project version changes. See the [dependency handoff](docs/DEPENDENCIES.md) for upstream sources and checksums of local build JARs.
+The release artifact is `build/libs/YSM_EpicFight_Compat-1.20.1-1.10.3-all.jar`, which includes zstd-jni. Its name changes when the project version changes. See the [dependency handoff](docs/DEPENDENCIES.md) for upstream sources and checksums of local build JARs.
 
 To run the optional end to end `.ysm` decryption test with a real model:
 

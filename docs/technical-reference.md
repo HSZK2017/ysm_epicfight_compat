@@ -100,7 +100,7 @@
 
 ### 事件与 Mixin
 
-主配置 `ysm_epicfight_compat.mixins.json`（**31** 个客户端 mixin + 1 个 common）：`ModernYsm*`（3）、`OpenYsm*`（4，含配置界面）、`YsmUnobf*`（4）、混淆版 `Ysm*`（8）、`PPlayerRendererMixin`、`RenderSystemAccessorMixin`（着色器光照方向）、`SkinnedMeshCpuRenderMixin`（EF drawPosed 回退拦截 → 本模组 CPU 蒙皮路径）、`EpicFightRenderLivingEventMixin`、`DiscreteInputActionTriggerMixin`、`MouseHandlerMixin`、`YsmRouletteConfigExpressionMixin`、`YsmAnimationTransitionGuardMixin`、`YsmLivingMovementPredicateMixin`、`YsmArmaturePoseMixin`、`YsmExtraPlayerOverlayMixin`（战斗模式抑制纸娃娃，见配置 `disableExtraPlayerInBattleMode`）；common 段为 `AnimationManagerValidationMixin`（服务端动画注册表校验豁免，见下）；可选配置 `ysm_epicfight_compat.eftlm.mixins.json`（TLM 女仆渲染挂钩，`required: false`，TLM 缺席时安全）。
+主配置 `ysm_epicfight_compat.mixins.json`（**32** 个客户端 mixin + 1 个 common）：`AnimationRegistryClientFilterMixin`（上报动画注册表前去掉生成模板，见下）、`ModernYsm*`（3）、`OpenYsm*`（4，含配置界面）、`YsmUnobf*`（4）、混淆版 `Ysm*`（8）、`PPlayerRendererMixin`、`RenderSystemAccessorMixin`（着色器光照方向）、`SkinnedMeshCpuRenderMixin`（EF drawPosed 回退拦截 → 本模组 CPU 蒙皮路径）、`EpicFightRenderLivingEventMixin`、`DiscreteInputActionTriggerMixin`、`MouseHandlerMixin`、`YsmRouletteConfigExpressionMixin`、`YsmAnimationTransitionGuardMixin`、`YsmLivingMovementPredicateMixin`、`YsmArmaturePoseMixin`、`YsmExtraPlayerOverlayMixin`（战斗模式抑制纸娃娃，见配置 `disableExtraPlayerInBattleMode`）；common 段为 `AnimationManagerValidationMixin`（服务端动画注册表校验豁免，见下）；可选配置 `ysm_epicfight_compat.eftlm.mixins.json`（TLM 女仆渲染挂钩，`required: false`，TLM 缺席时安全）。
 
 ### 多人联机模型同步 (`com.ysmef.compat.network`)
 
@@ -110,6 +110,22 @@
 | **模型广播包** | `S2CSetModelAndTexturePacket`（YSM id 4 模式）：entityId + modelId + textureId + disabled + UUID（客户端以 UUID 为主键注册，对重生/跨维度更稳） |
 | **服务端广播时机** | 入世界握手 → `PlayerEvent.StartTracking` 推送 → 每 40 tick 差异扫描广播（检测需序列化全量玩家 NBT，2 秒周期是吞吐折中） |
 | **服务端数据源** | `YsmCapabilityReader` 读 `ServerPlayer` ForgeCaps NBT（`yes_steve_model:model_id`），无 YSM 类依赖 |
+| **版本协商** | 选择同步握手字符串仍为 `1.0.0`（各版本按相等比较，改动会让新旧版本之间停止同步）；模型传输能力通过 Forge 通道版本 `1.1.0` 表达，双方从 `NetworkHooks.getConnectionData` 读取对端通道版本，对端 ≥1.1 才发送 id 4–7 的消息，旧版对端不会收到未知判别号 |
+| **动画注册表上报过滤** | `AnimationRegistryClientFilterMixin`（client 段）在 `CPCheckAnimationRegistryMatches(int, String[])` 构造后去掉 `ysm_epicfight_compat:public/pub_*`，并同步改写 `animationCount`（服务端按该计数读取字符串）；与服务端豁免 `AnimationManagerValidationMixin` 互为冗余，前者覆盖服务端未装本模组的情况。两者都是软注入，`AnimationRegistryGuard.reportExemptionTarget()` 启动时核对目标并记录 |
+
+#### 模型包传输 (`ModelTransferServer` / `ModelTransferClient`)
+
+YSM 自身同步给客户端的模型存放在 `config/yes_steve_model/cache/client/`，以只有 YSM 运行时持有的密钥加密，本模组无法读取；本模组转换需要模型源文件，所以缺少源文件的客户端过去只能显示 EF 默认模型。
+
+| 步骤 | 细节 |
+|---|---|
+| **触发** | 客户端收到某玩家的模型选择（`ModelSyncClient`），或任何调用方（含女仆）查找模型而本地缺失时，每个模型每次连接查询一次（`C2SModelQueryPacket`） |
+| **服务端应答** | `S2CModelInfoPacket`：状态 + 包大小 + SHA-256 + 服务器 ID。哈希覆盖 `ModelBlob` 序列化（按相对路径排序的文件内容），与修改时间、所在根目录无关；按元数据签名缓存，未变动的包不重复读取。局域网房主自己的客户端得到 `SAME_FILES` |
+| **客户端判定** | 本地包哈希相同 → 用本地；`server_models/<服务器ID>/` 中已有相同哈希的副本 → 直接启用；否则请求下载（`C2SModelDownloadPacket` 携带所请求的哈希，服务端只接受与其报价一致的请求） |
+| **传输** | `S2CModelChunkPacket` 每片 ≤32 KiB，按 `kibPerTickPerPlayer` 限速；后台单线程打包，最多 `maxConcurrentTransfers` 个包同时驻留内存；每连接查询 ≤512、排队下载 ≤64 |
+| **落盘** | 分片顺序写入临时文件 → 校验 SHA-256 → 在暂存目录中解包（条目数、总大小、路径逐项校验，拒绝 `..`、绝对路径、重复条目与尾随数据）→ 移入目标位置 |
+| **生效** | `ServerModelOverlay` 让该模型 ID 只解析到服务器副本（替代四个 YSM 根目录，不回落本地）；`YSMMeshLibrary.onModelAvailabilityChanged` 释放旧网格、纹理并作废正在进行的旧源转换（按模型标记，不影响其他模型），下一次查找按新源重新转换。断开连接时所有替代撤销，恢复本地文件 |
+| **限制** | auth 目录模型默认不发送（`shareAuthModels`）；超出任一侧大小限制、服务器未装本模组或版本较旧时不下载，日志说明原因 |
 
 ---
 
@@ -193,7 +209,7 @@
 1. **渲染路径回退链**：GPU 蒙皮需 GL 4.3+（Android 需 OpenGL ES 3.1，ES 路径已去除桌面专属 GL 调用，真机验证待 Android 环境）；不满足时依次回退 EF 计算着色器 → 本模组 CPU 蒙皮（桌面 GL 3.3+ / OpenGL ES 3.0+，无缺面）→ EF drawPosed（三角化已修复，渲染完整）。macOS（GL 4.1 无计算着色器）走 CPU 蒙皮
 2. **Iris/Oculus 光影包**：光影包激活时 GPU/CPU 直连路径让位 EF 计算路径，由本模组的优化 Iris 路径（关节-only 上传、无 MAX_JOINTS 上限）接管：**自 2026-09-20 起默认开启**。它曾长期不可达（无任何外部引用），第一次真正绘制时暴露出一个**重传门控缺项**：part 段只在"增量出现/消失"时才重传，而二次运动是每帧变化的数值 → part 段只上传过一次并冻结（实测 `[physics]` 报 "59 of 59 bone(s) moving" 而画面无位移）。缺陷已修复并实机验证：9 个模型（单个 51–597 部件、最高 103,998 顶点）全部 `partCount` 一致、物理可见、零 ERROR、零 draw failed。**该验证的边界**：一台机器、一种光影，且"超 MAX_JOINTS(1000) 容量"这一能力未被触达（本次最大 597 部件 + 约 20 关节，未越界），描边/GUI 通道亦未行使。不适用时用 `-Dysm_ef_compat.disable_iris_compute_path=true` 退回 EF 自带 Iris 路径（它同样带增量）；计算着色器不可用时由三角化已修复的 drawPosed 兜底
 3. **懒转换首用延迟**：模型首次渲染若缓存未命中，后台转换期间短暂回退 EF biped（几帧）；异步纹理上传同理（纹理出现前 1-2 帧为缺失纹理）
-4. **多人联机同步要求专用服务器安装本模组**（服务端仅做 NBT 读取与广播）；未安装时回退 EF biped
+4. **多人联机同步要求专用服务器安装本模组**（服务端读取并广播模型选择，并向客户端发送其缺少的模型包）；未安装时远端玩家回退 EF biped，客户端缺少的模型也无法自动获取
 5. **远程玩家模型需本地可用**：模型包必须在 `config/yes_steve_model/{builtin,custom,auth}`；会话中途新下载的模型需 F3+T 或 `/ysm model reload` 触发重新生成
 6. **混淆目标依赖版本**：官方 2.6.5（＝完全混淆构建）的可读类只有 `mixin/` 包，其 `client.*` 目标全部为 2.6.5 特定混淆名，由 `Ysm*Mixin` 覆盖；OpenYSM/ModernYSM 走未混淆/新签名的 `OpenYsm*`/`ModernYsm*`/`YsmUnobf*` 家族。`mods.toml` 已把 Epic Fight 限制在 `[20.14.17,20.15)`、YSM 限制在 `[2.6,2.7)`，升级依赖需按描述符重新定位并更新契约
 7. **贴图格式**：PNG/JPEG 直读；WebP/AVIF 经 YSM ImageStream 反射解码（OpenYSM/ModernYSM 内置，官方 2.6.5 缺失时跳过并告警）；BMP 不支持

@@ -6,6 +6,17 @@ Release highlights only. See the [development history](docs/development-history.
 
 ## 未发布 / Unreleased
 
+## v1.10.3 — 2026-10-16
+
+- 启动时检测运行环境：识别安卓启动器（Pojav/FCL/Zalith 等）、32 位 JVM、过低的内存上限，以及 GLES 版本不足、gl4es/ANGLE/Zink 转换层和软件渲染器等不满足运行要求的情况，并在日志中打印警告；可用 `-Dysm_ef_compat.disable_env_check` 关闭。
+- 修复服务器未安装本模组时，客户端本地生成的动作轮模板触发 Epic Fight 动画注册表校验而被踢出（`animation_unsync`）的问题：客户端上报前即去除这些模板。
+- 客户端缺少或与服务器版本不同的 YSM 模型包，现在会从安装了本模组的服务器自动下载并转换，不再需要手动复制服务器的 `config` 文件夹。下载内容存放于 `config/ysm_epicfight_compat/server_models/`，不修改客户端自己的 YSM 模型目录；auth 模型默认不发送。
+- 无法获取的模型会在日志中逐个提示缺失原因，不再静默显示为 EF 默认模型。
+- Fixed players being kicked with `animation_unsync` on servers without this mod: the client now removes its locally generated wheel templates from the registry list before reporting it.
+- YSM model packages a client lacks, or holds in a different version, are now downloaded automatically from servers running this mod, replacing the manual copying of the server's config folders. Downloads live in `config/ysm_epicfight_compat/server_models/` and never modify the client's own YSM folder; auth models are not sent by default.
+- Models that cannot be obtained are now named in the log with the reason, instead of silently rendering as the Epic Fight default model.
+- Startup environment check: detects Android launchers (Pojav/FCL/Zalith etc.), 32-bit JVMs, low heap limits, insufficient GLES versions, gl4es/ANGLE/Zink translation layers and software rasterizers, and logs warnings when the environment may not meet the mod's requirements; disable with `-Dysm_ef_compat.disable_env_check`.
+
 ## v1.10.2 — 2026-10-13
 
 - 武器随当前 YSM 模型的手部位置移动；支持重新读取骨架矩阵的 Epic Fight 附属武器及其刀鞘等附属骨骼。
