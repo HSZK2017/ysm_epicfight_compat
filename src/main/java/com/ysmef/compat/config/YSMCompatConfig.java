@@ -111,6 +111,12 @@ public class YSMCompatConfig {
      * as a fraction of each piece's own category weight.
      */
     public static final ForgeConfigSpec.DoubleValue SECONDARY_MOTION_GRAVITY_FOLLOW;
+
+    /** Accept model packages from servers (see ModelTransferClient). */
+    public static final ForgeConfigSpec.BooleanValue DOWNLOAD_SERVER_MODELS;
+    /** Largest package accepted from a server, in MiB. */
+    public static final ForgeConfigSpec.IntValue MAX_DOWNLOADED_MODEL_MIB;
+
     static {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
 
@@ -292,6 +298,17 @@ public class YSMCompatConfig {
                         "garments; 96 is honoured as the cap this key's own description always promised.")
                 .defineInRange("secondaryMotionMaxChains", -1, -1, 512);
 
+        DOWNLOAD_SERVER_MODELS = builder
+                .comment("Download YSM model packages from servers running this mod when this client is missing a model",
+                        "someone is wearing, or holds a different version of it than the server.",
+                        "Downloads are stored in config/ysm_epicfight_compat/server_models/<server>/ and only used while",
+                        "connected to that server; your own config/yes_steve_model is never modified.")
+                .define("downloadServerModels", true);
+
+        MAX_DOWNLOADED_MODEL_MIB = builder
+                .comment("Largest model package this client accepts from a server, in MiB.")
+                .defineInRange("maxDownloadedModelSizeMiB", 128, 1, 512);
+
         builder.pop();
 
         CLIENT_SPEC = builder.build();
@@ -300,5 +317,6 @@ public class YSMCompatConfig {
     @SuppressWarnings("removal")
     public static void register() {
         ModLoadingContext.get().registerConfig(ModConfig.Type.CLIENT, CLIENT_SPEC);
+        ModLoadingContext.get().registerConfig(ModConfig.Type.COMMON, YSMCompatServerConfig.COMMON_SPEC);
     }
 }

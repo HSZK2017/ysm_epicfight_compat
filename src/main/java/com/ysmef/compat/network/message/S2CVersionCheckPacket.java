@@ -50,6 +50,9 @@ public class S2CVersionCheckPacket {
                             message.version, NetworkHandler.VERSION);
                 }
             }
+            boolean transfer = NetworkHandler.VERSION.equals(message.version)
+                    && NetworkHandler.peerSupportsTransfer(context.getNetworkManager());
+            context.enqueueWork(() -> com.ysmef.compat.network.ModelTransferClient.onHandshake(transfer));
             if (NetworkHandler.setChannelVersion(context.getNetworkManager(), message.version)) {
                 context.enqueueWork(() -> YSMEpicFightCompat.LOGGER.debug(
                         "YSM-EF Compat: model sync handshake, server protocol version '{}'", message.version));

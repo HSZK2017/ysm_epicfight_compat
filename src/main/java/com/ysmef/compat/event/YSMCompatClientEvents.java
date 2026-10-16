@@ -114,6 +114,14 @@ public class YSMCompatClientEvents {
         // feature asks first log a fragment) is what made the earlier
         // mis-attribution between the OpenYSM and ModernYSM lineages possible.
         com.ysmef.compat.ysm.YsmFork.reportAtStartup();
+        // Same report-once-up-front reasoning for the runtime environment:
+        // Android launchers and GL translation layers are where the untestable
+        // field reports come from, so the log should identify them before any
+        // feature fails. Host facts need no GL context; the GL probe needs the
+        // render thread, so it rides enqueueWork ahead of the path registration
+        // whose outcome it explains.
+        com.ysmef.compat.env.EnvironmentCheck.reportHost();
+        com.ysmef.compat.network.ModelTransferClient.setListener(YSMMeshLibrary::onModelAvailabilityChanged);
         com.ysmef.compat.gpu.YsmGpuRenderEnable.reportToggleLinkage();
         // Load the three skinning paths on purpose, and report which answered.
         //
@@ -127,6 +135,7 @@ public class YSMCompatClientEvents {
         //
         // enqueueWork puts this on the client/main thread, which is the render thread, and after
         // setup, so the paths are live before the first frame that can draw a converted mesh.
+        event.enqueueWork(com.ysmef.compat.env.EnvironmentCheck::reportGlContext);
         event.enqueueWork(YSMCompatClientEvents::registerRenderPaths);
         // Let other mods' appearance takeovers claim a player; this mod steps aside
         // for as long as they do (see LookOwners).

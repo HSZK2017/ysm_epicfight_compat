@@ -78,6 +78,8 @@ public final class ModelSyncClient {
             return;
         }
         store(uuid, new SyncedModel(modelId, textureName == null ? "" : textureName));
+        // Someone here wears this model: make sure this client converts the server's version of it.
+        ModelTransferClient.requestIfNeeded(modelId);
     }
 
     /** Store one entry, refusing to grow the map past the cap for a UUID it does not yet hold. */

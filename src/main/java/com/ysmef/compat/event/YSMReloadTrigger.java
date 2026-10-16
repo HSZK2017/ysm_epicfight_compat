@@ -52,6 +52,8 @@ public class YSMReloadTrigger {
     public static void onDisconnect(ClientPlayerNetworkEvent.LoggingOut event) {
         YSMModelAccess.clearCache();
         ModelSyncClient.clear();
+        // Server copies only stand in for local models while connected to their server.
+        com.ysmef.compat.network.ModelTransferClient.clear();
         YsmWheelPlayback.clear();
         com.ysmef.compat.renderer.YSMMeshSelector.clear();
         com.ysmef.compat.renderer.YsmWheelAnimationState.invalidate();
@@ -94,6 +96,7 @@ public class YSMReloadTrigger {
         // ModernYSM-style delayed releases: drop evicted textures and meshes
         // only after a few ticks so the current frame's draws never use freed
         // resources mid-frame. All must run on the render thread (this tick).
+        com.ysmef.compat.network.ModelTransferClient.drainMainThread();
         YSMMeshLibrary.processPendingTextureReleases();
         YSMMeshLibrary.processPendingMeshReleases();
         // Instantiate freshly registered meshes with a small per-tick budget so

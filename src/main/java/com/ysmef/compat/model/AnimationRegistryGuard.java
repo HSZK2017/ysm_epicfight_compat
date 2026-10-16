@@ -41,6 +41,39 @@ public final class AnimationRegistryGuard {
         return normalized(registryName).startsWith(NORMALIZED_PREFIX);
     }
 
+    /**
+     * The registry names a client reports to the server, minus this mod's generated templates.
+     *
+     * <p>The server-side exemption only exists where the server runs this mod. A dedicated server
+     * without it compares the list verbatim, and every template this client generated from its own
+     * wheel use reads as "an animation the server does not have" - the player is disconnected with
+     * {@code gui.epicfight.warn.animation_unsync}. Dropping them from what the client sends makes the
+     * check pass on every server: the templates are client-only by construction, so the server can
+     * never have been expected to hold them. Returns the input array itself when nothing was removed.
+     */
+    public static String[] withoutGenerated(String[] registryNames) {
+        if (registryNames == null) {
+            return null;
+        }
+        int kept = 0;
+        for (String name : registryNames) {
+            if (!shouldIgnore(name)) {
+                kept++;
+            }
+        }
+        if (kept == registryNames.length) {
+            return registryNames;
+        }
+        String[] filtered = new String[kept];
+        int i = 0;
+        for (String name : registryNames) {
+            if (!shouldIgnore(name)) {
+                filtered[i++] = name;
+            }
+        }
+        return filtered;
+    }
+
     /** Lowercase copy of the input with every non-alphanumeric character removed. */
     private static String normalized(String value) {
         StringBuilder sb = new StringBuilder(value.length());
@@ -111,6 +144,37 @@ public final class AnimationRegistryGuard {
         } catch (Throwable t) {
             YSMEpicFightCompat.LOGGER.warn(
                     "YSM-EF Compat: could not verify the animation registry exemption target", t);
+        }
+        reportClientFilterTarget();
+    }
+
+    /**
+     * Same reasoning for the client-side half ({@code AnimationRegistryClientFilterMixin}), which is
+     * also a soft injection: it rewrites the two public final fields of the packet's
+     * {@code (int, String[])} constructor, so both fields and that constructor are what is checked.
+     * When it stops applying, joining a server that does not run this mod disconnects the player.
+     */
+    private static void reportClientFilterTarget() {
+        try {
+            Class<?> packet = Class.forName("yesman.epicfight.network.client.CPCheckAnimationRegistryMatches",
+                    false, AnimationRegistryGuard.class.getClassLoader());
+            packet.getDeclaredConstructor(int.class, String[].class);
+            boolean fields = packet.getDeclaredField("animationCount").getType() == int.class
+                    && packet.getDeclaredField("registryNames").getType() == String[].class;
+            if (fields) {
+                YSMEpicFightCompat.LOGGER.info(
+                        "YSM-EF Compat: client animation registry filter target resolved: {}", packet.getName());
+                return;
+            }
+            YSMEpicFightCompat.LOGGER.error(
+                    "YSM-EF Compat: {} changed its field types; generated wheel templates are no longer removed "
+                            + "from the registry list this client reports, so joining a server without this mod "
+                            + "will disconnect with gui.epicfight.warn.animation_unsync", packet.getName());
+        } catch (Throwable t) {
+            YSMEpicFightCompat.LOGGER.error(
+                    "YSM-EF Compat: Epic Fight's CPCheckAnimationRegistryMatches no longer has the (int, String[]) "
+                            + "constructor and fields this mod filters ({}); joining a server without this mod will "
+                            + "disconnect with gui.epicfight.warn.animation_unsync", t.toString());
         }
     }
 }

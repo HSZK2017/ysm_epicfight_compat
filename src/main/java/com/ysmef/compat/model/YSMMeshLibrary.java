@@ -325,12 +325,87 @@ public class YSMMeshLibrary {
 
         if (!YsmModelPackage.existsLocally(modelId)) {
             FAILED_MODELS.add(modelId);
+            reportMissingSource(modelId);
             return false;
         }
 
         PENDING_MODELS.add(modelId);
         LAZY_POOL.submit(() -> convertModelAsync(modelId));
         return false;
+    }
+
+    /** Models whose missing source was already reported; cleared when the source may have appeared. */
+    private static final Set<String> MISSING_REPORTED = ConcurrentHashMap.newKeySet();
+
+    /**
+     * Say once per model that its package is not on this machine, and what that means.
+     *
+     * <p>This used to be silent: the model was marked failed and everyone wearing it rendered as the
+     * Epic Fight default model in battle mode, with nothing in the log pointing at the cause. While
+     * the server is still answering or sending the model nothing is reported yet; the transfer
+     * settling re-triggers this check (see {@link #onModelAvailabilityChanged}).
+     */
+    private static void reportMissingSource(String modelId) {
+        // Covers every caller (players and maids alike), not only the synced player selections.
+        com.ysmef.compat.network.ModelTransferClient.requestIfNeeded(modelId);
+        if (com.ysmef.compat.network.ModelTransferClient.isResolving(modelId)) {
+            return;
+        }
+        if (!MISSING_REPORTED.add(modelId)) {
+            return;
+        }
+        String reason = com.ysmef.compat.network.ModelTransferClient.unavailableReason(modelId);
+        if (reason != null) {
+            YSMEpicFightCompat.LOGGER.warn(
+                    "YSM-EF Compat: YSM model '{}' is not on this machine and the server cannot send it ({}); players "
+                            + "wearing it render as the Epic Fight default model in battle mode. Copy it from the "
+                            + "server's config/yes_steve_model into this client's config/yes_steve_model to fix it",
+                    modelId, reason);
+        } else {
+            YSMEpicFightCompat.LOGGER.warn(
+                    "YSM-EF Compat: YSM model '{}' is not on this machine (looked in config/yes_steve_model/"
+                            + "builtin, built, custom and auth); players wearing it render as the Epic Fight default "
+                            + "model in battle mode. A server running this mod with modelTransfer enabled sends it "
+                            + "automatically; otherwise copy it from the server's config/yes_steve_model", modelId);
+        }
+    }
+
+    /**
+     * Models whose source was replaced while a restore or conversion of the old source was in
+     * flight: that work's result is dropped at its next checkpoint (worker lock or render-thread
+     * drain), whichever it reaches first. Per model, unlike {@link #LOAD_GENERATION}, so a download
+     * finishing does not throw away every other model's conversion.
+     */
+    private static final Set<String> REPLACED_WHILE_PENDING = ConcurrentHashMap.newKeySet();
+
+    /**
+     * Render thread: the transfer settled for {@code modelId}, or its source changed between this
+     * machine's copy and a copy from the server.
+     *
+     * <p>The model is no longer treated as failed, so the next lookup resolves it again (and reports
+     * it once more if it is still missing, now with the server's reason). When the source was
+     * replaced, the loaded mesh is dropped as well: it was converted from the other copy. The next
+     * lookup re-verifies the manifest entry against the new source; a copy is only ever swapped in
+     * when its content differs, so the content fingerprint no longer matches and the model is
+     * re-converted.
+     */
+    public static synchronized void onModelAvailabilityChanged(String modelId, boolean sourceReplaced) {
+        FAILED_MODELS.remove(modelId);
+        MISSING_REPORTED.remove(modelId);
+        if (!sourceReplaced) {
+            return;
+        }
+        if (PENDING_MODELS.contains(modelId)) {
+            // The in-flight work clears its own pending mark when it drops its result; clearing it
+            // here would let the next lookup start a second conversion alongside it.
+            REPLACED_WHILE_PENDING.add(modelId);
+        }
+        if (!evictModel(modelId)) {
+            // Not loaded, but a restore may already have registered (and uploaded) the old copy's
+            // textures under the same locations the new copy will use.
+            TextureStore.releaseTexturesOfModel(modelId);
+            YSMRuntimeModel.invalidate(modelId);
+        }
     }
 
     /**
@@ -377,7 +452,8 @@ public class YSMMeshLibrary {
             }
         }
         synchronized (YSMMeshLibrary.class) {
-            if (generation != LOAD_GENERATION.get()) {
+            boolean replaced = REPLACED_WHILE_PENDING.remove(modelId);
+            if (generation != LOAD_GENERATION.get() || replaced) {
                 PENDING_MODELS.remove(modelId);
                 return;
             }
@@ -397,6 +473,7 @@ public class YSMMeshLibrary {
             LAZY_POOL.submit(() -> convertModelAsync(modelId));
         } else {
             FAILED_MODELS.add(modelId);
+            reportMissingSource(modelId);
         }
     }
 
@@ -419,6 +496,15 @@ public class YSMMeshLibrary {
         while ((registration = PENDING_MESH_REGISTRATIONS.poll()) != null) {
             if (registration.generation() != LOAD_GENERATION.get()) {
                 // stale result of a previous load generation: drop, never register
+                REPLACED_WHILE_PENDING.remove(registration.modelId());
+                PENDING_MODELS.remove(registration.modelId());
+                continue;
+            }
+            if (REPLACED_WHILE_PENDING.remove(registration.modelId())) {
+                // converted or restored from the source that was just replaced; the textures it
+                // registered belong to that source too
+                TextureStore.releaseTexturesOfModel(registration.modelId());
+                YSMRuntimeModel.invalidate(registration.modelId());
                 PENDING_MODELS.remove(registration.modelId());
                 continue;
             }
@@ -451,6 +537,7 @@ public class YSMMeshLibrary {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             synchronized (YSMMeshLibrary.class) {
+                REPLACED_WHILE_PENDING.remove(modelId);
                 PENDING_MODELS.remove(modelId);
             }
             return;
@@ -458,10 +545,11 @@ public class YSMMeshLibrary {
         try {
             ModelResult result = MODEL_CONVERTER.convertModel(modelId);
             synchronized (YSMMeshLibrary.class) {
-                if (generation != LOAD_GENERATION.get()) {
-                    // the caches were invalidated (model reload) while converting:
-                    // the on-disk outputs are still valid for the next lookup, but
-                    // the in-memory registration of this (possibly stale) result is dropped
+                boolean replaced = REPLACED_WHILE_PENDING.remove(modelId);
+                if (generation != LOAD_GENERATION.get() || replaced) {
+                    // the caches were invalidated (model reload), or this model's source was
+                    // replaced, while converting: the in-memory registration of this (possibly
+                    // stale) result is dropped
                     PENDING_MODELS.remove(modelId);
                     return;
                 }
@@ -477,7 +565,8 @@ public class YSMMeshLibrary {
             }
         } catch (Throwable t) {
             synchronized (YSMMeshLibrary.class) {
-                if (generation == LOAD_GENERATION.get()) {
+                boolean replaced = REPLACED_WHILE_PENDING.remove(modelId);
+                if (generation == LOAD_GENERATION.get() && !replaced) {
                     FAILED_MODELS.add(modelId);
                 }
                 PENDING_MODELS.remove(modelId);
@@ -707,6 +796,8 @@ public class YSMMeshLibrary {
         MESHES.clear();
         TextureStore.invalidateAll();
         FAILED_MODELS.clear();
+        MISSING_REPORTED.clear();
+        REPLACED_WHILE_PENDING.clear();
         PENDING_MODELS.clear();
         // No registration survives the invalidation, so nothing left to prewarm.
         PENDING_PREWARM.clear();

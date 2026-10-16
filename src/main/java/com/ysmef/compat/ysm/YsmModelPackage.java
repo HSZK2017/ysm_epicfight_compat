@@ -139,6 +139,82 @@ public final class YsmModelPackage {
         return Files.isDirectory(directory) && isInsideReal(directory, root);
     }
 
+    /** One place a model id may resolve under: a YSM root, or the server copy that replaces them. */
+    private record SearchRoot(String name, Path path) {}
+
+    private static final List<SearchRoot> LOCAL_ROOTS = localRoots();
+
+    private static List<SearchRoot> localRoots() {
+        List<SearchRoot> roots = new ArrayList<>(ROOTS.length);
+        for (String root : ROOTS) {
+            roots.add(new SearchRoot(root, YSM_CONFIG.resolve(root).normalize()));
+        }
+        return List.copyOf(roots);
+    }
+
+    /**
+     * The roots a model id is looked up in. A copy the connected server confirmed for this id
+     * replaces all four YSM roots (see {@link ServerModelOverlay}); there is no fall-through, because
+     * a model the server says is different must not quietly resolve to the local version instead.
+     */
+    private static List<SearchRoot> searchRoots(String modelId) {
+        Path overlay = ServerModelOverlay.rootFor(modelId);
+        return overlay == null ? LOCAL_ROOTS : List.of(new SearchRoot(ServerModelOverlay.ROOT_NAME, overlay));
+    }
+
+    /**
+     * Where a model's source lives: the root it was found under (by name and path), and the package
+     * itself - a {@code .ysm} file, or a folder holding {@code ysm.json}.
+     */
+    public record Located(String rootName, Path root, Path path, boolean binary) {
+        /** Whether this is a YSM auth package (distribution restricted by YSM to authorized players). */
+        public boolean isAuth() {
+            return "auth".equals(rootName);
+        }
+    }
+
+    /**
+     * Find a model's source in YSM's own folders, ignoring any server copy: what this machine has
+     * itself. Null when the id is unsafe or no package of that id exists.
+     */
+    public static Located locateLocal(String modelId) {
+        return locateIn(modelId, LOCAL_ROOTS);
+    }
+
+    /** Find a model's source in one server-copy root (layout as one YSM root); null when absent. */
+    public static Located locateUnder(Path overlayRoot, String modelId) {
+        return locateIn(modelId, List.of(new SearchRoot(ServerModelOverlay.ROOT_NAME,
+                overlayRoot.toAbsolutePath().normalize())));
+    }
+
+    private static Located locateIn(String modelId, List<SearchRoot> roots) {
+        Path relative = relativeModelPath(modelId);
+        if (relative == null) {
+            return null;
+        }
+        boolean binary = modelId.endsWith(".ysm");
+        for (SearchRoot searchRoot : roots) {
+            Path rootPath = searchRoot.path();
+            Path candidate = rootPath.resolve(relative).normalize();
+            if (binary ? isRegularFileInside(candidate, rootPath)
+                    : isDirectoryInside(candidate, rootPath)
+                            && isRegularFileInside(candidate.resolve("ysm.json"), candidate)) {
+                return new Located(searchRoot.name(), rootPath, candidate, binary);
+            }
+        }
+        return null;
+    }
+
+    /** Whether {@code path} really resides under {@code root} (symlinks resolved); for package readers. */
+    public static boolean residesInside(Path path, Path root) {
+        return isInsideReal(path, root);
+    }
+
+    /** The validated relative path of a model id, or null when the id is unsafe; see relativeModelPath. */
+    public static Path safeRelativePath(String modelId) {
+        return relativeModelPath(modelId);
+    }
+
     /**
      * Whether the model id currently exists locally. Unlike
      * {@link #scanAvailableModels()} this only stats the four possible package
@@ -149,8 +225,8 @@ public final class YsmModelPackage {
         if (relative == null) {
             return false;
         }
-        for (String root : ROOTS) {
-            Path rootPath = YSM_CONFIG.resolve(root).normalize();
+        for (SearchRoot searchRoot : searchRoots(modelId)) {
+            Path rootPath = searchRoot.path();
             Path candidate = rootPath.resolve(relative).normalize();
             boolean exists = modelId.endsWith(".ysm")
                     ? isRegularFileInside(candidate, rootPath)
@@ -295,8 +371,8 @@ public final class YsmModelPackage {
                     "YSM-EF Compat: refusing to load YSM model package with unsafe id '{}'", modelId);
             return null;
         }
-        for (String root : ROOTS) {
-            Path rootPath = YSM_CONFIG.resolve(root).normalize();
+        for (SearchRoot searchRoot : searchRoots(modelId)) {
+            Path rootPath = searchRoot.path();
             Path modelDir = rootPath.resolve(safeModel).normalize();
             if (!isDirectoryInside(modelDir, rootPath)) {
                 continue;
@@ -782,8 +858,9 @@ public final class YsmModelPackage {
                     "YSM-EF Compat: refusing to load YSM model package with unsafe id '{}'", modelId);
             return null;
         }
-        for (String root : ROOTS) {
-            Path ysmRoot = YSM_CONFIG.resolve(root).normalize();
+        for (SearchRoot searchRoot : searchRoots(modelId)) {
+            String root = searchRoot.name();
+            Path ysmRoot = searchRoot.path();
             Path ysmFile = ysmRoot.resolve(safeModel).normalize();
             if (!isRegularFileInside(ysmFile, ysmRoot)) {
                 continue;
@@ -1023,8 +1100,9 @@ public final class YsmModelPackage {
             }
             long hash = 0xcbf29ce484222325L;
             boolean found = false;
-            for (String root : ROOTS) {
-                Path rootPath = YSM_CONFIG.resolve(root).normalize();
+            for (SearchRoot searchRoot : searchRoots(modelId)) {
+                String root = searchRoot.name();
+                Path rootPath = searchRoot.path();
                 Path base = rootPath.resolve(relative).normalize();
                 if (modelId.endsWith(".ysm")) {
                     if (isRegularFileInside(base, rootPath)) {
@@ -1110,8 +1188,9 @@ public final class YsmModelPackage {
             if (relative == null) {
                 return -1L;
             }
-            for (String root : ROOTS) {
-                Path rootPath = YSM_CONFIG.resolve(root).normalize();
+            for (SearchRoot searchRoot : searchRoots(modelId)) {
+                String root = searchRoot.name();
+                Path rootPath = searchRoot.path();
                 Path base = rootPath.resolve(relative).normalize();
                 if (modelId.endsWith(".ysm")) {
                     if (isRegularFileInside(base, rootPath)) {

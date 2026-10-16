@@ -1,7 +1,11 @@
 package com.ysmef.compat.network;
 
 import com.ysmef.compat.YSMEpicFightCompat;
+import com.ysmef.compat.network.message.C2SModelDownloadPacket;
+import com.ysmef.compat.network.message.C2SModelQueryPacket;
 import com.ysmef.compat.network.message.C2SVersionCheckPacket;
+import com.ysmef.compat.network.message.S2CModelChunkPacket;
+import com.ysmef.compat.network.message.S2CModelInfoPacket;
 import com.ysmef.compat.network.message.S2CSetModelAndTexturePacket;
 import com.ysmef.compat.network.message.S2CVersionCheckPacket;
 import io.netty.util.AttributeKey;
@@ -38,13 +42,64 @@ import java.util.Optional;
  */
 public final class NetworkHandler {
 
+    /**
+     * The model-sync handshake version (S2C/C2S version check). Deliberately still 1.0.0 after the
+     * model transfer was added: the selection sync itself did not change, and every build compares
+     * this string for equality, so bumping it would stop selections syncing between this build and
+     * any earlier one in both directions. Transfer support is negotiated separately, through the
+     * Forge channel version ({@link #CHANNEL_VERSION}, see {@link #peerSupportsTransfer}).
+     */
     public static final String VERSION = "1.0.0";
+
+    /**
+     * The Forge channel version, exchanged by Forge's own login handshake and readable on both sides
+     * from the connection. 1.1.0 = this build answers and sends model transfers (message ids 4-7).
+     * Both acceptance predicates stay permissive, so no combination of versions refuses a login.
+     */
+    public static final String CHANNEL_VERSION = "1.1.0";
+
+    /** Upper bound on a model id on the wire; real ids are short relative paths. */
+    public static final int MAX_MODEL_ID_LENGTH = 256;
 
     public static final ResourceLocation CHANNEL_ID = ResourceLocation.fromNamespaceAndPath(
             YSMEpicFightCompat.MODID, "model_sync");
 
     public static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(
-            CHANNEL_ID, () -> VERSION, str -> true, str -> true);
+            CHANNEL_ID, () -> CHANNEL_VERSION, str -> true, str -> true);
+
+    /**
+     * Whether the peer on {@code connection} handles the model transfer messages: its channel version
+     * from the Forge login handshake is 1.1 or later. An older peer has no handler for ids 4-7 and
+     * would log an "invalid discriminator" error for each one, so nothing is sent to it. False when
+     * Forge recorded no handshake data (in-memory singleplayer connection, which needs no transfer).
+     */
+    public static boolean peerSupportsTransfer(Connection connection) {
+        if (connection == null) {
+            return false;
+        }
+        try {
+            net.minecraftforge.network.ConnectionData data = net.minecraftforge.network.NetworkHooks
+                    .getConnectionData(connection);
+            return data != null && supportsTransfer(data.getChannels().get(CHANNEL_ID));
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** Whether a channel version string is 1.1 or later; unparsable and absent versions are not. */
+    public static boolean supportsTransfer(String channelVersion) {
+        if (channelVersion == null) {
+            return false;
+        }
+        String[] parts = channelVersion.trim().split("\\.");
+        try {
+            int major = Integer.parseInt(parts[0]);
+            int minor = parts.length > 1 ? Integer.parseInt(parts[1]) : 0;
+            return major > 1 || (major == 1 && minor >= 1);
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
 
     private static final AttributeKey<String> CHANNEL_VERSION_KEY =
             AttributeKey.valueOf("ysm_epicfight_compat_model_sync");
@@ -117,6 +172,22 @@ public final class NetworkHandler {
         CHANNEL.registerMessage(3, C2SVersionCheckPacket.class,
                 C2SVersionCheckPacket::encode, C2SVersionCheckPacket::decode,
                 C2SVersionCheckPacket::handle, Optional.of(NetworkDirection.PLAY_TO_SERVER));
+        CHANNEL.registerMessage(4, C2SModelQueryPacket.class,
+                C2SModelQueryPacket::encode, C2SModelQueryPacket::decode,
+                C2SModelQueryPacket::handle, Optional.of(NetworkDirection.PLAY_TO_SERVER));
+        CHANNEL.registerMessage(5, S2CModelInfoPacket.class,
+                S2CModelInfoPacket::encode, S2CModelInfoPacket::decode,
+                S2CModelInfoPacket::handle, Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+        CHANNEL.registerMessage(6, C2SModelDownloadPacket.class,
+                C2SModelDownloadPacket::encode, C2SModelDownloadPacket::decode,
+                C2SModelDownloadPacket::handle, Optional.of(NetworkDirection.PLAY_TO_SERVER));
+        CHANNEL.registerMessage(7, S2CModelChunkPacket.class,
+                S2CModelChunkPacket::encode, S2CModelChunkPacket::decode,
+                S2CModelChunkPacket::handle, Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+    }
+
+    public static void sendToServer(Object message) {
+        CHANNEL.sendToServer(message);
     }
 
     public static void sendToClientPlayer(Object message, Player player) {
