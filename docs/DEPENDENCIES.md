@@ -1,10 +1,10 @@
-# 依赖交接 / Dependency handoff
+# 依赖交接
+
+[English](DEPENDENCIES.en.md) · 简体中文
 
 本表固定 **v1.10.3 的构建基准**，并区分玩家需安装的模组与维护者编译时使用的 JAR。下载应从上游版本页进行；文件名可在放入 `libs/` 时重命名，内容不可改。版本范围来自本项目 `mods.toml`，不表示范围内的每个发行版都经过实机测试。
 
-This records the **v1.10.3 build baseline**. Install the runtime mods separately; the three renamed JARs in `libs/` are compile inputs. Declared version ranges are loader contracts, not a claim that every version was tested.
-
-## 运行环境 / Runtime
+## 运行环境
 
 | 组件 | 基准与来源 | 安装条件 |
 | --- | --- | --- |
@@ -17,9 +17,7 @@ This records the **v1.10.3 build baseline**. Install the runtime mods separately
 
 安装本项目时只把 `YSM_EpicFight_Compat-1.20.1-1.10.3-all.jar` 放入游戏的 `mods` 目录。它内嵌 `zstd-jni`，不内嵌 Epic Fight、YSM、Touhou Little Maid、`ef_tlm` 或 Avalon。女仆联动不用时，不需要后三个可选模组。客户端与专用服务器应使用相互匹配的必需模组；服务器安装本模组时，观看者缺少的模型包会自动从服务器下载（auth 模型除外，见 README 服务器配置）。
 
-Install only this project's `-all.jar` in `mods`. It bundles `zstd-jni`, but does not bundle the other mods. Maid integration requires all three optional rows above; without maid integration they are unnecessary.
-
-## 构建输入 / Build inputs
+## 构建输入
 
 `build.gradle` 自动从 Maven 获取 Forge、Epic Fight 与 `com.github.luben:zstd-jni:1.5.6-3`，并从仓库 `libs/` 读取下列三个**重命名的上游 JAR**。这些 SHA-1 与上游 Modrinth 版本 API 的主发行文件一致；SHA-256 是本仓库当前文件的校验值。
 
@@ -31,12 +29,8 @@ Install only this project's `-all.jar` in `mods`. It bundles `zstd-jni`, but doe
 
 这三个 JAR 当前被 Git 跟踪，因而也会进入 GitHub 自动生成的源码压缩包；仓库的 MIT 许可证仅适用于本项目自有代码，不能替代上游文件各自的授权。维护者调整依赖分发方式前，应单独核对上游许可与构建可复现性。第三方 `.ysm` 模型、贴图及其派生测试样本不得加入仓库或发布资产。
 
-The three upstream JARs are currently tracked, so GitHub's automatic source archives include them. This repository's MIT license does not change their upstream terms. Keep private `.ysm` models, artwork, and derived fixtures out of Git and release assets.
+## 维护与验证
 
-## 维护与验证 / Maintenance
-
-1. 升级上游前，核对官方版本页、JAR 内 `META-INF/mods.toml`、文件哈希和许可证；同步修改 `gradle.properties`、`build.gradle`、本项目 `mods.toml` 及中英文 README。更换 `libs/` 时保留此表的版本与校验记录。
+1. 升级上游前，核对官方版本页、JAR 内 `META-INF/mods.toml`、文件哈希和许可证；同步修改 `gradle.properties`、`build.gradle`、本项目 `mods.toml` 及中英文 README 与 docs 文档。更换 `libs/` 时保留此表的版本与校验记录。
 2. 运行 `./gradlew.bat clean build`、`./scripts/summarize-tests.ps1`、`./scripts/verify-release.ps1`。升级 YSM 分支时另运行 README 中的 `MixinTargetSignatureTest`；再按 [游戏内验收矩阵](TESTING.md) 检查渲染与联动。
 3. 发布时核对 CI 对**同一个提交**的构建、测试与 JAR 校验均通过；只上传该提交验证过的 `-all.jar` 及其 SHA-256。不要用无 `-all` 后缀的 JAR 作为玩家安装包。
-
-For an upstream update, verify the official file, `mods.toml`, checksum, and license first. Then update the version declarations and this table, run the automated checks, and complete the relevant in-game checks before publishing the CI-verified `-all.jar`.

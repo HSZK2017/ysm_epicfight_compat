@@ -45,9 +45,9 @@ Epic Fight's strong forward lean and long strides can still cause local skirt an
 | Diagnose missing models, clipping, or shaders | [Known issues and limits](#known-issues-and-limits) |
 | Build the project | [Build and test](#build-and-test) |
 | Understand or change the code | [How it works](#how-it-works) → [Developer entry points](#developer-entry-points) |
-| Look up class responsibilities and validation notes | [Technical reference](docs/technical-reference.md) (Chinese) |
-| Plan extensions and module boundaries | [Architecture guide](docs/ARCHITECTURE.md) (Chinese) |
-| Hand over runtime and build dependencies | [Dependency handoff](docs/DEPENDENCIES.md) |
+| Look up class responsibilities and validation notes | [Technical reference](docs/technical-reference.en.md) |
+| Plan extensions and module boundaries | [Architecture guide](docs/ARCHITECTURE.en.md) |
+| Hand over runtime and build dependencies | [Dependency handoff](docs/DEPENDENCIES.en.md) |
 
 ## Installation and use
 
@@ -137,7 +137,7 @@ If a part of a particular model is still treated as swinging when it should rema
 
 The Android ES path still needs testing on a device. The optimized Iris path has been tested on one machine, one shader pack, and nine models; models above the 1,000 joint capacity and outline / GUI rendering paths have not been covered.
 
-For diagnostic logs, add `-Dysm_ef_compat.diag=true` to the JVM arguments. The [technical reference](docs/technical-reference.md) (Chinese) lists other debug switches, cache rules, conditional variant limits, and skirt validation notes.
+For diagnostic logs, add `-Dysm_ef_compat.diag=true` to the JVM arguments. The [technical reference](docs/technical-reference.en.md) lists other debug switches, cache rules, conditional variant limits, and skirt validation notes.
 
 ## Build and test
 
@@ -167,7 +167,7 @@ Run from the project root:
 
 `build` includes all default tests. The second command checks the release JAR's version, mod metadata, Mixin files, converter fingerprint, and bundled zstd-jni. GitHub Actions runs the same checks on every push and pull request, saves the verified JAR, and retains test reports on failure. To rerun tests alone, use `.\gradlew.bat test`.
 
-The release artifact is `build/libs/YSM_EpicFight_Compat-1.20.1-1.10.3-all.jar`, which includes zstd-jni. Its name changes when the project version changes. See the [dependency handoff](docs/DEPENDENCIES.md) for upstream sources and checksums of local build JARs.
+The release artifact is `build/libs/YSM_EpicFight_Compat-1.20.1-1.10.3-all.jar`, which includes zstd-jni. Its name changes when the project version changes. See the [dependency handoff](docs/DEPENDENCIES.en.md) for upstream sources and checksums of local build JARs.
 
 To run the optional end to end `.ysm` decryption test with a real model:
 
@@ -186,7 +186,7 @@ When updating OpenYSM or ModernYSM, check Mixin target method signatures against
 .\gradlew.bat test "-Dysmef.fork=modern" "-Dysmef.fork.source=C:\path\to\ModernYSM" --tests com.ysmef.compat.contract.MixinTargetSignatureTest
 ```
 
-Unit tests run without launching Minecraft and cover parsing, Molang evaluation, hashes, path validation, and more. Visual rendering still needs in-game testing. Test categories are listed in the [technical reference](docs/technical-reference.md) (Chinese).
+Unit tests run without launching Minecraft and cover parsing, Molang evaluation, hashes, path validation, and more. Visual rendering still needs in-game testing. See the [testing matrix](docs/TESTING.en.md) for in-game acceptance steps and the [technical reference](docs/technical-reference.en.md) for test categories.
 
 ## How it works
 
@@ -252,7 +252,7 @@ When changing conversion output, also check the generator fingerprint rule in `b
 
 ## More information
 
-- [Architecture guide and extension constraints](docs/ARCHITECTURE.md) (Chinese)
-- [Technical reference: classes, Mixins, performance, debug switches, and limits](docs/technical-reference.md) (Chinese)
+- [Architecture guide and extension constraints](docs/ARCHITECTURE.en.md)
+- [Technical reference: classes, Mixins, performance, debug switches, and limits](docs/technical-reference.en.md)
 - [Changelog](CHANGELOG.md) (Chinese and English)
 - [MIT license](LICENSE)

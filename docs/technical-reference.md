@@ -1,6 +1,6 @@
 # 技术参考
 
-[返回 README](../README.md)
+[English](technical-reference.en.md) · 简体中文 · [返回 README](../README.md)
 
 本文保留模型解析、类职责、性能机制、调试参数及已知限制，供开发与排障查阅。安装、构建准备和主流程请先阅读 README。
 

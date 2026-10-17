@@ -1,5 +1,7 @@
 # 测试与游戏内验收
 
+[English](TESTING.en.md) · 简体中文
+
 ## 自动测试的边界
 
 运行 `./gradlew.bat clean build` 后，`./scripts/summarize-tests.ps1` 会列出实际执行数和各测试类的跳过数。CI 也在构建摘要中显示这些数字。没有本地模型、游戏安装或分支源码时，相关用例按条件跳过；不要为了减少跳过数而把第三方模型加入仓库。

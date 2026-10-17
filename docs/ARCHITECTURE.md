@@ -1,5 +1,7 @@
 # 架构设计与演进约束
 
+[English](ARCHITECTURE.en.md) · 简体中文
+
 > 基线：2026-10-03 的工作区源码。目标环境为 Minecraft 1.20.1、Forge 47、Epic Fight 20.14.17，以及官方 YSM 2.6.5、OpenYSM、ModernYSM。本文描述**当前实现**和**今后改动必须遵守的约束**；标为“待演进”的内容尚未实现。功能和配置说明见 [README](../README.md)。
 
 ## 1. 要守住的行为
